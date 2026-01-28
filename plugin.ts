@@ -373,6 +373,7 @@ async function finishAICard(
 async function* streamFromGateway(
   userContent: string,
   systemPrompts: string[],
+  gatewayToken?: string,
   log?: any,
 ): AsyncGenerator<string, void, unknown> {
   const rt = getRuntime();
@@ -384,11 +385,16 @@ async function* streamFromGateway(
   }
   messages.push({ role: 'user', content: userContent });
 
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (gatewayToken) {
+    headers['Authorization'] = `Bearer ${gatewayToken}`;
+  }
+
   log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, messages count=${messages.length}, userContent="${userContent.slice(0, 80)}..."`);
 
   const response = await fetch(gatewayUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       model: 'default',
       messages,
@@ -568,7 +574,7 @@ async function handleDingTalkMessage(params: {
 
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
-      for await (const chunk of streamFromGateway(content.text, systemPrompts, log)) {
+      for await (const chunk of streamFromGateway(content.text, systemPrompts, dingtalkConfig.gatewayToken, log)) {
         accumulated += chunk;
         chunkCount++;
 
@@ -611,7 +617,7 @@ async function handleDingTalkMessage(params: {
 
     let fullResponse = '';
     try {
-      for await (const chunk of streamFromGateway(content.text, systemPrompts, log)) {
+      for await (const chunk of streamFromGateway(content.text, systemPrompts, dingtalkConfig.gatewayToken, log)) {
         fullResponse += chunk;
       }
 
@@ -668,6 +674,7 @@ const dingtalkPlugin = {
         dmPolicy: { type: 'string', enum: ['open', 'pairing', 'allowlist'], default: 'open' },
         allowFrom: { type: 'array', items: { type: 'string' }, description: 'Allowed sender IDs' },
         groupPolicy: { type: 'string', enum: ['open', 'allowlist'], default: 'open' },
+        gatewayToken: { type: 'string', default: '', description: 'Gateway auth token (Bearer)' },
         debug: { type: 'boolean', default: false },
       },
       required: ['clientId', 'clientSecret'],

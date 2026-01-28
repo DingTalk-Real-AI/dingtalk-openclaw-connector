@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dingtalk-moltbot-connector"
-version = "0.1.0"
+version = "0.2.0"
 description = "将钉钉机器人连接到 Moltbot Gateway 的轻量级 Python 连接器，支持 AI Card 流式响应"
 readme = "README.md"
 license = "MIT"

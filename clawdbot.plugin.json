@@ -1,7 +1,7 @@
 {
   "id": "dingtalk-connector",
   "name": "DingTalk Channel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DingTalk (钉钉) messaging channel via Stream mode with AI Card streaming",
   "author": "DingTalk Real Team",
   "channels": ["dingtalk"],
