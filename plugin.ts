@@ -2063,8 +2063,12 @@ const dingtalkPlugin = {
     resolveRequireMention: ({ cfg }: any) => getConfig(cfg).groupPolicy !== 'open',
   },
   messaging: {
-    normalizeTarget: ({ target }: any) =>
-      target ? { targetId: target.replace(/^(dingtalk-connector|dingtalk|dd|ding):/i, '') } : null,
+    // 注意：normalizeTarget 接收字符串，返回字符串（保持大小写，因为 openConversationId 是 base64 编码）
+    normalizeTarget: (raw: string) => {
+      if (!raw) return undefined;
+      // 去掉渠道前缀，但保持原始大小写
+      return raw.trim().replace(/^(dingtalk-connector|dingtalk|dd|ding):/i, '');
+    },
     targetResolver: {
       // 支持普通 ID、Base64 编码的 conversationId，以及 user:/group: 前缀格式
       looksLikeId: (id: string) => /^(user:|group:)?[\w+/=-]+$/.test(id),
@@ -2081,7 +2085,7 @@ const dingtalkPlugin = {
      * @param ctx.accountId 账号 ID
      */
     sendText: async (ctx: any) => {
-      const { cfg, to, text, accountId } = ctx;
+      const { cfg, to, text, accountId, log } = ctx;
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
       const config = account?.config;
 
@@ -2097,15 +2101,20 @@ const dingtalkPlugin = {
       const targetStr = String(to);
       let result: SendResult;
 
+      console.log(`[DingTalk][outbound.sendText] 解析目标: targetStr="${targetStr}"`);
+
       if (targetStr.startsWith('user:')) {
         const userId = targetStr.slice(5);
-        result = await sendToUser(config, userId, text, {});
+        console.log(`[DingTalk][outbound.sendText] 发送给用户: userId="${userId}"`);
+        result = await sendToUser(config, userId, text, { log });
       } else if (targetStr.startsWith('group:')) {
         const openConversationId = targetStr.slice(6);
-        result = await sendToGroup(config, openConversationId, text, {});
+        console.log(`[DingTalk][outbound.sendText] 发送到群: openConversationId="${openConversationId}"`);
+        result = await sendToGroup(config, openConversationId, text, { log });
       } else {
         // 默认当作 userId 处理
-        result = await sendToUser(config, targetStr, text, {});
+        console.log(`[DingTalk][outbound.sendText] 默认发送给用户: userId="${targetStr}"`);
+        result = await sendToUser(config, targetStr, text, { log });
       }
 
       if (result.ok) {
@@ -2369,7 +2378,7 @@ const plugin = {
         msgType,
         title,
         log,
-        useAICard: useAICard !== false,
+        useAICard: useAICard !== false,  // 默认 true
         fallbackToNormal: fallbackToNormal !== false,
       });
       respond(result.ok, result);
@@ -2387,8 +2396,11 @@ const plugin = {
      *   - accountId?: 账号 ID
      */
     api.registerGatewayMethod('dingtalk-connector.send', async ({ respond, cfg, params, log }: any) => {
-      const { target, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
+      const { target, content, message, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
+      const actualContent = content || message;  // 兼容 message 字段
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      log?.info?.(`[DingTalk][Send] 收到请求: params=${JSON.stringify(params)}`);
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -2398,7 +2410,7 @@ const plugin = {
         return respond(false, { error: 'target is required (format: user:<userId> or group:<openConversationId>)' });
       }
 
-      if (!content) {
+      if (!actualContent) {
         return respond(false, { error: 'content is required' });
       }
 
@@ -2414,11 +2426,13 @@ const plugin = {
         sendTarget = { userId: targetStr };
       }
 
-      const result = await sendProactive(account.config, sendTarget, content, {
+      log?.info?.(`[DingTalk][Send] 解析后目标: sendTarget=${JSON.stringify(sendTarget)}`)
+
+      const result = await sendProactive(account.config, sendTarget, actualContent, {
         msgType,
         title,
         log,
-        useAICard: useAICard !== false,
+        useAICard: useAICard !== false,  // 默认 true
         fallbackToNormal: fallbackToNormal !== false,
       });
       respond(result.ok, result);
