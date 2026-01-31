@@ -665,6 +665,9 @@ async function processVideoMarkers(
   return content.replace(VIDEO_MARKER_PATTERN, '').trim();
 }
 
+/** 音频文件扩展名 */
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'amr', 'ogg', 'aac', 'flac', 'm4a'];
+
 const FILE_EXTENSIONS = [
   // 文档类
   'xlsx', 'xls', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md', 'csv',
@@ -675,7 +678,14 @@ const FILE_EXTENSIONS = [
   'json', 'xml', 'yaml', 'yml', 'html', 'css', 'scss', 'less',
   // 其他
   'log', 'sql', 'sh', 'bat', 'conf', 'ini', 'cfg', 'properties',
+  // 音频类
+  ...AUDIO_EXTENSIONS,
 ];
+
+/** 判断是否为音频文件 */
+function isAudioFile(fileType: string): boolean {
+  return AUDIO_EXTENSIONS.includes(fileType.toLowerCase());
+}
 
 /** 文件大小限制：20MB（字节） */
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -761,6 +771,46 @@ async function sendFileMessage(
 }
 
 /**
+ * 发送音频消息到钉钉（被动回复场景）
+ */
+async function sendAudioMessage(
+  config: any,
+  sessionWebhook: string,
+  fileInfo: FileInfo,
+  mediaId: string,
+  oapiToken: string,
+  log?: any,
+): Promise<void> {
+  try {
+    // 钉钉语音消息格式
+    const audioMessage = {
+      msgtype: 'voice',
+      voice: {
+        mediaId: mediaId,
+        duration: '60000',  // 默认时长，单位毫秒
+      },
+    };
+
+    log?.info?.(`[DingTalk][Audio] 发送语音消息: ${fileInfo.fileName}`);
+    const resp = await axios.post(sessionWebhook, audioMessage, {
+      headers: {
+        'x-acs-dingtalk-access-token': oapiToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10_000,
+    });
+
+    if (resp.data?.success !== false) {
+      log?.info?.(`[DingTalk][Audio] 语音消息发送成功: ${fileInfo.fileName}`);
+    } else {
+      log?.error?.(`[DingTalk][Audio] 语音消息发送失败: ${JSON.stringify(resp.data)}`);
+    }
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][Audio] 发送语音消息异常: ${fileInfo.fileName}, 错误: ${err.message}`);
+  }
+}
+
+/**
  * 处理文件标记：提取、上传、发送独立消息
  */
 async function processFileMarkers(
@@ -786,11 +836,23 @@ async function processFileMarkers(
 
   // 逐个上传并发送文件消息
   for (const fileInfo of fileInfos) {
-    const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, MAX_FILE_SIZE, log);
-    if (mediaId) {
-      await sendFileMessage(config, sessionWebhook, fileInfo, mediaId, oapiToken, log);
+    // 区分音频文件和普通文件
+    if (isAudioFile(fileInfo.fileType)) {
+      // 音频文件使用 voice 类型上传
+      const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'voice', oapiToken, MAX_FILE_SIZE, log);
+      if (mediaId) {
+        await sendAudioMessage(config, sessionWebhook, fileInfo, mediaId, oapiToken, log);
+      } else {
+        log?.error?.(`[DingTalk][Audio] 音频上传失败，跳过发送: ${fileInfo.fileName}`);
+      }
     } else {
-      log?.error?.(`[DingTalk][File] 文件上传失败，跳过发送: ${fileInfo.fileName}`);
+      // 普通文件
+      const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, MAX_FILE_SIZE, log);
+      if (mediaId) {
+        await sendFileMessage(config, sessionWebhook, fileInfo, mediaId, oapiToken, log);
+      } else {
+        log?.error?.(`[DingTalk][File] 文件上传失败，跳过发送: ${fileInfo.fileName}`);
+      }
     }
   }
 
@@ -1248,6 +1310,56 @@ async function sendFileProactive(
 }
 
 /**
+ * 主动发送音频消息（使用普通消息 API）
+ */
+async function sendAudioProactive(
+  config: any,
+  target: AICardTarget,
+  fileInfo: FileInfo,
+  mediaId: string,
+  log?: any,
+): Promise<void> {
+  try {
+    const token = await getAccessToken(config);
+
+    // 钉钉普通消息 API 的音频消息格式
+    const msgParam = {
+      mediaId: mediaId,
+      duration: '60000',  // 默认时长，单位毫秒
+    };
+
+    const body: any = {
+      robotCode: config.clientId,
+      msgKey: 'sampleAudio',
+      msgParam: JSON.stringify(msgParam),
+    };
+
+    let endpoint: string;
+    if (target.type === 'group') {
+      body.openConversationId = target.openConversationId;
+      endpoint = `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
+    } else {
+      body.userIds = [target.userId];
+      endpoint = `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`;
+    }
+
+    log?.info?.(`[DingTalk][Audio][Proactive] 发送音频消息: ${fileInfo.fileName}`);
+    const resp = await axios.post(endpoint, body, {
+      headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
+      timeout: 10_000,
+    });
+
+    if (resp.data?.processQueryKey) {
+      log?.info?.(`[DingTalk][Audio][Proactive] 音频消息发送成功: ${fileInfo.fileName}`);
+    } else {
+      log?.warn?.(`[DingTalk][Audio][Proactive] 音频消息发送响应异常: ${JSON.stringify(resp.data)}`);
+    }
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][Audio][Proactive] 发送音频消息失败: ${fileInfo.fileName}, 错误: ${err.message}`);
+  }
+}
+
+/**
  * 主动发送场景的文件后处理
  */
 async function processFileMarkersProactive(
@@ -1271,11 +1383,23 @@ async function processFileMarkersProactive(
   log?.info?.(`[DingTalk][File][Proactive] 检测到 ${fileInfos.length} 个文件标记，开始处理...`);
 
   for (const fileInfo of fileInfos) {
-    const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, MAX_FILE_SIZE, log);
-    if (mediaId) {
-      await sendFileProactive(config, target, fileInfo, mediaId, log);
+    // 区分音频文件和普通文件
+    if (isAudioFile(fileInfo.fileType)) {
+      // 音频文件使用 voice 类型上传
+      const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'voice', oapiToken, MAX_FILE_SIZE, log);
+      if (mediaId) {
+        await sendAudioProactive(config, target, fileInfo, mediaId, log);
+      } else {
+        log?.error?.(`[DingTalk][Audio][Proactive] 音频上传失败，跳过发送: ${fileInfo.fileName}`);
+      }
     } else {
-      log?.error?.(`[DingTalk][File][Proactive] 文件上传失败，跳过发送: ${fileInfo.fileName}`);
+      // 普通文件
+      const mediaId = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, MAX_FILE_SIZE, log);
+      if (mediaId) {
+        await sendFileProactive(config, target, fileInfo, mediaId, log);
+      } else {
+        log?.error?.(`[DingTalk][File][Proactive] 文件上传失败，跳过发送: ${fileInfo.fileName}`);
+      }
     }
   }
 
