@@ -1101,6 +1101,247 @@ async function sendMessage(
   return sendTextMessage(config, sessionWebhook, text, options);
 }
 
+// ============ 主动发送消息 API ============
+
+/** 消息类型枚举 */
+type DingTalkMsgType = 'text' | 'markdown' | 'link' | 'actionCard' | 'image';
+
+/** 主动发送消息的结果 */
+interface SendResult {
+  ok: boolean;
+  processQueryKey?: string;
+  error?: string;
+}
+
+/**
+ * 主动发送单聊消息给指定用户
+ * @param config 钉钉配置（需包含 clientId 和 clientSecret）
+ * @param userIds 用户 ID 数组（staffId 或 unionId）
+ * @param content 消息内容
+ * @param options 可选配置：msgType, title（用于 markdown）
+ */
+async function sendToUser(
+  config: any,
+  userIds: string | string[],
+  content: string,
+  options: { msgType?: DingTalkMsgType; title?: string; log?: any } = {},
+): Promise<SendResult> {
+  const { msgType = 'text', title, log } = options;
+
+  if (!config.clientId || !config.clientSecret) {
+    return { ok: false, error: 'Missing clientId or clientSecret' };
+  }
+
+  const userIdArray = Array.isArray(userIds) ? userIds : [userIds];
+  if (userIdArray.length === 0) {
+    return { ok: false, error: 'userIds cannot be empty' };
+  }
+
+  try {
+    const token = await getAccessToken(config);
+
+    // 构建消息参数
+    let msgKey: string;
+    let msgParam: Record<string, any>;
+
+    switch (msgType) {
+      case 'markdown':
+        msgKey = 'sampleMarkdown';
+        msgParam = {
+          title: title || content.split('\n')[0].replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message',
+          text: content,
+        };
+        break;
+      case 'link':
+        msgKey = 'sampleLink';
+        // content 应该是 JSON 格式: { text, title, picUrl, messageUrl }
+        try {
+          msgParam = typeof content === 'string' ? JSON.parse(content) : content;
+        } catch {
+          return { ok: false, error: 'Invalid link message format, expected JSON' };
+        }
+        break;
+      case 'actionCard':
+        msgKey = 'sampleActionCard';
+        try {
+          msgParam = typeof content === 'string' ? JSON.parse(content) : content;
+        } catch {
+          return { ok: false, error: 'Invalid actionCard message format, expected JSON' };
+        }
+        break;
+      case 'image':
+        msgKey = 'sampleImageMsg';
+        msgParam = { photoURL: content };
+        break;
+      case 'text':
+      default:
+        msgKey = 'sampleText';
+        msgParam = { content };
+        break;
+    }
+
+    const body = {
+      robotCode: config.clientId,
+      userIds: userIdArray,
+      msgKey,
+      msgParam: JSON.stringify(msgParam),
+    };
+
+    log?.info?.(`[DingTalk][SendToUser] 发送单聊消息: userIds=${userIdArray.join(',')}, msgType=${msgType}`);
+
+    const resp = await axios.post(`${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`, body, {
+      headers: {
+        'x-acs-dingtalk-access-token': token,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10_000,
+    });
+
+    if (resp.data?.processQueryKey) {
+      log?.info?.(`[DingTalk][SendToUser] 发送成功: processQueryKey=${resp.data.processQueryKey}`);
+      return { ok: true, processQueryKey: resp.data.processQueryKey };
+    }
+
+    log?.warn?.(`[DingTalk][SendToUser] 发送响应异常: ${JSON.stringify(resp.data)}`);
+    return { ok: false, error: resp.data?.message || 'Unknown error' };
+  } catch (err: any) {
+    const errMsg = err.response?.data?.message || err.message;
+    log?.error?.(`[DingTalk][SendToUser] 发送失败: ${errMsg}`);
+    return { ok: false, error: errMsg };
+  }
+}
+
+/**
+ * 主动发送群聊消息到指定群
+ * @param config 钉钉配置（需包含 clientId 和 clientSecret）
+ * @param openConversationId 群会话 ID
+ * @param content 消息内容
+ * @param options 可选配置：msgType, title（用于 markdown）
+ */
+async function sendToGroup(
+  config: any,
+  openConversationId: string,
+  content: string,
+  options: { msgType?: DingTalkMsgType; title?: string; log?: any } = {},
+): Promise<SendResult> {
+  const { msgType = 'text', title, log } = options;
+
+  if (!config.clientId || !config.clientSecret) {
+    return { ok: false, error: 'Missing clientId or clientSecret' };
+  }
+
+  if (!openConversationId) {
+    return { ok: false, error: 'openConversationId cannot be empty' };
+  }
+
+  try {
+    const token = await getAccessToken(config);
+
+    // 构建消息参数
+    let msgKey: string;
+    let msgParam: Record<string, any>;
+
+    switch (msgType) {
+      case 'markdown':
+        msgKey = 'sampleMarkdown';
+        msgParam = {
+          title: title || content.split('\n')[0].replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message',
+          text: content,
+        };
+        break;
+      case 'link':
+        msgKey = 'sampleLink';
+        try {
+          msgParam = typeof content === 'string' ? JSON.parse(content) : content;
+        } catch {
+          return { ok: false, error: 'Invalid link message format, expected JSON' };
+        }
+        break;
+      case 'actionCard':
+        msgKey = 'sampleActionCard';
+        try {
+          msgParam = typeof content === 'string' ? JSON.parse(content) : content;
+        } catch {
+          return { ok: false, error: 'Invalid actionCard message format, expected JSON' };
+        }
+        break;
+      case 'image':
+        msgKey = 'sampleImageMsg';
+        msgParam = { photoURL: content };
+        break;
+      case 'text':
+      default:
+        msgKey = 'sampleText';
+        msgParam = { content };
+        break;
+    }
+
+    const body = {
+      robotCode: config.clientId,
+      openConversationId,
+      msgKey,
+      msgParam: JSON.stringify(msgParam),
+    };
+
+    log?.info?.(`[DingTalk][SendToGroup] 发送群聊消息: openConversationId=${openConversationId}, msgType=${msgType}`);
+
+    const resp = await axios.post(`${DINGTALK_API}/v1.0/robot/groupMessages/send`, body, {
+      headers: {
+        'x-acs-dingtalk-access-token': token,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10_000,
+    });
+
+    if (resp.data?.processQueryKey) {
+      log?.info?.(`[DingTalk][SendToGroup] 发送成功: processQueryKey=${resp.data.processQueryKey}`);
+      return { ok: true, processQueryKey: resp.data.processQueryKey };
+    }
+
+    log?.warn?.(`[DingTalk][SendToGroup] 发送响应异常: ${JSON.stringify(resp.data)}`);
+    return { ok: false, error: resp.data?.message || 'Unknown error' };
+  } catch (err: any) {
+    const errMsg = err.response?.data?.message || err.message;
+    log?.error?.(`[DingTalk][SendToGroup] 发送失败: ${errMsg}`);
+    return { ok: false, error: errMsg };
+  }
+}
+
+/**
+ * 智能发送消息（自动选择 text/markdown）
+ * @param config 钉钉配置
+ * @param target 目标：{ userId } 或 { openConversationId }
+ * @param content 消息内容
+ * @param options 可选配置
+ */
+async function sendProactive(
+  config: any,
+  target: { userId?: string; userIds?: string[]; openConversationId?: string },
+  content: string,
+  options: { msgType?: DingTalkMsgType; title?: string; log?: any } = {},
+): Promise<SendResult> {
+  // 自动检测是否使用 markdown
+  if (!options.msgType) {
+    const hasMarkdown = /^[#*>-]|[*_`#\[\]]/.test(content) || content.includes('\n');
+    if (hasMarkdown) {
+      options.msgType = 'markdown';
+    }
+  }
+
+  // 发送到用户
+  if (target.userId || target.userIds) {
+    const userIds = target.userIds || [target.userId!];
+    return sendToUser(config, userIds, content, options);
+  }
+
+  // 发送到群
+  if (target.openConversationId) {
+    return sendToGroup(config, target.openConversationId, content, options);
+  }
+
+  return { ok: false, error: 'Must specify userId, userIds, or openConversationId' };
+}
+
 // ============ 核心消息处理 (AI Card Streaming) ============
 
 async function handleDingTalkMessage(params: {
@@ -1364,10 +1605,43 @@ const dingtalkPlugin = {
   },
   outbound: {
     deliveryMode: 'direct' as const,
-    sendText: async () => ({
-      ok: false as const,
-      error: 'DingTalk requires sessionWebhook context',
-    }),
+    /**
+     * 主动发送消息
+     * @param ctx.target 目标格式：user:<userId> 或 group:<openConversationId>
+     * @param ctx.text 消息内容
+     */
+    sendText: async (ctx: any) => {
+      const { account, target, text, log } = ctx;
+      const config = account?.config;
+
+      if (!config?.clientId || !config?.clientSecret) {
+        return { ok: false as const, error: 'DingTalk not configured' };
+      }
+
+      if (!target) {
+        return { ok: false as const, error: 'Target is required. Format: user:<userId> or group:<openConversationId>' };
+      }
+
+      // 解析目标：user:<userId> 或 group:<openConversationId>
+      const targetStr = String(target);
+      let result: SendResult;
+
+      if (targetStr.startsWith('user:')) {
+        const userId = targetStr.slice(5);
+        result = await sendToUser(config, userId, text, { log });
+      } else if (targetStr.startsWith('group:')) {
+        const openConversationId = targetStr.slice(6);
+        result = await sendToGroup(config, openConversationId, text, { log });
+      } else {
+        // 默认当作 userId 处理
+        result = await sendToUser(config, targetStr, text, { log });
+      }
+
+      if (result.ok) {
+        return { ok: true as const, messageId: result.processQueryKey };
+      }
+      return { ok: false as const, error: result.error };
+    },
   },
   gateway: {
     startAccount: async (ctx: any) => {
@@ -1472,17 +1746,132 @@ const plugin = {
   register(api: ClawdbotPluginApi) {
     runtime = api.runtime;
     api.registerChannel({ plugin: dingtalkPlugin });
+
+    // ===== Gateway Methods =====
+
     api.registerGatewayMethod('dingtalk-connector.status', async ({ respond, cfg }: any) => {
       const result = await dingtalkPlugin.status.probe({ cfg });
       respond(true, result);
     });
+
     api.registerGatewayMethod('dingtalk-connector.probe', async ({ respond, cfg }: any) => {
       const result = await dingtalkPlugin.status.probe({ cfg });
       respond(result.ok, result);
     });
-    api.logger?.info('[DingTalk] 插件已注册');
+
+    /**
+     * 主动发送单聊消息
+     * 参数：
+     *   - userId / userIds: 目标用户 ID（支持单个或数组）
+     *   - content: 消息内容
+     *   - msgType?: 'text' | 'markdown' | 'link' | 'actionCard' | 'image'（默认 text）
+     *   - title?: markdown 消息标题
+     *   - accountId?: 使用的账号 ID（默认 default）
+     */
+    api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ respond, cfg, params, log }: any) => {
+      const { userId, userIds, content, msgType, title, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+
+      const targetUserIds = userIds || (userId ? [userId] : []);
+      if (targetUserIds.length === 0) {
+        return respond(false, { error: 'userId or userIds is required' });
+      }
+
+      if (!content) {
+        return respond(false, { error: 'content is required' });
+      }
+
+      const result = await sendToUser(account.config, targetUserIds, content, { msgType, title, log });
+      respond(result.ok, result);
+    });
+
+    /**
+     * 主动发送群聊消息
+     * 参数：
+     *   - openConversationId: 群会话 ID
+     *   - content: 消息内容
+     *   - msgType?: 'text' | 'markdown' | 'link' | 'actionCard' | 'image'（默认 text）
+     *   - title?: markdown 消息标题
+     *   - accountId?: 使用的账号 ID（默认 default）
+     */
+    api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ respond, cfg, params, log }: any) => {
+      const { openConversationId, content, msgType, title, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+
+      if (!openConversationId) {
+        return respond(false, { error: 'openConversationId is required' });
+      }
+
+      if (!content) {
+        return respond(false, { error: 'content is required' });
+      }
+
+      const result = await sendToGroup(account.config, openConversationId, content, { msgType, title, log });
+      respond(result.ok, result);
+    });
+
+    /**
+     * 智能发送消息（自动检测目标类型和消息格式）
+     * 参数：
+     *   - target: 目标（user:<userId> 或 group:<openConversationId>）
+     *   - content: 消息内容
+     *   - msgType?: 消息类型（可选，不指定则自动检测）
+     *   - title?: 标题（用于 markdown）
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.send', async ({ respond, cfg, params, log }: any) => {
+      const { target, content, msgType, title, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+
+      if (!target) {
+        return respond(false, { error: 'target is required (format: user:<userId> or group:<openConversationId>)' });
+      }
+
+      if (!content) {
+        return respond(false, { error: 'content is required' });
+      }
+
+      const targetStr = String(target);
+      let sendTarget: { userId?: string; openConversationId?: string };
+
+      if (targetStr.startsWith('user:')) {
+        sendTarget = { userId: targetStr.slice(5) };
+      } else if (targetStr.startsWith('group:')) {
+        sendTarget = { openConversationId: targetStr.slice(6) };
+      } else {
+        // 默认当作 userId
+        sendTarget = { userId: targetStr };
+      }
+
+      const result = await sendProactive(account.config, sendTarget, content, { msgType, title, log });
+      respond(result.ok, result);
+    });
+
+    api.logger?.info('[DingTalk] 插件已注册（支持主动发送消息）');
   },
 };
 
 export default plugin;
-export { dingtalkPlugin, sendMessage, sendTextMessage, sendMarkdownMessage };
+export {
+  dingtalkPlugin,
+  // 回复消息（需要 sessionWebhook）
+  sendMessage,
+  sendTextMessage,
+  sendMarkdownMessage,
+  // 主动发送消息（无需 sessionWebhook）
+  sendToUser,
+  sendToGroup,
+  sendProactive,
+};
