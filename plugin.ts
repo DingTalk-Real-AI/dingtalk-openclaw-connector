@@ -717,20 +717,6 @@ async function processVideoMarkers(
 /** 音频文件扩展名 */
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'amr', 'ogg', 'aac', 'flac', 'm4a'];
 
-const FILE_EXTENSIONS = [
-  // 文档类
-  'xlsx', 'xls', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md', 'csv',
-  // 压缩包
-  'zip', 'rar', '7z', 'tar', 'gz', 'bz2',
-  // 代码文件
-  'py', 'js', 'ts', 'jsx', 'tsx', 'java', 'cpp', 'c', 'h', 'go', 'rs',
-  'json', 'xml', 'yaml', 'yml', 'html', 'css', 'scss', 'less',
-  // 其他
-  'log', 'sql', 'sh', 'bat', 'conf', 'ini', 'cfg', 'properties',
-  // 音频类
-  ...AUDIO_EXTENSIONS,
-];
-
 
 /** 判断是否为音频文件 */
 function isAudioFile(fileType: string): boolean {
@@ -1538,13 +1524,16 @@ async function processAudioMarkers(
 
   const matches = [...content.matchAll(AUDIO_MARKER_PATTERN)];
   const audioInfos: AudioInfo[] = [];
+  const invalidAudios: string[] = [];
 
   for (const match of matches) {
     try {
       const audioInfo = JSON.parse(match[1]) as AudioInfo;
       if (audioInfo.path && fs.existsSync(audioInfo.path)) {
         audioInfos.push(audioInfo);
+        log?.info?.(`${logPrefix} 提取到音频: ${audioInfo.path}`);
       } else {
+        invalidAudios.push(audioInfo.path || '未知路径');
         log?.warn?.(`${logPrefix} 音频文件不存在: ${audioInfo.path}`);
       }
     } catch (err: any) {
@@ -1552,17 +1541,29 @@ async function processAudioMarkers(
     }
   }
 
-  if (audioInfos.length === 0) {
+  if (audioInfos.length === 0 && invalidAudios.length === 0) {
+    log?.info?.(`${logPrefix} 未检测到音频标记`);
     return content.replace(AUDIO_MARKER_PATTERN, '').trim();
   }
 
-  log?.info?.(`${logPrefix} 检测到 ${audioInfos.length} 个音频，开始处理...`);
+  // 先移除所有音频标记
+  let cleanedContent = content.replace(AUDIO_MARKER_PATTERN, '').trim();
+
+  const statusMessages: string[] = [];
+
+  for (const invalidPath of invalidAudios) {
+    statusMessages.push(`⚠️ 音频文件不存在: ${path.basename(invalidPath)}`);
+  }
+
+  if (audioInfos.length > 0) {
+    log?.info?.(`${logPrefix} 检测到 ${audioInfos.length} 个音频，开始处理...`);
+  }
 
   for (const audioInfo of audioInfos) {
+    const fileName = path.basename(audioInfo.path);
     try {
-      const fileName = path.basename(audioInfo.path);
       const ext = path.extname(audioInfo.path).slice(1).toLowerCase();
-      
+
       const fileInfo: FileInfo = {
         path: audioInfo.path,
         fileName: fileName,
@@ -1572,7 +1573,7 @@ async function processAudioMarkers(
       // 上传音频到钉钉
       const mediaId = await uploadMediaToDingTalk(audioInfo.path, 'voice', oapiToken, 20 * 1024 * 1024, log);
       if (!mediaId) {
-        log?.error?.(`${logPrefix} 音频上传失败，跳过发送: ${fileName}`);
+        statusMessages.push(`⚠️ 音频上传失败: ${fileName}（文件可能超过 20MB 限制）`);
         continue;
       }
 
@@ -1582,12 +1583,22 @@ async function processAudioMarkers(
       } else {
         await sendAudioMessage(config, sessionWebhook, fileInfo, mediaId, oapiToken, log);
       }
+      statusMessages.push(`✅ 音频已发送: ${fileName}`);
+      log?.info?.(`${logPrefix} 音频处理完成: ${fileName}`);
     } catch (err: any) {
       log?.error?.(`${logPrefix} 处理音频失败: ${err.message}`);
+      statusMessages.push(`⚠️ 音频处理异常: ${fileName}（${err.message}）`);
     }
   }
 
-  return content.replace(AUDIO_MARKER_PATTERN, '').trim();
+  if (statusMessages.length > 0) {
+    const statusText = statusMessages.join('\n');
+    cleanedContent = cleanedContent
+      ? `${cleanedContent}\n\n${statusText}`
+      : statusText;
+  }
+
+  return cleanedContent;
 }
 
 /**
@@ -1622,17 +1633,17 @@ async function sendAICardInternal(
       log?.warn?.(`[DingTalk][AICard][Proactive] 无法获取 oapiToken，跳过媒体后处理`);
     }
 
-    // 2. 后处理02：提取文件标记并发送独立文件消息（使用主动消息 API）
-    log?.info?.(`[DingTalk][File][Proactive] 开始文件后处理`);
-    processedContent = await processFileMarkers(processedContent, '', config, oapiToken, log, true, target);
-
-    // 3. 后处理03：提取视频标记并发送视频消息
+    // 2. 后处理02：提取视频标记并发送视频消息
     log?.info?.(`[DingTalk][Video][Proactive] 开始视频后处理`);
     processedContent = await processVideoMarkers(processedContent, '', config, oapiToken, log, true, target);
 
-    // 4. 后处理04：提取音频标记并发送音频消息（使用主动消息 API）
+    // 3. 后处理03：提取音频标记并发送音频消息（使用主动消息 API）
     log?.info?.(`[DingTalk][Audio][Proactive] 开始音频后处理`);
     processedContent = await processAudioMarkers(processedContent, '', config, oapiToken, log, true, target);
+
+    // 4. 后处理04：提取文件标记并发送独立文件消息（使用主动消息 API）
+    log?.info?.(`[DingTalk][File][Proactive] 开始文件后处理`);
+    processedContent = await processFileMarkers(processedContent, '', config, oapiToken, log, true, target);
 
     // 5. 检查处理后的内容是否为空（纯文件/视频/音频消息场景）
     //    如果内容只包含文件/视频/音频标记，处理后会变成空字符串，此时跳过创建空白 AI Card
@@ -2082,21 +2093,27 @@ async function handleDingTalkMessage(params: {
         ? { type: 'user', userId: data.senderStaffId || data.senderId }
         : { type: 'group', openConversationId: data.conversationId };
 
-      // 后处理02：提取文件标记并发送独立文件消息（使用主动消息 API）
-      log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
-      accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
-
-      // 后处理03：提取视频标记并发送视频消息（使用主动消息 API）
+      // 后处理02：提取视频标记并发送视频消息（使用主动消息 API）
       log?.info?.(`[DingTalk][Video] 开始视频后处理 (使用主动API)`);
       accumulated = await processVideoMarkers(accumulated, '', dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
-      // 后处理04：提取音频标记并发送音频消息（使用主动消息 API）
+      // 后处理03：提取音频标记并发送音频消息（使用主动消息 API）
       log?.info?.(`[DingTalk][Audio] 开始音频后处理 (使用主动API)`);
       accumulated = await processAudioMarkers(accumulated, '', dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
-      // 完成 AI Card
-      await finishAICard(card, accumulated, log);
-      log?.info?.(`[DingTalk] 流式响应完成，共 ${accumulated.length} 字符`);
+      // 后处理04：提取文件标记并发送独立文件消息（使用主动消息 API）
+      log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
+      accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
+
+      // 完成 AI Card（如果内容为空，说明是纯媒体消息，使用默认提示）
+      const finalContent = accumulated.trim();
+      if (finalContent.length === 0) {
+        log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
+        await finishAICard(card, '✅ 媒体已发送', log);
+      } else {
+        await finishAICard(card, finalContent, log);
+      }
+      log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
@@ -2129,17 +2146,17 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][Media] (降级模式) 开始图片后处理，内容片段="${fullResponse.slice(0, 200)}..."`);
       fullResponse = await processLocalImages(fullResponse, oapiToken, log);
 
-      // 后处理02：提取文件标记并发送独立文件消息
-      log?.info?.(`[DingTalk][File] (降级模式) 开始文件后处理`);
-      fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
-
-      // 后处理03：提取视频标记并发送视频消息
+      // 后处理02：提取视频标记并发送视频消息
       log?.info?.(`[DingTalk][Video] (降级模式) 开始视频后处理`);
       fullResponse = await processVideoMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
 
-      // 后处理04：提取音频标记并发送音频消息
+      // 后处理03：提取音频标记并发送音频消息
       log?.info?.(`[DingTalk][Audio] (降级模式) 开始音频后处理`);
       fullResponse = await processAudioMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
+
+      // 后处理04：提取文件标记并发送独立文件消息
+      log?.info?.(`[DingTalk][File] (降级模式) 开始文件后处理`);
+      fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
 
       await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
         atUserId: !isDirect ? senderId : null,
