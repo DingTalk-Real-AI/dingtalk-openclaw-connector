@@ -1588,13 +1588,21 @@ async function sendAICardInternal(
     log?.info?.(`[DingTalk][Video][Proactive] 开始视频后处理`);
     processedContent = await processVideoMarkersProactive(processedContent, config, target, oapiToken, log);
 
-    // 4. 创建卡片（复用通用函数）
+    // 4. 检查处理后的内容是否为空（纯文件/视频消息场景）
+    //    如果内容只包含文件/视频标记，处理后会变成空字符串，此时跳过创建空白 AI Card
+    const trimmedContent = processedContent.trim();
+    if (!trimmedContent) {
+      log?.info?.(`[DingTalk][AICard][Proactive] 处理后内容为空（纯文件/视频消息），跳过创建 AI Card`);
+      return { ok: true, usedAICard: false };
+    }
+
+    // 5. 创建卡片（复用通用函数）
     const card = await createAICardForTarget(config, target, log);
     if (!card) {
       return { ok: false, error: 'Failed to create AI Card', usedAICard: false };
     }
 
-    // 5. 使用 finishAICard 设置内容
+    // 6. 使用 finishAICard 设置内容
     await finishAICard(card, processedContent, log);
 
     log?.info?.(`[DingTalk][AICard][Proactive] AI Card 发送成功: ${targetDesc}, cardInstanceId=${card.cardInstanceId}`);
