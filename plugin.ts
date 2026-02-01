@@ -58,7 +58,7 @@ function markMessageProcessed(messageId: string): void {
   if (!messageId) return;
   processedMessages.set(messageId, Date.now());
   // 定期清理（每处理100条消息清理一次）
-  if (processedMessages.size % 100 === 0) {
+  if (processedMessages.size >= 100) {
     cleanupProcessedMessages();
   }
 }
@@ -594,6 +594,7 @@ async function processVideoMarkers(
 
   // 逐个处理视频
   for (const videoInfo of videoInfos) {
+    let thumbnailPath = '';
     try {
       // 1. 提取元数据
       const metadata = await extractVideoMetadata(videoInfo.path, log);
@@ -603,7 +604,7 @@ async function processVideoMarkers(
       }
 
       // 2. 生成封面
-      const thumbnailPath = path.join(
+      thumbnailPath = path.join(
         os.tmpdir(),
         `thumbnail_${Date.now()}.jpg`,
       );
@@ -623,7 +624,6 @@ async function processVideoMarkers(
       );
       if (!videoMediaId) {
         log?.warn?.(`[DingTalk][Video] 视频上传失败: ${videoInfo.path}`);
-        fs.unlinkSync(thumbnailPath);
         continue;
       }
 
@@ -637,7 +637,6 @@ async function processVideoMarkers(
       );
       if (!picMediaId) {
         log?.warn?.(`[DingTalk][Video] 封面上传失败: ${thumbnailPath}`);
-        fs.unlinkSync(thumbnailPath);
         continue;
       }
 
@@ -653,11 +652,18 @@ async function processVideoMarkers(
         log,
       );
 
-      // 6. 清理临时文件
-      fs.unlinkSync(thumbnailPath);
       log?.info?.(`[DingTalk][Video] 视频处理完成: ${path.basename(videoInfo.path)}`);
     } catch (err: any) {
       log?.error?.(`[DingTalk][Video] 处理视频失败: ${err.message}`);
+    } finally {
+      // 统一清理临时文件
+      if (thumbnailPath) {
+        try {
+          fs.unlinkSync(thumbnailPath);
+        } catch {
+          // 文件可能不存在，忽略删除错误
+        }
+      }
     }
   }
 
@@ -1516,11 +1522,12 @@ async function processVideoMarkersProactive(
   log?.info?.(`[DingTalk][Video][Proactive] 检测到 ${videoInfos.length} 个视频，开始处理...`);
 
   for (const videoInfo of videoInfos) {
+    let thumbnailPath = '';
     try {
       const metadata = await extractVideoMetadata(videoInfo.path, log);
       if (!metadata) continue;
 
-      const thumbnailPath = path.join(os.tmpdir(), `thumbnail_${Date.now()}.jpg`);
+      thumbnailPath = path.join(os.tmpdir(), `thumbnail_${Date.now()}.jpg`);
       const thumbnail = await extractVideoThumbnail(videoInfo.path, thumbnailPath, log);
       if (!thumbnail) {
         continue;
@@ -1528,20 +1535,26 @@ async function processVideoMarkersProactive(
 
       const videoMediaId = await uploadMediaToDingTalk(videoInfo.path, 'video', oapiToken, MAX_VIDEO_SIZE, log);
       if (!videoMediaId) {
-        fs.unlinkSync(thumbnailPath);
         continue;
       }
 
       const picMediaId = await uploadMediaToDingTalk(thumbnailPath, 'image', oapiToken, 20 * 1024 * 1024, log);
       if (!picMediaId) {
-        fs.unlinkSync(thumbnailPath);
         continue;
       }
 
       await sendVideoProactive(config, target, videoMediaId, picMediaId, metadata, log);
-      fs.unlinkSync(thumbnailPath);
     } catch (err: any) {
       log?.error?.(`[DingTalk][Video][Proactive] 处理视频失败: ${err.message}`);
+    } finally {
+      // 统一清理临时文件
+      if (thumbnailPath) {
+        try {
+          fs.unlinkSync(thumbnailPath);
+        } catch {
+          // 文件可能不存在，忽略删除错误
+        }
+      }
     }
   }
 
@@ -1957,7 +1970,6 @@ async function handleDingTalkMessage(params: {
   dingtalkConfig: any;
 }): Promise<void> {
   const { cfg, accountId, data, sessionWebhook, log, dingtalkConfig } = params;
-  const rt = getRuntime();
 
   const content = extractMessageContent(data);
   if (!content.text) return;
@@ -2256,19 +2268,19 @@ const dingtalkPlugin = {
       const targetStr = String(to);
       let result: SendResult;
 
-      console.log(`[DingTalk][outbound.sendText] 解析目标: targetStr="${targetStr}"`);
+      log?.info?.(`[DingTalk][outbound.sendText] 解析目标: targetStr="${targetStr}"`);
 
       if (targetStr.startsWith('user:')) {
         const userId = targetStr.slice(5);
-        console.log(`[DingTalk][outbound.sendText] 发送给用户: userId="${userId}"`);
+        log?.info?.(`[DingTalk][outbound.sendText] 发送给用户: userId="${userId}"`);
         result = await sendToUser(config, userId, text, { log });
       } else if (targetStr.startsWith('group:')) {
         const openConversationId = targetStr.slice(6);
-        console.log(`[DingTalk][outbound.sendText] 发送到群: openConversationId="${openConversationId}"`);
+        log?.info?.(`[DingTalk][outbound.sendText] 发送到群: openConversationId="${openConversationId}"`);
         result = await sendToGroup(config, openConversationId, text, { log });
       } else {
         // 默认当作 userId 处理
-        console.log(`[DingTalk][outbound.sendText] 默认发送给用户: userId="${targetStr}"`);
+        log?.info?.(`[DingTalk][outbound.sendText] 默认发送给用户: userId="${targetStr}"`);
         result = await sendToUser(config, targetStr, text, { log });
       }
 
@@ -2285,7 +2297,7 @@ const dingtalkPlugin = {
      * @param ctx.accountId 账号 ID
      */
     sendMedia: async (ctx: any) => {
-      const { cfg, to, text, mediaUrl, accountId } = ctx;
+      const { cfg, to, text, mediaUrl, accountId, log } = ctx;
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
       const config = account?.config;
 
@@ -2305,23 +2317,23 @@ const dingtalkPlugin = {
       if (mediaUrl) {
         if (targetStr.startsWith('user:')) {
           const userId = targetStr.slice(5);
-          result = await sendToUser(config, userId, mediaUrl, { msgType: 'image' });
+          result = await sendToUser(config, userId, mediaUrl, { msgType: 'image', log });
         } else if (targetStr.startsWith('group:')) {
           const openConversationId = targetStr.slice(6);
-          result = await sendToGroup(config, openConversationId, mediaUrl, { msgType: 'image' });
+          result = await sendToGroup(config, openConversationId, mediaUrl, { msgType: 'image', log });
         } else {
-          result = await sendToUser(config, targetStr, mediaUrl, { msgType: 'image' });
+          result = await sendToUser(config, targetStr, mediaUrl, { msgType: 'image', log });
         }
       } else {
         // 无媒体，发送文本
         if (targetStr.startsWith('user:')) {
           const userId = targetStr.slice(5);
-          result = await sendToUser(config, userId, text || '', {});
+          result = await sendToUser(config, userId, text || '', { log });
         } else if (targetStr.startsWith('group:')) {
           const openConversationId = targetStr.slice(6);
-          result = await sendToGroup(config, openConversationId, text || '', {});
+          result = await sendToGroup(config, openConversationId, text || '', { log });
         } else {
-          result = await sendToUser(config, targetStr, text || '', {});
+          result = await sendToUser(config, targetStr, text || '', { log });
         }
       }
 
@@ -2581,7 +2593,7 @@ const plugin = {
         sendTarget = { userId: targetStr };
       }
 
-      log?.info?.(`[DingTalk][Send] 解析后目标: sendTarget=${JSON.stringify(sendTarget)}`)
+      log?.info?.(`[DingTalk][Send] 解析后目标: sendTarget=${JSON.stringify(sendTarget)}`);
 
       const result = await sendProactive(account.config, sendTarget, actualContent, {
         msgType,
