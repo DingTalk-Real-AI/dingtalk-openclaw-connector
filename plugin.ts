@@ -157,6 +157,92 @@ async function getOapiAccessToken(config: any): Promise<string | null> {
   }
 }
 
+/**
+ * 从钉钉下载富文本消息中的图片并保存到本地
+ * @param downloadCode 图片下载码
+ * @param robotCode 机器人代码（clientId）
+ * @param oapiToken 钉钉 access_token
+ * @param log 日志对象
+ * @returns 本地文件路径或 null
+ */
+async function downloadRichTextPicture(
+  downloadCode: string,
+  robotCode: string,
+  oapiToken: string,
+  log?: any,
+): Promise<string | null> {
+  try {
+    // 1. 获取图片下载 URL
+    const apiUrl = `https://api.dingtalk.com/v1.0/robot/messageFiles/download`;
+    const requestBody = {
+      downloadCode: downloadCode,
+      robotCode: robotCode,
+    };
+
+    const resp = await axios.post(apiUrl, requestBody, {
+      headers: {
+        'x-acs-dingtalk-access-token': oapiToken,
+        'Content-Type': 'application/json',
+      },
+      timeout: 10_000,
+    });
+
+    if (!resp.data?.downloadUrl) {
+      log?.warn?.(`[DingTalk][RichText] 获取图片 URL 失败: ${JSON.stringify(resp.data)}`);
+      return null;
+    }
+
+    const downloadUrl = resp.data.downloadUrl;
+
+    // 2. 下载图片到本地
+    const path = await import('path');
+    const fs = await import('fs');
+    const os = await import('os');
+
+    // 确定工作目录
+    const workspaceDir = process.env.WORKSPACE_DIR || process.cwd();
+
+    // 创建按日期组织的目录：dingtalk_attachments/YYYY-MM-DD/
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const attachDir = path.join(workspaceDir, 'dingtalk_attachments', dateStr);
+
+
+    if (!fs.existsSync(attachDir)) {
+      fs.mkdirSync(attachDir, { recursive: true });
+    }
+
+    // 生成文件名：timestamp_随机字符串.jpg
+    const timestamp = now.getTime();
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    const fileName = `${timestamp}_${randomStr}.jpg`;
+    const filePath = path.join(attachDir, fileName);
+
+    // 下载图片
+    const imageResp = await axios.get(downloadUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30_000,
+    });
+
+    fs.writeFileSync(filePath, imageResp.data);
+    log?.info?.(`[DingTalk][RichText] 图片保存成功: ${filePath}`);
+
+    return filePath;
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][RichText][DEBUG] ========== 下载图片异常 ==========`);
+    log?.error?.(`[DingTalk][RichText][DEBUG] Error name: ${err.name}`);
+    log?.error?.(`[DingTalk][RichText][DEBUG] Error message: ${err.message}`);
+
+    if (err.stack) {
+      log?.error?.(`[DingTalk][RichText][DEBUG] Stack trace: ${err.stack}`);
+    }
+
+    const errMsg = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    log?.error?.(`[DingTalk][RichText] 下载图片异常: ${errMsg}`);
+    return null;
+  }
+}
+
 function buildMediaSystemPrompt(): string {
   return `## 钉钉图片和文件显示规则
 
@@ -1149,14 +1235,77 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
 
 // ============ 消息处理 ============
 
-function extractMessageContent(data: any): { text: string; messageType: string } {
+async function extractMessageContent(
+  data: any,
+  robotCode: string,
+  oapiToken: string | null,
+  log?: any
+): Promise<{ text: string; messageType: string }> {
   const msgtype = data.msgtype || 'text';
   switch (msgtype) {
     case 'text':
       return { text: data.text?.content?.trim() || '', messageType: 'text' };
     case 'richText': {
       const parts = data.content?.richText || [];
-      const text = parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('');
+
+      // 诊断日志：详细记录每个 part
+      parts.forEach((p: any, idx: number) => {
+        if (p.type === 'picture') {
+          // 完整 JSON（分块输出）
+          const picStr = JSON.stringify(p, null, 2);
+          const chunkSize = 2000;
+          for (let i = 0; i < picStr.length; i += chunkSize) {
+            const chunk = picStr.slice(i, i + chunkSize);
+          }
+        } else if (p.type === 'text') {
+        }
+
+      });
+
+      const contentParts: string[] = [];
+      let pictureCount = 0;
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        let part_type = "text";
+        if (part.text) {
+          part_type = "text";
+        } else if (part.type === 'picture') {
+          part_type = "picture";
+        }
+
+        if (part_type === "text") {
+          if (part.text) {
+            contentParts.push(part.text);
+          }
+        } else if (part_type === 'picture') {
+          pictureCount++;
+
+          if (oapiToken) {
+            const downloadCode = part.downloadCode || part.pictureDownloadCode;
+            if (downloadCode) {
+              const localPath = await downloadRichTextPicture(downloadCode, robotCode, oapiToken, log);
+
+              if (localPath) {
+                const imageMarkdown = `![图片](${localPath})`;
+                contentParts.push(imageMarkdown);
+              } else {
+                log?.warn?.(`[DingTalk][RichText] Part ${i} 图片下载失败`);
+              }
+            } else {
+              log?.warn?.(`[DingTalk][RichText] Part ${i} 缺少 downloadCode`);
+            }
+          } else {
+            log?.warn?.(`[DingTalk][RichText] Part ${i} 无法下载图片（缺少 oapiToken）`);
+          }
+        } else {
+          // 其他未知类型
+          log?.warn?.(`[DingTalk][RichText] Part ${i} 未知类型: ${part.type}`);
+        }
+      }
+
+      const text = contentParts.join('');
+
       return { text: text || '[富文本消息]', messageType: 'richText' };
     }
     case 'picture':
@@ -1990,7 +2139,15 @@ async function handleDingTalkMessage(params: {
 }): Promise<void> {
   const { cfg, accountId, data, sessionWebhook, log, dingtalkConfig } = params;
 
-  const content = extractMessageContent(data);
+  // 获取 oapi token（用于下载富文本图片和上传媒体文件）
+  let oapiToken: string | null = null;
+  if (dingtalkConfig.enableMediaUpload !== false) {
+    oapiToken = await getOapiAccessToken(dingtalkConfig);
+    log?.info?.(`[DingTalk][Media] oapiToken 获取${oapiToken ? '成功' : '失败'}`);
+  }
+
+  // 提取消息内容（支持富文本图片下载）
+  const content = await extractMessageContent(data, dingtalkConfig.clientId, oapiToken, log);
   if (!content.text) return;
 
   const isDirect = data.conversationType === '1';
@@ -2020,16 +2177,11 @@ async function handleDingTalkMessage(params: {
   // Gateway 认证：优先使用 token，其次 password
   const gatewayAuth = dingtalkConfig.gatewayToken || dingtalkConfig.gatewayPassword || '';
 
-  // 构建 system prompts & 获取 oapi token（用于图片和文件后处理）
+  // 构建 system prompts
   const systemPrompts: string[] = [];
-  let oapiToken: string | null = null;
-
   if (dingtalkConfig.enableMediaUpload !== false) {
     // 添加图片和文件使用提示（告诉 LLM 直接输出本地路径或文件标记）
     systemPrompts.push(buildMediaSystemPrompt());
-    // 获取 token 用于后处理上传
-    oapiToken = await getOapiAccessToken(dingtalkConfig);
-    log?.info?.(`[DingTalk][Media] oapiToken 获取${oapiToken ? '成功' : '失败'}`);
   } else {
     log?.info?.(`[DingTalk][Media] enableMediaUpload=false，跳过`);
   }
