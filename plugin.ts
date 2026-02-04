@@ -1147,6 +1147,38 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   }
 }
 
+/**
+ * 清洗思维链标签 <think>...</think> 和 <final>...</final>
+ */
+function cleanThinking(text: string): string {
+  if (!text) return '';
+
+  // 1. 移除完整的 <think>...</think> 块
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+
+  // 2. 如果还有未闭合的 <think> (流正在输出思考)，则截断 <think> 之后的内容
+  const thinkStart = cleaned.indexOf('<think>');
+  if (thinkStart !== -1) {
+    cleaned = cleaned.slice(0, thinkStart);
+  }
+
+  // 3. 处理 <final> 标签
+  // 如果有 <final>，说明进入了最终回答阶段
+  const finalStart = cleaned.indexOf('<final>');
+  if (finalStart !== -1) {
+    // 截取 <final> 之后的内容
+    cleaned = cleaned.slice(finalStart + 7);
+  }
+  
+  // 4. 移除 </final> 闭合标签
+  cleaned = cleaned.replace(/<\/final>/g, '');
+
+  // 5. 再次移除可能残留的闭合标签（防御性）
+  cleaned = cleaned.replace(/<\/think>/g, '');
+
+  return cleaned.trim();
+}
+
 // ============ 消息处理 ============
 
 function extractMessageContent(data: any): { text: string; messageType: string } {
@@ -1859,6 +1891,14 @@ async function sendToUser(
 ): Promise<SendResult> {
   const { log, useAICard = true, fallbackToNormal = true } = options;
 
+  // 自动检测 Markdown (修复 outbound 直接调用时不走 sendProactive 检测的问题)
+  if (!options.msgType) {
+    const hasMarkdown = /^[#*>-]|[*_`#\[\]]/.test(content) || content.includes('\n');
+    if (hasMarkdown) {
+      options.msgType = 'markdown';
+    }
+  }
+
   if (!config.clientId || !config.clientSecret) {
     return { ok: false, error: 'Missing clientId or clientSecret', usedAICard: false };
   }
@@ -1909,6 +1949,14 @@ async function sendToGroup(
   options: ProactiveSendOptions = {},
 ): Promise<SendResult> {
   const { log, useAICard = true, fallbackToNormal = true } = options;
+
+  // 自动检测 Markdown (修复 outbound 直接调用时不走 sendProactive 检测的问题)
+  if (!options.msgType) {
+    const hasMarkdown = /^[#*>-]|[*_`#\[\]]/.test(content) || content.includes('\n');
+    if (hasMarkdown) {
+      options.msgType = 'markdown';
+    }
+  }
 
   if (!config.clientId || !config.clientSecret) {
     return { ok: false, error: 'Missing clientId or clientSecret', usedAICard: false };
@@ -1961,6 +2009,7 @@ async function sendProactive(
     const hasMarkdown = /^[#*>-]|[*_`#\[\]]/.test(content) || content.includes('\n');
     if (hasMarkdown) {
       options.msgType = 'markdown';
+      log?.info?.(`[DingTalk] 自动检测到 Markdown 内容，强制 msgType='markdown'`);
     }
   }
 
@@ -2071,11 +2120,20 @@ async function handleDingTalkMessage(params: {
         const now = Date.now();
         if (now - lastUpdateTime >= updateInterval) {
           // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
-          const displayContent = accumulated
+          // 同时清洗思维链标签
+          let displayContent = accumulated
             .replace(FILE_MARKER_PATTERN, '')
             .replace(VIDEO_MARKER_PATTERN, '')
             .replace(AUDIO_MARKER_PATTERN, '')
             .trim();
+          
+          displayContent = cleanThinking(displayContent);
+
+          // 如果清洗后内容为空（例如还在思考中），显示“正在思考...”
+          if (!displayContent && accumulated.includes('<think>')) {
+             displayContent = '🤔 正在思考...';
+          }
+          
           await streamAICard(card, displayContent, false, log);
           lastUpdateTime = now;
         }
@@ -2106,7 +2164,9 @@ async function handleDingTalkMessage(params: {
       accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
       // 完成 AI Card（如果内容为空，说明是纯媒体消息，使用默认提示）
-      const finalContent = accumulated.trim();
+      let finalContent = accumulated.trim();
+      finalContent = cleanThinking(finalContent);
+
       if (finalContent.length === 0) {
         log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
         await finishAICard(card, '✅ 媒体已发送', log);
@@ -2158,7 +2218,7 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] (降级模式) 开始文件后处理`);
       fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
 
-      await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
+      await sendMessage(dingtalkConfig, sessionWebhook, cleanThinking(fullResponse) || '（无响应）', {
         atUserId: !isDirect ? senderId : null,
         useMarkdown: true,
       });
