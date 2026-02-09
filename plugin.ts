@@ -72,21 +72,28 @@ function isNewSessionCommand(text: string): boolean {
   return NEW_SESSION_COMMANDS.some(cmd => trimmed === cmd.toLowerCase());
 }
 
-/** 获取或创建用户 session key */
+/** 获取或创建 session key
+ * - 群聊 (conversationId 存在): 整个群共享一个会话
+ * - 私聊: 每个用户独立会话
+ */
 function getSessionKey(
   senderId: string,
   forceNew: boolean,
   sessionTimeout: number,
   log?: any,
+  conversationId?: string,  // 群会话ID，群聊时传入
 ): { sessionKey: string; isNew: boolean } {
   const now = Date.now();
-  const existing = userSessions.get(senderId);
+  
+  // 群聊用 conversationId 作为会话标识，私聊用 senderId
+  const sessionIdentifier = conversationId || senderId;
+  const existing = userSessions.get(sessionIdentifier);
 
   // 强制新会话
   if (forceNew) {
-    const sessionId = `dingtalk-connector:${senderId}:${now}`;
-    userSessions.set(senderId, { lastActivity: now, sessionId });
-    log?.info?.(`[DingTalk][Session] 用户主动开启新会话: ${senderId}`);
+    const sessionId = `dingtalk-connector:${sessionIdentifier}:${now}`;
+    userSessions.set(sessionIdentifier, { lastActivity: now, sessionId });
+    log?.info?.(`[DingTalk][Session] 主动开启新会话: ${sessionIdentifier}${conversationId ? ' (群)' : ''}`);
     return { sessionKey: sessionId, isNew: true };
   }
 
@@ -94,9 +101,9 @@ function getSessionKey(
   if (existing) {
     const elapsed = now - existing.lastActivity;
     if (elapsed > sessionTimeout) {
-      const sessionId = `dingtalk-connector:${senderId}:${now}`;
-      userSessions.set(senderId, { lastActivity: now, sessionId });
-      log?.info?.(`[DingTalk][Session] 会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${senderId}`);
+      const sessionId = `dingtalk-connector:${sessionIdentifier}:${now}`;
+      userSessions.set(sessionIdentifier, { lastActivity: now, sessionId });
+      log?.info?.(`[DingTalk][Session] 会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${sessionIdentifier}${conversationId ? ' (群)' : ''}`);
       return { sessionKey: sessionId, isNew: true };
     }
     // 更新活跃时间
@@ -105,9 +112,9 @@ function getSessionKey(
   }
 
   // 首次会话
-  const sessionId = `dingtalk-connector:${senderId}`;
-  userSessions.set(senderId, { lastActivity: now, sessionId });
-  log?.info?.(`[DingTalk][Session] 新用户首次会话: ${senderId}`);
+  const sessionId = `dingtalk-connector:${sessionIdentifier}`;
+  userSessions.set(sessionIdentifier, { lastActivity: now, sessionId });
+  log?.info?.(`[DingTalk][Session] 首次会话: ${sessionIdentifier}${conversationId ? ' (群)' : ''}`);
   return { sessionKey: sessionId, isNew: false };
 }
 
@@ -1996,8 +2003,9 @@ async function handleDingTalkMessage(params: {
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
+  const conversationId = isDirect ? undefined : data.conversationId;  // 群聊时获取群会话ID
 
-  log?.info?.(`[DingTalk] 收到消息: from=${senderName} text="${content.text.slice(0, 50)}..."`);
+  log?.info?.(`[DingTalk] 收到消息: from=${senderName} text="${content.text.slice(0, 50)}..."${conversationId ? ` 群=${conversationId}` : ''}`);
 
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
@@ -2005,7 +2013,7 @@ async function handleDingTalkMessage(params: {
 
   // 如果是新会话命令，直接回复确认消息
   if (forceNewSession) {
-    const { sessionKey } = getSessionKey(senderId, true, sessionTimeout, log);
+    const { sessionKey } = getSessionKey(senderId, true, sessionTimeout, log, conversationId);
     await sendMessage(dingtalkConfig, sessionWebhook, '✨ 已开启新会话，之前的对话已清空。', {
       atUserId: !isDirect ? senderId : null,
     });
@@ -2013,8 +2021,8 @@ async function handleDingTalkMessage(params: {
     return;
   }
 
-  // 获取或创建 session
-  const { sessionKey, isNew } = getSessionKey(senderId, false, sessionTimeout, log);
+  // 获取或创建 session（群聊共享会话，私聊独立会话）
+  const { sessionKey, isNew } = getSessionKey(senderId, false, sessionTimeout, log, conversationId);
   log?.info?.(`[DingTalk][Session] key=${sessionKey}, isNew=${isNew}`);
 
   // Gateway 认证：优先使用 token，其次 password
