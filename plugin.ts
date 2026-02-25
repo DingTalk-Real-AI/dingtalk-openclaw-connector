@@ -9,6 +9,23 @@ import { DWClient, TOPIC_ROBOT } from 'dingtalk-stream';
 import axios from 'axios';
 import type { ClawdbotPluginApi, PluginRuntime, ClawdbotConfig } from 'clawdbot/plugin-sdk';
 
+// 动态导入 CommonJS 模块（用于 ES Module 环境）
+let ffmpeg: any = null;
+let ffmpegPath: string | null = null;
+
+async function loadFFmpeg(): Promise<void> {
+  if (ffmpeg) return;
+  try {
+    const ffmpegModule = await import('fluent-ffmpeg');
+    const ffmpegInstaller = await import('@ffmpeg-installer/ffmpeg');
+    ffmpeg = ffmpegModule.default;
+    ffmpegPath = ffmpegInstaller.path;
+    ffmpeg.setFfmpegPath(ffmpegPath);
+  } catch (err) {
+    console.warn('[DingTalk] ffmpeg 加载失败，视频处理可能不可用');
+  }
+}
+
 // ============ 常量 ============
 
 export const id = 'dingtalk-connector';
@@ -31,8 +48,59 @@ interface UserSession {
 /** 用户会话缓存 Map<senderId, UserSession> */
 const userSessions = new Map<string, UserSession>();
 
+/** 用户会话过期时间（默认 30 分钟 + 5 分钟缓冲） */
+const SESSION_CACHE_TTL = 35 * 60 * 1000;
+
+/** 清理过期的用户会话 */
+function cleanupUserSessions(): void {
+  const now = Date.now();
+  for (const [senderId, session] of userSessions.entries()) {
+    if (now - session.lastActivity > SESSION_CACHE_TTL) {
+      userSessions.delete(senderId);
+    }
+  }
+}
+
 /** 消息去重缓存 Map<messageId, timestamp> - 防止同一消息被重复处理 */
 const processedMessages = new Map<string, number>();
+
+/** 群成员缓存 Map<openConversationId, { members: GroupMember[], timestamp: number }> */
+const groupMembersCache = new Map<string, { members: GroupMember[]; timestamp: number }>();
+
+/** 群成员缓存过期时间（10分钟） */
+const GROUP_MEMBERS_CACHE_TTL = 10 * 60 * 1000;
+
+/** 获取缓存的群成员列表（带缓存） */
+async function getGroupMembersWithCache(
+  config: any,
+  openConversationId: string,
+): Promise<GroupMember[]> {
+  const cached = groupMembersCache.get(openConversationId);
+  const now = Date.now();
+
+  // 检查缓存是否有效
+  if (cached && now - cached.timestamp < GROUP_MEMBERS_CACHE_TTL) {
+    return cached.members;
+  }
+
+  // 获取最新成员列表
+  const members = await getGroupMembers(config, openConversationId);
+
+  // 更新缓存
+  groupMembersCache.set(openConversationId, { members, timestamp: now });
+
+  return members;
+}
+
+/** 清理过期的群成员缓存 */
+function cleanupGroupMembersCache(): void {
+  const now = Date.now();
+  for (const [conversationId, cache] of groupMembersCache.entries()) {
+    if (now - cache.timestamp > GROUP_MEMBERS_CACHE_TTL) {
+      groupMembersCache.delete(conversationId);
+    }
+  }
+}
 
 /** 消息去重缓存过期时间（5分钟） */
 const MESSAGE_DEDUP_TTL = 5 * 60 * 1000;
@@ -60,6 +128,10 @@ function markMessageProcessed(messageId: string): void {
   // 定期清理（每处理100条消息清理一次）
   if (processedMessages.size >= 100) {
     cleanupProcessedMessages();
+  }
+  // 同时清理过期的用户会话
+  if (userSessions.size >= 100) {
+    cleanupUserSessions();
   }
 }
 
@@ -154,6 +226,58 @@ async function getOapiAccessToken(config: any): Promise<string | null> {
     return null;
   } catch {
     return null;
+  }
+}
+
+/** 群成员信息 */
+interface GroupMember {
+  memberId: string;
+  name: string;
+  unionId?: string;
+  staffId?: string;
+}
+
+/**
+ * 获取群成员列表
+ * @param config 钉钉配置
+ * @param openConversationId 群会话ID
+ * @returns 群成员列表
+ */
+async function getGroupMembers(
+  config: any,
+  openConversationId: string,
+): Promise<GroupMember[]> {
+  const oapiToken = await getOapiAccessToken(config);
+  if (!oapiToken) {
+    console.warn('[DingTalk][Group] 获取 OAPI token 失败');
+    return [];
+  }
+
+  try {
+    const resp = await axios.post(
+      'https://api.dingtalk.com/v1.0/robot/groupMembers/list',
+      { openConversationId },
+      {
+        headers: {
+          'x-acs-dingtalk-access-token': oapiToken,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (resp.data?.success && resp.data?.data) {
+      const members = resp.data.data.map((m: any) => ({
+        memberId: m.memberId || m.userId || '',
+        name: m.name || m.nick || 'Unknown',
+        unionId: m.unionId,
+        staffId: m.staffId,
+      }));
+      return members;
+    }
+    return [];
+  } catch (err: any) {
+    console.warn(`[DingTalk][Group] 获取群成员失败: ${err.message}`);
+    return [];
   }
 }
 
@@ -457,9 +581,11 @@ async function extractVideoMetadata(
   log?: any,
 ): Promise<VideoMetadata | null> {
   try {
-    const ffmpeg = require('fluent-ffmpeg');
-    const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-    ffmpeg.setFfmpegPath(ffmpegPath);
+    await loadFFmpeg();
+    if (!ffmpeg) {
+      log?.warn?.(`[DingTalk][Video] ffmpeg 未安装`);
+      return null;
+    }
 
     return new Promise((resolve, reject) => {
       ffmpeg.ffprobe(filePath, (err: any, metadata: any) => {
@@ -499,10 +625,12 @@ async function extractVideoThumbnail(
   log?: any,
 ): Promise<string | null> {
   try {
-    const ffmpeg = require('fluent-ffmpeg');
-    const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+    await loadFFmpeg();
+    if (!ffmpeg) {
+      log?.warn?.(`[DingTalk][Video] ffmpeg 未安装`);
+      return null;
+    }
     const path = await import('path');
-    ffmpeg.setFfmpegPath(ffmpegPath);
 
     return new Promise((resolve, reject) => {
       ffmpeg(videoPath)
@@ -1994,10 +2122,29 @@ async function handleDingTalkMessage(params: {
   if (!content.text) return;
 
   const isDirect = data.conversationType === '1';
+  const isGroup = data.conversationType === '2';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
+  const openConversationId = data.openConversationId || data.conversationId;
 
   log?.info?.(`[DingTalk] 收到消息: from=${senderName} text="${content.text.slice(0, 50)}..."`);
+
+  // ===== 获取群成员列表（仅群聊） =====
+  let groupMembers: GroupMember[] = [];
+  if (isGroup && openConversationId && dingtalkConfig.enableGroupMembers !== false) {
+    try {
+      groupMembers = await getGroupMembersWithCache(dingtalkConfig, openConversationId);
+      log?.info?.(`[DingTalk][Group] 群成员数量: ${groupMembers.length}`);
+    } catch (err: any) {
+      log?.warn?.(`[DingTalk][Group] 获取群成员失败: ${err.message}`);
+    }
+  }
+
+  // 添加群成员信息到 system prompt
+  if (groupMembers.length > 0) {
+    const memberNames = groupMembers.map(m => m.name).join(', ');
+    systemPrompts.push(`## 群成员\n当前群成员包括: ${memberNames}`);
+  }
 
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
