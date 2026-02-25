@@ -9,6 +9,23 @@ import { DWClient, TOPIC_ROBOT } from 'dingtalk-stream';
 import axios from 'axios';
 import type { ClawdbotPluginApi, PluginRuntime, ClawdbotConfig } from 'clawdbot/plugin-sdk';
 
+// 动态导入 CommonJS 模块（用于 ES Module 环境）
+let ffmpeg: any = null;
+let ffmpegPath: string | null = null;
+
+async function loadFFmpeg(): Promise<void> {
+  if (ffmpeg) return;
+  try {
+    const ffmpegModule = await import('fluent-ffmpeg');
+    const ffmpegInstaller = await import('@ffmpeg-installer/ffmpeg');
+    ffmpeg = ffmpegModule.default;
+    ffmpegPath = ffmpegInstaller.path;
+    ffmpeg.setFfmpegPath(ffmpegPath);
+  } catch (err) {
+    console.warn('[DingTalk] ffmpeg 加载失败，视频处理可能不可用');
+  }
+}
+
 // ============ 常量 ============
 
 export const id = 'dingtalk-connector';
@@ -30,6 +47,19 @@ interface UserSession {
 
 /** 用户会话缓存 Map<senderId, UserSession> */
 const userSessions = new Map<string, UserSession>();
+
+/** 用户会话过期时间（默认 30 分钟 + 5 分钟缓冲） */
+const SESSION_CACHE_TTL = 35 * 60 * 1000;
+
+/** 清理过期的用户会话 */
+function cleanupUserSessions(): void {
+  const now = Date.now();
+  for (const [senderId, session] of userSessions.entries()) {
+    if (now - session.lastActivity > SESSION_CACHE_TTL) {
+      userSessions.delete(senderId);
+    }
+  }
+}
 
 /** 消息去重缓存 Map<messageId, timestamp> - 防止同一消息被重复处理 */
 const processedMessages = new Map<string, number>();
@@ -60,6 +90,10 @@ function markMessageProcessed(messageId: string): void {
   // 定期清理（每处理100条消息清理一次）
   if (processedMessages.size >= 100) {
     cleanupProcessedMessages();
+  }
+  // 同时清理过期的用户会话
+  if (userSessions.size >= 100) {
+    cleanupUserSessions();
   }
 }
 
@@ -457,9 +491,11 @@ async function extractVideoMetadata(
   log?: any,
 ): Promise<VideoMetadata | null> {
   try {
-    const ffmpeg = require('fluent-ffmpeg');
-    const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-    ffmpeg.setFfmpegPath(ffmpegPath);
+    await loadFFmpeg();
+    if (!ffmpeg) {
+      log?.warn?.(`[DingTalk][Video] ffmpeg 未安装`);
+      return null;
+    }
 
     return new Promise((resolve, reject) => {
       ffmpeg.ffprobe(filePath, (err: any, metadata: any) => {
@@ -499,10 +535,12 @@ async function extractVideoThumbnail(
   log?: any,
 ): Promise<string | null> {
   try {
-    const ffmpeg = require('fluent-ffmpeg');
-    const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+    await loadFFmpeg();
+    if (!ffmpeg) {
+      log?.warn?.(`[DingTalk][Video] ffmpeg 未安装`);
+      return null;
+    }
     const path = await import('path');
-    ffmpeg.setFfmpegPath(ffmpegPath);
 
     return new Promise((resolve, reject) => {
       ffmpeg(videoPath)
