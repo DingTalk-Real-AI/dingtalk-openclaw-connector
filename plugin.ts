@@ -20,6 +20,101 @@ function getRuntime(): PluginRuntime {
   return runtime;
 }
 
+// ============ 健康检查和自动重连 ============
+
+/** 连接状态类型 */
+type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/** 健康检查上下文（每个账号一份） */
+interface HealthCheckContext {
+  connectionState: ConnectionState;
+  lastMessageTime: number;
+  reconnectCount: number;
+  healthCheckTimer: ReturnType<typeof setInterval> | null;
+}
+
+/** 账号健康检查上下文 Map<accountId, HealthCheckContext> */
+const healthCheckContexts = new Map<string, HealthCheckContext>();
+
+/** 健康检查间隔：1分钟 */
+const HEALTH_CHECK_INTERVAL = 60 * 1000;
+
+/** 消息空闲超时：10分钟无消息则主动检查连接 */
+const MESSAGE_IDLE_TIMEOUT = 10 * 60 * 1000;
+
+/** 获取或创建健康检查上下文 */
+function getHealthCheckContext(accountId: string): HealthCheckContext {
+  let ctx = healthCheckContexts.get(accountId);
+  if (!ctx) {
+    ctx = {
+      connectionState: 'disconnected',
+      lastMessageTime: Date.now(),
+      reconnectCount: 0,
+      healthCheckTimer: null,
+    };
+    healthCheckContexts.set(accountId, ctx);
+  }
+  return ctx;
+}
+
+/** 清理健康检查上下文 */
+function cleanupHealthCheckContext(accountId: string): void {
+  const ctx = healthCheckContexts.get(accountId);
+  if (ctx) {
+    if (ctx.healthCheckTimer) {
+      clearInterval(ctx.healthCheckTimer);
+      ctx.healthCheckTimer = null;
+    }
+    healthCheckContexts.delete(accountId);
+  }
+}
+
+/** 更新连接状态 */
+function updateConnectionState(accountId: string, state: ConnectionState, log?: any): void {
+  const ctx = getHealthCheckContext(accountId);
+  const oldState = ctx.connectionState;
+  ctx.connectionState = state;
+  if (oldState !== state) {
+    log?.info?.(`[DingTalk][HealthCheck] 连接状态变更: ${oldState} -> ${state} (accountId=${accountId})`);
+  }
+}
+
+/** 记录收到消息（重置空闲计时和重连计数） */
+function recordMessageReceived(accountId: string): void {
+  const ctx = getHealthCheckContext(accountId);
+  ctx.lastMessageTime = Date.now();
+  ctx.reconnectCount = 0;  // 收到消息说明连接正常，重置重连计数
+}
+
+/** 启动健康检查定时器 */
+function startHealthCheckTimer(
+  accountId: string,
+  client: any,
+  log?: any,
+): void {
+  const ctx = getHealthCheckContext(accountId);
+
+  // 清理已有定时器
+  if (ctx.healthCheckTimer) {
+    clearInterval(ctx.healthCheckTimer);
+  }
+
+  ctx.healthCheckTimer = setInterval(() => {
+    const now = Date.now();
+    const idleTime = now - ctx.lastMessageTime;
+    const idleMinutes = Math.round(idleTime / 60000);
+
+    log?.info?.(`[DingTalk][HealthCheck] 定期检查: state=${ctx.connectionState}, idle=${idleMinutes}分钟, reconnects=${ctx.reconnectCount}`);
+
+    // 如果超过 10 分钟无消息且连接状态正常，记录日志（SDK 会自动保持连接）
+    if (idleTime > MESSAGE_IDLE_TIMEOUT && ctx.connectionState === 'connected') {
+      log?.info?.(`[DingTalk][HealthCheck] 消息空闲超过 ${idleMinutes} 分钟，连接状态正常，依赖 SDK keepAlive 保持连接`);
+    }
+  }, HEALTH_CHECK_INTERVAL);
+
+  log?.info?.(`[DingTalk][HealthCheck] 健康检查定时器已启动 (间隔=${HEALTH_CHECK_INTERVAL / 1000}秒)`);
+}
+
 // ============ Session 管理 ============
 
 /** 用户会话状态：记录最后活跃时间和当前 session 标识 */
@@ -1147,28 +1242,144 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   }
 }
 
+// ============ 钉钉图片下载 ============
+
+/**
+ * 通过钉钉 API 下载机器人收到的图片消息到本地临时文件
+ * @param downloadCode 图片下载码（从消息 data 中获取）
+ * @param config 钉钉配置（需要 clientId 和 clientSecret）
+ * @param log 日志对象
+ * @returns 本地临时文件路径，失败返回 null
+ */
+async function downloadDingTalkImage(
+  downloadCode: string,
+  config: any,
+  log?: any,
+): Promise<string | null> {
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const token = await getAccessToken(config);
+
+      log?.info?.(`[DingTalk][Download] 请求图片下载 URL (attempt ${attempt}/${maxRetries}), downloadCode=${downloadCode.slice(0, 20)}...`);
+      const resp = await axios.post(
+        'https://api.dingtalk.com/v1.0/robot/messageFiles/download',
+        { downloadCode, robotCode: config.clientId },
+        { headers: { 'x-acs-dingtalk-access-token': token } },
+      );
+
+      const downloadUrl = resp.data?.downloadUrl;
+      if (!downloadUrl) {
+        log?.warn?.(`[DingTalk][Download] 未获取到下载 URL, resp=${JSON.stringify(resp.data)}`);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        }
+        return null;
+      }
+
+      const fs = await import('fs');
+      const path = await import('path');
+      const os = await import('os');
+
+      const tmpDir = path.join(os.tmpdir(), 'dingtalk-images');
+      if (!fs.existsSync(tmpDir)) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+      }
+
+      const fileName = `dt-img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+      const filePath = path.join(tmpDir, fileName);
+
+      const imgResp = await axios.get(downloadUrl, { responseType: 'arraybuffer' });
+      fs.writeFileSync(filePath, imgResp.data);
+
+      log?.info?.(`[DingTalk][Download] 图片已下载: ${filePath} (${imgResp.data.length} bytes)`);
+      return filePath;
+    } catch (err: any) {
+      log?.error?.(`[DingTalk][Download] 图片下载失败 (attempt ${attempt}/${maxRetries}): ${err.message}, resp=${JSON.stringify(err.response?.data)}`);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 // ============ 消息处理 ============
 
-function extractMessageContent(data: any): { text: string; messageType: string } {
+async function extractMessageContent(
+  data: any,
+  config: any,
+  log?: any,
+): Promise<{ text: string; messageType: string; imagePaths: string[] }> {
   const msgtype = data.msgtype || 'text';
   switch (msgtype) {
     case 'text':
-      return { text: data.text?.content?.trim() || '', messageType: 'text' };
+      return { text: data.text?.content?.trim() || '', messageType: 'text', imagePaths: [] };
     case 'richText': {
       const parts = data.content?.richText || [];
-      const text = parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('');
-      return { text: text || '[富文本消息]', messageType: 'richText' };
+      const textParts: string[] = [];
+      const imagePaths: string[] = [];
+
+      for (const part of parts) {
+        // DingTalk richText items have no 'type' field;
+        // text items: { text: "..." }, picture items: { downloadCode: "..." } or { pictureDownloadCode: "..." }
+        // Note: downloadCode is the correct field for downloading; pictureDownloadCode may be legacy or different purpose
+        if (part.text) {
+          textParts.push(part.text);
+        }
+        // Priority: downloadCode > pictureDownloadCode (same as picture message handling)
+        const imgDownloadCode = part.downloadCode || part.pictureDownloadCode;
+        if (imgDownloadCode) {
+          log?.info?.(`[DingTalk][RichText] 图片下载码: downloadCode=${part.downloadCode ? 'yes' : 'no'}, pictureDownloadCode=${part.pictureDownloadCode ? 'yes' : 'no'}, using=${imgDownloadCode.slice(0, 20)}...`);
+          const localPath = await downloadDingTalkImage(imgDownloadCode, config, log);
+          if (localPath) {
+            imagePaths.push(localPath);
+          } else {
+            textParts.push('[图片加载失败，请重新发送图片]');
+          }
+        }
+      }
+
+      const text = textParts.join('');
+      log?.info?.(`[DingTalk][RichText] 解析结果: text="${text.slice(0, 50)}", images=${imagePaths.length}`);
+
+      return {
+        text: (!text && imagePaths.length === 0) ? '[富文本消息]' : text,
+        messageType: 'richText',
+        imagePaths,
+      };
     }
-    case 'picture':
-      return { text: '[图片]', messageType: 'picture' };
+    case 'picture': {
+      // 尝试多种可能的 downloadCode 字段名
+      const downloadCode = data.content?.downloadCode || data.content?.pictureDownloadCode;
+      const imagePaths: string[] = [];
+
+      if (downloadCode) {
+        const localPath = await downloadDingTalkImage(downloadCode, config, log);
+        if (localPath) {
+          imagePaths.push(localPath);
+        }
+      } else {
+        log?.warn?.(`[DingTalk][Picture] 未找到 downloadCode, content keys=${Object.keys(data.content || {}).join(',')}`);
+      }
+
+      return {
+        text: imagePaths.length > 0 ? '' : (downloadCode ? '[图片加载失败，请重新发送图片]' : '[图片]'),
+        messageType: 'picture',
+        imagePaths,
+      };
+    }
     case 'audio':
-      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio' };
+      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio', imagePaths: [] };
     case 'video':
-      return { text: '[视频]', messageType: 'video' };
+      return { text: '[视频]', messageType: 'video', imagePaths: [] };
     case 'file':
-      return { text: `[文件: ${data.content?.fileName || '文件'}]`, messageType: 'file' };
+      return { text: `[文件: ${data.content?.fileName || '文件'}]`, messageType: 'file', imagePaths: [] };
     default:
-      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype };
+      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype, imagePaths: [] };
   }
 }
 
@@ -1990,14 +2201,26 @@ async function handleDingTalkMessage(params: {
 }): Promise<void> {
   const { cfg, accountId, data, sessionWebhook, log, dingtalkConfig } = params;
 
-  const content = extractMessageContent(data);
-  if (!content.text) return;
+  const content = await extractMessageContent(data, dingtalkConfig, log);
+
+  // Build user content: combine text + image references for the agent
+  let userContent = content.text;
+  if (content.imagePaths.length > 0) {
+    const imageRefs = content.imagePaths.map((p: string) => `[Image: source: ${p}]`).join('\n');
+    if (userContent) {
+      userContent = `${userContent}\n\n${imageRefs}`;
+    } else {
+      userContent = `[用户发送了图片]\n\n${imageRefs}`;
+    }
+  }
+
+  if (!userContent) return;
 
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
 
-  log?.info?.(`[DingTalk] 收到消息: from=${senderName} text="${content.text.slice(0, 50)}..."`);
+  log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${userContent.slice(0, 80)}..." images=${content.imagePaths.length}`);
 
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
@@ -2054,7 +2277,7 @@ async function handleDingTalkMessage(params: {
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
         sessionKey,
         gatewayAuth,
@@ -2133,7 +2356,7 @@ async function handleDingTalkMessage(params: {
     let fullResponse = '';
     try {
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
         sessionKey,
         gatewayAuth,
@@ -2381,20 +2604,59 @@ const dingtalkPlugin = {
     startAccount: async (ctx: any) => {
       const { account, cfg, abortSignal } = ctx;
       const config = account.config;
+      const accountId = account.accountId;
 
       if (!config.clientId || !config.clientSecret) {
         throw new Error('DingTalk clientId and clientSecret are required');
       }
 
-      ctx.log?.info(`[${account.accountId}] 启动钉钉 Stream 客户端...`);
+      ctx.log?.info(`[${accountId}] 启动钉钉 Stream 客户端...`);
 
+      // 初始化健康检查上下文
+      const healthCtx = getHealthCheckContext(accountId);
+      updateConnectionState(accountId, 'connecting', ctx.log);
+
+      // 创建 DWClient 并启用保活（SDK 默认已启用 autoReconnect）
       const client = new DWClient({
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         debug: config.debug || false,
+        keepAlive: true,       // 启用心跳保活
       });
 
+      // ===== 监听 SDK 连接事件 =====
+
+      // 连接成功事件
+      client.on('connect', () => {
+        updateConnectionState(accountId, 'connected', ctx.log);
+        healthCtx.reconnectCount = 0;  // 重置重连计数
+        ctx.log?.info?.(`[DingTalk][Event] 连接成功 (accountId=${accountId})`);
+      });
+
+      // 连接断开事件
+      client.on('disconnect', () => {
+        updateConnectionState(accountId, 'disconnected', ctx.log);
+        ctx.log?.warn?.(`[DingTalk][Event] 连接断开 (accountId=${accountId})`);
+      });
+
+      // 重连事件
+      client.on('reconnect', () => {
+        healthCtx.reconnectCount++;
+        updateConnectionState(accountId, 'reconnecting', ctx.log);
+        ctx.log?.info?.(`[DingTalk][Event] 正在重连... (第 ${healthCtx.reconnectCount} 次, accountId=${accountId})`);
+      });
+
+      // 错误事件
+      client.on('error', (err: any) => {
+        ctx.log?.error?.(`[DingTalk][Event] 连接错误: ${err?.message || err} (accountId=${accountId})`);
+      });
+
+      // ===== 注册消息回调 =====
+
       client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
+        // 记录收到消息时间（用于空闲检测），重置重连计数
+        recordMessageReceived(accountId);
+
         const messageId = res.headers?.messageId;
         ctx.log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}, headers=${JSON.stringify(res.headers)}`);
 
@@ -2436,18 +2698,24 @@ const dingtalkPlugin = {
       });
 
       await client.connect();
-      ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接`);
+      updateConnectionState(accountId, 'connected', ctx.log);
+      ctx.log?.info(`[${accountId}] 钉钉 Stream 客户端已连接`);
+
+      // 启动健康检查定时器
+      startHealthCheckTimer(accountId, client, ctx.log);
 
       const rt = getRuntime();
-      rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
+      rt.channel.activity.record('dingtalk-connector', accountId, 'start');
 
       let stopped = false;
       if (abortSignal) {
         abortSignal.addEventListener('abort', () => {
           if (stopped) return;
           stopped = true;
-          ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端...`);
-          rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
+          ctx.log?.info(`[${accountId}] 停止钉钉 Stream 客户端...`);
+          // 清理健康检查上下文和定时器
+          cleanupHealthCheckContext(accountId);
+          rt.channel.activity.record('dingtalk-connector', accountId, 'stop');
         });
       }
 
@@ -2455,8 +2723,10 @@ const dingtalkPlugin = {
         stop: () => {
           if (stopped) return;
           stopped = true;
-          ctx.log?.info(`[${account.accountId}] 钉钉 Channel 已停止`);
-          rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
+          ctx.log?.info(`[${accountId}] 钉钉 Channel 已停止`);
+          // 清理健康检查上下文和定时器
+          cleanupHealthCheckContext(accountId);
+          rt.channel.activity.record('dingtalk-connector', accountId, 'stop');
         },
       };
     },
@@ -2500,13 +2770,13 @@ const plugin = {
 
     // ===== Gateway Methods =====
 
-    api.registerGatewayMethod('dingtalk-connector.status', async ({ respond, cfg }: any) => {
-      const result = await dingtalkPlugin.status.probe({ cfg });
+    api.registerGatewayMethod('dingtalk-connector.status', async ({ respond }: any) => {
+      const result = await dingtalkPlugin.status.probe({ cfg: api.config });
       respond(true, result);
     });
 
-    api.registerGatewayMethod('dingtalk-connector.probe', async ({ respond, cfg }: any) => {
-      const result = await dingtalkPlugin.status.probe({ cfg });
+    api.registerGatewayMethod('dingtalk-connector.probe', async ({ respond }: any) => {
+      const result = await dingtalkPlugin.status.probe({ cfg: api.config });
       respond(result.ok, result);
     });
 
@@ -2521,7 +2791,9 @@ const plugin = {
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
      *   - accountId?: 使用的账号 ID（默认 default）
      */
-    api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ respond, cfg, params, log }: any) => {
+    api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ respond, params }: any) => {
+      const cfg = api.config;
+      const log = api.logger;
       const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
 
@@ -2559,7 +2831,9 @@ const plugin = {
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
      *   - accountId?: 使用的账号 ID（默认 default）
      */
-    api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ respond, cfg, params, log }: any) => {
+    api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ respond, params }: any) => {
+      const cfg = api.config;
+      const log = api.logger;
       const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
 
@@ -2596,7 +2870,9 @@ const plugin = {
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
      *   - accountId?: 账号 ID
      */
-    api.registerGatewayMethod('dingtalk-connector.send', async ({ respond, cfg, params, log }: any) => {
+    api.registerGatewayMethod('dingtalk-connector.send', async ({ respond, params }: any) => {
+      const cfg = api.config;
+      const log = api.logger;
       const { target, content, message, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
       const actualContent = content || message;  // 兼容 message 字段
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
