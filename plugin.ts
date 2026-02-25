@@ -1325,12 +1325,16 @@ async function extractMessageContent(
 
       for (const part of parts) {
         // DingTalk richText items have no 'type' field;
-        // text items: { text: "..." }, picture items: { pictureDownloadCode: "..." }
+        // text items: { text: "..." }, picture items: { downloadCode: "..." } or { pictureDownloadCode: "..." }
+        // Note: downloadCode is the correct field for downloading; pictureDownloadCode may be legacy or different purpose
         if (part.text) {
           textParts.push(part.text);
         }
-        if (part.pictureDownloadCode) {
-          const localPath = await downloadDingTalkImage(part.pictureDownloadCode, config, log);
+        // Priority: downloadCode > pictureDownloadCode (same as picture message handling)
+        const imgDownloadCode = part.downloadCode || part.pictureDownloadCode;
+        if (imgDownloadCode) {
+          log?.info?.(`[DingTalk][RichText] 图片下载码: downloadCode=${part.downloadCode ? 'yes' : 'no'}, pictureDownloadCode=${part.pictureDownloadCode ? 'yes' : 'no'}, using=${imgDownloadCode.slice(0, 20)}...`);
+          const localPath = await downloadDingTalkImage(imgDownloadCode, config, log);
           if (localPath) {
             imagePaths.push(localPath);
           } else {
