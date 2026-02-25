@@ -2442,20 +2442,30 @@ const dingtalkPlugin = {
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
 
       let stopped = false;
-      if (abortSignal) {
-        abortSignal.addEventListener('abort', () => {
-          if (stopped) return;
-          stopped = true;
-          ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端...`);
-          rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
-        });
-      }
+
+      // 创建一个 Promise 来保持连接活跃，直到收到停止信号
+      const keepAlive = new Promise<void>((resolve) => {
+        if (abortSignal) {
+          abortSignal.addEventListener('abort', () => {
+            if (stopped) return;
+            stopped = true;
+            ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端...`);
+            client.disconnect();
+            rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
+            resolve();
+          });
+        }
+      });
+
+      // 等待停止信号
+      await keepAlive;
 
       return {
         stop: () => {
           if (stopped) return;
           stopped = true;
           ctx.log?.info(`[${account.accountId}] 钉钉 Channel 已停止`);
+          client.disconnect();
           rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
         },
       };
