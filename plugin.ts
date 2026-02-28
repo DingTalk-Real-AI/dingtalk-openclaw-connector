@@ -7,6 +7,9 @@
 
 import { DWClient, TOPIC_ROBOT } from 'dingtalk-stream';
 import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import type { ClawdbotPluginApi, PluginRuntime, ClawdbotConfig } from 'clawdbot/plugin-sdk';
 
 // ============ 常量 ============
@@ -1081,13 +1084,13 @@ interface GatewayOptions {
   systemPrompts: string[];
   sessionKey: string;
   gatewayAuth?: string;  // token 或 password，都用 Bearer 格式
-  /** base64 图片 data URL 列表，用于 vision 接口 */
-  imageDataUrls?: string[];
+  /** 本地图片文件路径列表，用于 OpenClaw AgentMediaPayload */
+  imageLocalPaths?: string[];
   log?: any;
 }
 
 async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<string, void, unknown> {
-  const { userContent, systemPrompts, sessionKey, gatewayAuth, imageDataUrls, log } = options;
+  const { userContent, systemPrompts, sessionKey, gatewayAuth, imageLocalPaths, log } = options;
   const rt = getRuntime();
   const gatewayUrl = `http://127.0.0.1:${rt.gateway?.port || 18789}/v1/chat/completions`;
 
@@ -1096,25 +1099,14 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
     messages.push({ role: 'system', content: prompt });
   }
 
-  // 如果有图片，使用 OpenAI vision 格式的 multimodal content
-  if (imageDataUrls && imageDataUrls.length > 0) {
-    const contentParts: any[] = [];
-    // 先添加文本部分
-    if (userContent) {
-      contentParts.push({ type: 'text', text: userContent });
-    }
-    // 添加图片部分
-    for (const dataUrl of imageDataUrls) {
-      contentParts.push({
-        type: 'image_url',
-        image_url: { url: dataUrl },
-      });
-    }
-    messages.push({ role: 'user', content: contentParts });
-    log?.info?.(`[DingTalk][Gateway] 使用 vision 格式发送，含 ${imageDataUrls.length} 张图片`);
-  } else {
-    messages.push({ role: 'user', content: userContent });
+  // 如果有图片，在文本中嵌入本地文件路径（OpenClaw AgentMediaPayload 格式）
+  let finalContent = userContent;
+  if (imageLocalPaths && imageLocalPaths.length > 0) {
+    const imageMarkdown = imageLocalPaths.map(p => `![image](file://${p})`).join('\n');
+    finalContent = finalContent ? `${finalContent}\n\n${imageMarkdown}` : imageMarkdown;
+    log?.info?.(`[DingTalk][Gateway] 附加 ${imageLocalPaths.length} 张本地图片路径`);
   }
+  messages.push({ role: 'user', content: finalContent });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (gatewayAuth) {
@@ -1168,13 +1160,13 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   }
 }
 
-// ============ 图片下载与 Base64 转换 ============
+// ============ 图片下载到本地文件 ============
 
 /**
- * 下载钉钉图片并转为 base64 data URL
- * 用于将用户发送的图片传给 OpenClaw vision 接口
+ * 下载钉钉图片到本地临时文件
+ * 返回本地文件路径，用于 OpenClaw AgentMediaPayload
  */
-async function downloadImageToBase64(
+async function downloadImageToFile(
   downloadUrl: string,
   log?: any,
 ): Promise<string | null> {
@@ -1187,11 +1179,12 @@ async function downloadImageToBase64(
 
     const buffer = Buffer.from(resp.data);
     const contentType = resp.headers['content-type'] || 'image/jpeg';
-    const base64 = buffer.toString('base64');
-    const dataUrl = `data:${contentType};base64,${base64}`;
+    const ext = contentType.includes('png') ? '.png' : contentType.includes('gif') ? '.gif' : contentType.includes('webp') ? '.webp' : '.jpg';
+    const tmpFile = path.join(os.tmpdir(), `openclaw-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    fs.writeFileSync(tmpFile, buffer);
 
-    log?.info?.(`[DingTalk][Image] 图片下载成功: size=${buffer.length} bytes, type=${contentType}`);
-    return dataUrl;
+    log?.info?.(`[DingTalk][Image] 图片下载成功: size=${buffer.length} bytes, type=${contentType}, path=${tmpFile}`);
+    return tmpFile;
   } catch (err: any) {
     log?.error?.(`[DingTalk][Image] 图片下载失败: ${err.message}`);
     return null;
@@ -1226,7 +1219,7 @@ async function downloadMediaByCode(
       return null;
     }
 
-    return downloadImageToBase64(downloadUrl, log);
+    return downloadImageToFile(downloadUrl, log);
   } catch (err: any) {
     log?.error?.(`[DingTalk][Image] downloadCode 下载失败: ${err.message}`);
     return null;
@@ -2166,36 +2159,36 @@ async function handleDingTalkMessage(params: {
     systemPrompts.push(dingtalkConfig.systemPrompt);
   }
 
-  // ===== 图片下载与 base64 转换（用于 vision 接口） =====
-  const imageDataUrls: string[] = [];
+  // ===== 图片下载到本地文件（用于 OpenClaw AgentMediaPayload） =====
+  const imageLocalPaths: string[] = [];
 
   // 处理直接图片 URL（来自 richText 的 pictureUrl）
   for (const url of content.imageUrls) {
     if (url.startsWith('downloadCode:')) {
       // 通过 downloadCode 下载
       const code = url.slice('downloadCode:'.length);
-      const dataUrl = await downloadMediaByCode(code, dingtalkConfig, log);
-      if (dataUrl) imageDataUrls.push(dataUrl);
+      const localPath = await downloadMediaByCode(code, dingtalkConfig, log);
+      if (localPath) imageLocalPaths.push(localPath);
     } else {
       // 直接 URL 下载
-      const dataUrl = await downloadImageToBase64(url, log);
-      if (dataUrl) imageDataUrls.push(dataUrl);
+      const localPath = await downloadImageToFile(url, log);
+      if (localPath) imageLocalPaths.push(localPath);
     }
   }
 
   // 处理 downloadCode（来自 picture 消息）
   for (const code of content.downloadCodes) {
-    const dataUrl = await downloadMediaByCode(code, dingtalkConfig, log);
-    if (dataUrl) imageDataUrls.push(dataUrl);
+    const localPath = await downloadMediaByCode(code, dingtalkConfig, log);
+    if (localPath) imageLocalPaths.push(localPath);
   }
 
-  if (imageDataUrls.length > 0) {
-    log?.info?.(`[DingTalk][Image] 成功转换 ${imageDataUrls.length} 张图片为 base64`);
+  if (imageLocalPaths.length > 0) {
+    log?.info?.(`[DingTalk][Image] 成功下载 ${imageLocalPaths.length} 张图片到本地`);
   }
 
   // 对于纯图片消息（无文本），添加默认提示
-  const userContent = content.text || (imageDataUrls.length > 0 ? '请描述这张图片' : '');
-  if (!userContent && imageDataUrls.length === 0) return;
+  const userContent = content.text || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  if (!userContent && imageLocalPaths.length === 0) return;
 
   // 尝试创建 AI Card
   const card = await createAICard(dingtalkConfig, data, log);
@@ -2216,7 +2209,7 @@ async function handleDingTalkMessage(params: {
         systemPrompts,
         sessionKey,
         gatewayAuth,
-        imageDataUrls: imageDataUrls.length > 0 ? imageDataUrls : undefined,
+        imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
       })) {
         accumulated += chunk;
@@ -2296,7 +2289,7 @@ async function handleDingTalkMessage(params: {
         systemPrompts,
         sessionKey,
         gatewayAuth,
-        imageDataUrls: imageDataUrls.length > 0 ? imageDataUrls : undefined,
+        imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
       })) {
         fullResponse += chunk;
