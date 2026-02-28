@@ -2321,6 +2321,35 @@ async function handleDingTalkMessage(params: {
         log?.error?.(`[DingTalk][File] 读取文本文件失败: ${err.message}`);
         fileContentParts.push(`[文件已保存: ${localPath}，但读取内容失败]`);
       }
+    } else if (ext === '.docx') {
+      // Word 文档：用 mammoth 提取纯文本
+      try {
+        const mammoth = await import('mammoth');
+        const result = await mammoth.default.extractRawText({ path: localPath });
+        const fileContent = result.value;
+        const maxLen = 50_000;
+        const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
+        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        log?.info?.(`[DingTalk][File] Word 文档已提取文本: ${fileName}, size=${fileContent.length}`);
+      } catch (err: any) {
+        log?.error?.(`[DingTalk][File] Word 文档文本提取失败: ${err.message}`);
+        fileContentParts.push(`[文件已保存: ${localPath}，但提取文本失败]`);
+      }
+    } else if (ext === '.pdf') {
+      // PDF 文档：用 pdf-parse 提取纯文本
+      try {
+        const pdfParse = (await import('pdf-parse')).default;
+        const dataBuffer = fs.readFileSync(localPath);
+        const pdfData = await pdfParse(dataBuffer);
+        const fileContent = pdfData.text;
+        const maxLen = 50_000;
+        const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
+        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        log?.info?.(`[DingTalk][File] PDF 文档已提取文本: ${fileName}, size=${fileContent.length}`);
+      } catch (err: any) {
+        log?.error?.(`[DingTalk][File] PDF 文档文本提取失败: ${err.message}`);
+        fileContentParts.push(`[文件已保存: ${localPath}，但提取文本失败]`);
+      }
     } else {
       // Office/二进制文件：保存到本地，提示路径
       fileContentParts.push(`[文件已保存: ${localPath}，请基于文件名和上下文回答]`);
