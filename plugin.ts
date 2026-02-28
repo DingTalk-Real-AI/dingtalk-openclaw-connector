@@ -1228,6 +1228,64 @@ async function downloadMediaByCode(
   }
 }
 
+/**
+ * 通过钉钉 API 下载文件附件（需要 access_token）
+ * 与 downloadMediaByCode 不同，此函数保留原始文件名
+ */
+async function downloadFileByCode(
+  downloadCode: string,
+  fileName: string,
+  config: any,
+  log?: any,
+): Promise<string | null> {
+  try {
+    const token = await getAccessToken(config);
+    log?.info?.(`[DingTalk][File] 通过 downloadCode 下载文件: ${fileName}`);
+
+    const resp = await axios.post(
+      `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
+      { downloadCode, robotCode: config.clientId },
+      {
+        headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
+        timeout: 30_000,
+      },
+    );
+
+    const downloadUrl = resp.data?.downloadUrl;
+    if (!downloadUrl) {
+      log?.warn?.(`[DingTalk][File] downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
+      return null;
+    }
+
+    // 下载文件内容
+    const fileResp = await axios.get(downloadUrl, {
+      responseType: 'arraybuffer',
+      timeout: 60_000,
+    });
+
+    const buffer = Buffer.from(fileResp.data);
+    const mediaDir = path.join(os.homedir(), '.openclaw', 'workspace', 'media', 'inbound');
+    fs.mkdirSync(mediaDir, { recursive: true });
+
+    // 用时间戳前缀避免文件名冲突，保留原始文件名
+    const safeFileName = fileName.replace(/[/\\:*?"<>|]/g, '_');
+    const localPath = path.join(mediaDir, `${Date.now()}-${safeFileName}`);
+    fs.writeFileSync(localPath, buffer);
+
+    log?.info?.(`[DingTalk][File] 文件下载成功: size=${buffer.length} bytes, path=${localPath}`);
+    return localPath;
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][File] 文件下载失败: ${err.message}`);
+    return null;
+  }
+}
+
+/** 可直接读取内容的文本类文件扩展名 */
+const TEXT_FILE_EXTENSIONS = new Set(['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.html', '.htm', '.log', '.conf', '.ini', '.sh', '.py', '.js', '.ts', '.css', '.sql']);
+
+/** 需要保存但无法直接读取的 Office/二进制文件扩展名 */
+const OFFICE_FILE_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx', '.pdf', '.doc', '.xls', '.ppt', '.zip', '.rar', '.7z']);
+
 // ============ 消息处理 ============
 
 /** 消息内容提取结果 */
@@ -1238,13 +1296,15 @@ interface ExtractedMessage {
   imageUrls: string[];
   /** 图片 downloadCode 列表（用于通过 API 下载） */
   downloadCodes: string[];
+  /** 文件名列表（与 downloadCodes 对应，用于文件类型消息） */
+  fileNames: string[];
 }
 
 function extractMessageContent(data: any): ExtractedMessage {
   const msgtype = data.msgtype || 'text';
   switch (msgtype) {
     case 'text':
-      return { text: data.text?.content?.trim() || '', messageType: 'text', imageUrls: [], downloadCodes: [] };
+      return { text: data.text?.content?.trim() || '', messageType: 'text', imageUrls: [], downloadCodes: [], fileNames: [] };
     case 'richText': {
       const parts = data.content?.richText || [];
       const textParts: string[] = [];
@@ -1264,7 +1324,7 @@ function extractMessageContent(data: any): ExtractedMessage {
       }
 
       const text = textParts.join('') || (imageUrls.length > 0 ? '[图片]' : '[富文本消息]');
-      return { text, messageType: 'richText', imageUrls, downloadCodes: [] };
+      return { text, messageType: 'richText', imageUrls, downloadCodes: [], fileNames: [] };
     }
     case 'picture': {
       const downloadCode = data.content?.downloadCode || '';
@@ -1279,18 +1339,25 @@ function extractMessageContent(data: any): ExtractedMessage {
         downloadCodes.push(downloadCode);
       }
 
-      return { text: '[图片]', messageType: 'picture', imageUrls, downloadCodes };
+      return { text: '[图片]', messageType: 'picture', imageUrls, downloadCodes, fileNames: [] };
     }
     case 'audio':
-      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio', imageUrls: [], downloadCodes: [] };
+      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio', imageUrls: [], downloadCodes: [], fileNames: [] };
     case 'video':
-      return { text: '[视频]', messageType: 'video', imageUrls: [], downloadCodes: [] };
+      return { text: '[视频]', messageType: 'video', imageUrls: [], downloadCodes: [], fileNames: [] };
     case 'file': {
       const fileName = data.content?.fileName || '文件';
-      return { text: `[文件: ${fileName}]`, messageType: 'file', imageUrls: [], downloadCodes: [] };
+      const downloadCode = data.content?.downloadCode || '';
+      const downloadCodes: string[] = [];
+      const fileNames: string[] = [];
+      if (downloadCode) {
+        downloadCodes.push(downloadCode);
+        fileNames.push(fileName);
+      }
+      return { text: `[文件: ${fileName}]`, messageType: 'file', imageUrls: [], downloadCodes, fileNames };
     }
     default:
-      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype, imageUrls: [], downloadCodes: [] };
+      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype, imageUrls: [], downloadCodes: [], fileNames: [] };
   }
 }
 
@@ -2178,18 +2245,61 @@ async function handleDingTalkMessage(params: {
     }
   }
 
-  // 处理 downloadCode（来自 picture 消息）
-  for (const code of content.downloadCodes) {
-    const localPath = await downloadMediaByCode(code, dingtalkConfig, log);
-    if (localPath) imageLocalPaths.push(localPath);
+  // 处理 downloadCode（来自 picture 消息，fileNames 为空的是图片）
+  for (let i = 0; i < content.downloadCodes.length; i++) {
+    const code = content.downloadCodes[i];
+    const fileName = content.fileNames[i]; // 有 fileName 说明是文件，否则是图片
+    if (!fileName) {
+      const localPath = await downloadMediaByCode(code, dingtalkConfig, log);
+      if (localPath) imageLocalPaths.push(localPath);
+    }
   }
 
   if (imageLocalPaths.length > 0) {
     log?.info?.(`[DingTalk][Image] 成功下载 ${imageLocalPaths.length} 张图片到本地`);
   }
 
+  // ===== 文件附件下载与内容提取 =====
+  const fileContentParts: string[] = [];
+  for (let i = 0; i < content.downloadCodes.length; i++) {
+    const code = content.downloadCodes[i];
+    const fileName = content.fileNames[i];
+    if (!fileName) continue; // 图片已在上面处理
+
+    const ext = path.extname(fileName).toLowerCase();
+    const localPath = await downloadFileByCode(code, fileName, dingtalkConfig, log);
+
+    if (!localPath) {
+      fileContentParts.push(`[文件下载失败: ${fileName}]`);
+      continue;
+    }
+
+    if (TEXT_FILE_EXTENSIONS.has(ext)) {
+      // 文本类文件：读取内容追加到消息
+      try {
+        const fileContent = fs.readFileSync(localPath, 'utf-8');
+        const maxLen = 50_000; // 限制最大读取长度
+        const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
+        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        log?.info?.(`[DingTalk][File] 文本文件已读取: ${fileName}, size=${fileContent.length}`);
+      } catch (err: any) {
+        log?.error?.(`[DingTalk][File] 读取文本文件失败: ${err.message}`);
+        fileContentParts.push(`[文件已保存: ${localPath}，但读取内容失败]`);
+      }
+    } else {
+      // Office/二进制文件：保存到本地，提示路径
+      fileContentParts.push(`[文件已保存: ${localPath}，请基于文件名和上下文回答]`);
+      log?.info?.(`[DingTalk][File] 文件已保存: ${fileName} -> ${localPath}`);
+    }
+  }
+
   // 对于纯图片消息（无文本），添加默认提示
-  const userContent = content.text || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  let userContent = content.text || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  // 追加文件内容
+  if (fileContentParts.length > 0) {
+    const fileText = fileContentParts.join('\n\n');
+    userContent = userContent ? `${userContent}\n\n${fileText}` : fileText;
+  }
   if (!userContent && imageLocalPaths.length === 0) return;
 
   // 尝试创建 AI Card
