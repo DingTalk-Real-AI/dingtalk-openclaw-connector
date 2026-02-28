@@ -160,6 +160,40 @@ async function getOapiAccessToken(config: any): Promise<string | null> {
   }
 }
 
+/** staffId → unionId 缓存 */
+const unionIdCache = new Map<string, string>();
+
+/**
+ * 通过 oapi 旧版接口将 staffId 转换为 unionId
+ */
+async function getUnionId(staffId: string, config: any, log?: any): Promise<string | null> {
+  const cached = unionIdCache.get(staffId);
+  if (cached) return cached;
+
+  try {
+    const token = await getOapiAccessToken(config);
+    if (!token) {
+      log?.error?.('[DingTalk] getUnionId: 无法获取 oapi access_token');
+      return null;
+    }
+    const resp = await axios.get(`${DINGTALK_OAPI}/user/get`, {
+      params: { access_token: token, userid: staffId },
+      timeout: 10_000,
+    });
+    const unionId = resp.data?.unionid;
+    if (unionId) {
+      unionIdCache.set(staffId, unionId);
+      log?.info?.(`[DingTalk] getUnionId: ${staffId} → ${unionId}`);
+      return unionId;
+    }
+    log?.error?.(`[DingTalk] getUnionId: 响应中无 unionid 字段: ${JSON.stringify(resp.data)}`);
+    return null;
+  } catch (err: any) {
+    log?.error?.(`[DingTalk] getUnionId 失败: ${err.message}`);
+    return null;
+  }
+}
+
 function buildMediaSystemPrompt(): string {
   return `## 钉钉图片和文件显示规则
 
@@ -944,6 +978,7 @@ async function processFileMarkers(
 // ============ AI Card Streaming ============
 
 const DINGTALK_API = 'https://api.dingtalk.com';
+const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
 const AI_CARD_TEMPLATE_ID = '382e4302-551d-4880-bf29-a30acfab2e71.schema';
 
 // flowStatus 值与 Python SDK AICardStatus 一致（cardParamMap 的值必须是字符串）
@@ -2511,27 +2546,42 @@ class DingtalkDocsClient {
   }
 
   /**
-   * 读取文档内容（获取文档所有 block）
-   * @param docId 文档 ID（知识库文档使用 dentryUuid）
+   * 读取文档内容（通过 v2.0/wiki 节点 API）
+   * @param nodeId 知识库节点 ID
+   * @param operatorId 操作者 unionId（必须）
    */
-  async readDoc(docId: string): Promise<string | null> {
+  async readDoc(nodeId: string, operatorId?: string): Promise<string | null> {
     try {
       const headers = await this.getHeaders();
-      this.log?.info?.(`[DingTalk][Docs] 读取文档内容: docId=${docId}`);
+      this.log?.info?.(`[DingTalk][Docs] 读取知识库节点: nodeId=${nodeId}, operatorId=${operatorId}`);
+
+      if (!operatorId) {
+        this.log?.error?.('[DingTalk][Docs] readDoc 需要 operatorId（unionId）');
+        return null;
+      }
 
       const resp = await axios.get(
-        `${DINGTALK_API}/v1.0/doc/documents/${docId}/blocks/root/children`,
-        { headers, timeout: 30_000 },
+        `${DINGTALK_API}/v2.0/wiki/nodes/${nodeId}`,
+        { headers, params: { operatorId }, timeout: 15_000 },
       );
 
-      const blocks: DocBlock[] = resp.data?.children || [];
-      const textParts = this.extractTextFromBlocks(blocks);
-      const content = textParts.join('\n');
+      const node = resp.data?.node || resp.data;
+      const name = node.name || '未知文档';
+      const category = node.category || 'unknown';
+      const url = node.url || '';
+      const workspaceId = node.workspaceId || '';
 
-      this.log?.info?.(`[DingTalk][Docs] 文档读取成功: ${content.length} 字符, ${blocks.length} 个顶层 block`);
+      const content = [
+        `文档名: ${name}`,
+        `类型: ${category}`,
+        `URL: ${url}`,
+        `工作区: ${workspaceId}`,
+      ].join('\n');
+
+      this.log?.info?.(`[DingTalk][Docs] 节点信息获取成功: name=${name}, category=${category}`);
       return content;
     } catch (err: any) {
-      this.log?.error?.(`[DingTalk][Docs] 读取文档失败: ${err.message}`);
+      this.log?.error?.(`[DingTalk][Docs] 读取节点失败: ${err.message}`);
       if (err.response) {
         this.log?.error?.(`[DingTalk][Docs] 错误详情: status=${err.response.status} data=${JSON.stringify(err.response.data)}`);
       }
@@ -3194,13 +3244,14 @@ const plugin = {
     // ===== 文档 API Methods =====
 
     /**
-     * 读取钉钉文档内容
+     * 读取钉钉知识库文档节点信息
      * 参数：
-     *   - docId: 文档 ID（dentryUuid）
+     *   - docId: 知识库节点 ID
+     *   - operatorId: 操作者 unionId 或 staffId（会自动转换为 unionId）
      *   - accountId?: 账号 ID
      */
     api.registerGatewayMethod('dingtalk-connector.docs.read', async ({ respond, cfg, params, log }: any) => {
-      const { docId, accountId } = params || {};
+      const { docId, operatorId: rawOperatorId, accountId } = params || {};
       const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
 
       if (!account.config?.clientId) {
@@ -3209,14 +3260,25 @@ const plugin = {
       if (!docId) {
         return respond(false, { error: 'docId is required' });
       }
+      if (!rawOperatorId) {
+        return respond(false, { error: 'operatorId (unionId or staffId) is required' });
+      }
+
+      // 如果 operatorId 不像 unionId（通常以字母数字开头且较长），尝试将 staffId 转为 unionId
+      let operatorId = rawOperatorId;
+      if (!rawOperatorId.includes('$')) {
+        // 可能已经是 unionId，直接使用；否则尝试转换
+        const resolved = await getUnionId(rawOperatorId, account.config, log);
+        if (resolved) operatorId = resolved;
+      }
 
       const client = new DingtalkDocsClient(account.config, log);
-      const content = await client.readDoc(docId);
+      const content = await client.readDoc(docId, operatorId);
 
       if (content !== null) {
         respond(true, { content });
       } else {
-        respond(false, { error: 'Failed to read document' });
+        respond(false, { error: 'Failed to read document node' });
       }
     });
 
