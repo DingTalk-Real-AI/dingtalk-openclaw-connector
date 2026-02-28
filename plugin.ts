@@ -1180,7 +1180,9 @@ async function downloadImageToFile(
     const buffer = Buffer.from(resp.data);
     const contentType = resp.headers['content-type'] || 'image/jpeg';
     const ext = contentType.includes('png') ? '.png' : contentType.includes('gif') ? '.gif' : contentType.includes('webp') ? '.webp' : '.jpg';
-    const tmpFile = path.join(os.tmpdir(), `openclaw-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    const mediaDir = path.join(os.homedir(), '.openclaw', 'workspace', 'media', 'inbound');
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const tmpFile = path.join(mediaDir, `openclaw-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     fs.writeFileSync(tmpFile, buffer);
 
     log?.info?.(`[DingTalk][Image] 图片下载成功: size=${buffer.length} bytes, type=${contentType}, path=${tmpFile}`);
