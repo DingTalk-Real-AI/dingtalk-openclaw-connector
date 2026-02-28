@@ -1081,11 +1081,13 @@ interface GatewayOptions {
   systemPrompts: string[];
   sessionKey: string;
   gatewayAuth?: string;  // token 或 password，都用 Bearer 格式
+  /** base64 图片 data URL 列表，用于 vision 接口 */
+  imageDataUrls?: string[];
   log?: any;
 }
 
 async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<string, void, unknown> {
-  const { userContent, systemPrompts, sessionKey, gatewayAuth, log } = options;
+  const { userContent, systemPrompts, sessionKey, gatewayAuth, imageDataUrls, log } = options;
   const rt = getRuntime();
   const gatewayUrl = `http://127.0.0.1:${rt.gateway?.port || 18789}/v1/chat/completions`;
 
@@ -1093,7 +1095,26 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   for (const prompt of systemPrompts) {
     messages.push({ role: 'system', content: prompt });
   }
-  messages.push({ role: 'user', content: userContent });
+
+  // 如果有图片，使用 OpenAI vision 格式的 multimodal content
+  if (imageDataUrls && imageDataUrls.length > 0) {
+    const contentParts: any[] = [];
+    // 先添加文本部分
+    if (userContent) {
+      contentParts.push({ type: 'text', text: userContent });
+    }
+    // 添加图片部分
+    for (const dataUrl of imageDataUrls) {
+      contentParts.push({
+        type: 'image_url',
+        image_url: { url: dataUrl },
+      });
+    }
+    messages.push({ role: 'user', content: contentParts });
+    log?.info?.(`[DingTalk][Gateway] 使用 vision 格式发送，含 ${imageDataUrls.length} 张图片`);
+  } else {
+    messages.push({ role: 'user', content: userContent });
+  }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (gatewayAuth) {
@@ -1147,28 +1168,134 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   }
 }
 
+// ============ 图片下载与 Base64 转换 ============
+
+/**
+ * 下载钉钉图片并转为 base64 data URL
+ * 用于将用户发送的图片传给 OpenClaw vision 接口
+ */
+async function downloadImageToBase64(
+  downloadUrl: string,
+  log?: any,
+): Promise<string | null> {
+  try {
+    log?.info?.(`[DingTalk][Image] 开始下载图片: ${downloadUrl.slice(0, 100)}...`);
+    const resp = await axios.get(downloadUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30_000,
+    });
+
+    const buffer = Buffer.from(resp.data);
+    const contentType = resp.headers['content-type'] || 'image/jpeg';
+    const base64 = buffer.toString('base64');
+    const dataUrl = `data:${contentType};base64,${base64}`;
+
+    log?.info?.(`[DingTalk][Image] 图片下载成功: size=${buffer.length} bytes, type=${contentType}`);
+    return dataUrl;
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][Image] 图片下载失败: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * 通过钉钉 API 下载媒体文件（需要 access_token）
+ * 适用于 picture/file 类型的 downloadCode
+ */
+async function downloadMediaByCode(
+  downloadCode: string,
+  config: any,
+  log?: any,
+): Promise<string | null> {
+  try {
+    const token = await getAccessToken(config);
+    log?.info?.(`[DingTalk][Image] 通过 downloadCode 下载媒体: ${downloadCode.slice(0, 30)}...`);
+
+    const resp = await axios.post(
+      `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
+      { downloadCode, robotCode: config.clientId },
+      {
+        headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
+        timeout: 30_000,
+      },
+    );
+
+    const downloadUrl = resp.data?.downloadUrl;
+    if (!downloadUrl) {
+      log?.warn?.(`[DingTalk][Image] downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
+      return null;
+    }
+
+    return downloadImageToBase64(downloadUrl, log);
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][Image] downloadCode 下载失败: ${err.message}`);
+    return null;
+  }
+}
+
 // ============ 消息处理 ============
 
-function extractMessageContent(data: any): { text: string; messageType: string } {
+/** 消息内容提取结果 */
+interface ExtractedMessage {
+  text: string;
+  messageType: string;
+  /** 图片 URL 列表（来自 richText 或 picture 消息） */
+  imageUrls: string[];
+  /** 图片 downloadCode 列表（用于通过 API 下载） */
+  downloadCodes: string[];
+}
+
+function extractMessageContent(data: any): ExtractedMessage {
   const msgtype = data.msgtype || 'text';
   switch (msgtype) {
     case 'text':
-      return { text: data.text?.content?.trim() || '', messageType: 'text' };
+      return { text: data.text?.content?.trim() || '', messageType: 'text', imageUrls: [], downloadCodes: [] };
     case 'richText': {
       const parts = data.content?.richText || [];
-      const text = parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('');
-      return { text: text || '[富文本消息]', messageType: 'richText' };
+      const textParts: string[] = [];
+      const imageUrls: string[] = [];
+
+      for (const part of parts) {
+        if (part.text) {
+          textParts.push(part.text);
+        }
+        if (part.pictureUrl) {
+          imageUrls.push(part.pictureUrl);
+        }
+        if (part.type === 'picture' && part.downloadCode) {
+          // 有些 richText 图片通过 downloadCode 获取
+          imageUrls.push(`downloadCode:${part.downloadCode}`);
+        }
+      }
+
+      const text = textParts.join('') || (imageUrls.length > 0 ? '[图片]' : '[富文本消息]');
+      return { text, messageType: 'richText', imageUrls, downloadCodes: [] };
     }
-    case 'picture':
-      return { text: '[图片]', messageType: 'picture' };
+    case 'picture': {
+      const downloadCode = data.content?.downloadCode || '';
+      const pictureUrl = data.content?.pictureUrl || '';
+      const imageUrls: string[] = [];
+      const downloadCodes: string[] = [];
+
+      if (pictureUrl) {
+        imageUrls.push(pictureUrl);
+      }
+      if (downloadCode) {
+        downloadCodes.push(downloadCode);
+      }
+
+      return { text: '[图片]', messageType: 'picture', imageUrls, downloadCodes };
+    }
     case 'audio':
-      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio' };
+      return { text: data.content?.recognition || '[语音消息]', messageType: 'audio', imageUrls: [], downloadCodes: [] };
     case 'video':
-      return { text: '[视频]', messageType: 'video' };
-    case 'file':
-      return { text: `[文件: ${data.content?.fileName || '文件'}]`, messageType: 'file' };
+      return { text: '[视频]', messageType: 'video', imageUrls: [], downloadCodes: [] };
+    case 'file': {
+      const fileName = data.content?.fileName || '文件';
+      return { text: `[文件: ${fileName}]`, messageType: 'file', imageUrls: [], downloadCodes: [] };
+    }
     default:
-      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype };
+      return { text: data.text?.content?.trim() || `[${msgtype}消息]`, messageType: msgtype, imageUrls: [], downloadCodes: [] };
   }
 }
 
@@ -1991,13 +2118,13 @@ async function handleDingTalkMessage(params: {
   const { cfg, accountId, data, sessionWebhook, log, dingtalkConfig } = params;
 
   const content = extractMessageContent(data);
-  if (!content.text) return;
+  if (!content.text && content.imageUrls.length === 0 && content.downloadCodes.length === 0) return;
 
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
 
-  log?.info?.(`[DingTalk] 收到消息: from=${senderName} text="${content.text.slice(0, 50)}..."`);
+  log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${content.text.slice(0, 50)}..." images=${content.imageUrls.length} downloadCodes=${content.downloadCodes.length}`);
 
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
@@ -2039,6 +2166,37 @@ async function handleDingTalkMessage(params: {
     systemPrompts.push(dingtalkConfig.systemPrompt);
   }
 
+  // ===== 图片下载与 base64 转换（用于 vision 接口） =====
+  const imageDataUrls: string[] = [];
+
+  // 处理直接图片 URL（来自 richText 的 pictureUrl）
+  for (const url of content.imageUrls) {
+    if (url.startsWith('downloadCode:')) {
+      // 通过 downloadCode 下载
+      const code = url.slice('downloadCode:'.length);
+      const dataUrl = await downloadMediaByCode(code, dingtalkConfig, log);
+      if (dataUrl) imageDataUrls.push(dataUrl);
+    } else {
+      // 直接 URL 下载
+      const dataUrl = await downloadImageToBase64(url, log);
+      if (dataUrl) imageDataUrls.push(dataUrl);
+    }
+  }
+
+  // 处理 downloadCode（来自 picture 消息）
+  for (const code of content.downloadCodes) {
+    const dataUrl = await downloadMediaByCode(code, dingtalkConfig, log);
+    if (dataUrl) imageDataUrls.push(dataUrl);
+  }
+
+  if (imageDataUrls.length > 0) {
+    log?.info?.(`[DingTalk][Image] 成功转换 ${imageDataUrls.length} 张图片为 base64`);
+  }
+
+  // 对于纯图片消息（无文本），添加默认提示
+  const userContent = content.text || (imageDataUrls.length > 0 ? '请描述这张图片' : '');
+  if (!userContent && imageDataUrls.length === 0) return;
+
   // 尝试创建 AI Card
   const card = await createAICard(dingtalkConfig, data, log);
 
@@ -2054,10 +2212,11 @@ async function handleDingTalkMessage(params: {
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        imageDataUrls: imageDataUrls.length > 0 ? imageDataUrls : undefined,
         log,
       })) {
         accumulated += chunk;
@@ -2133,10 +2292,11 @@ async function handleDingTalkMessage(params: {
     let fullResponse = '';
     try {
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        imageDataUrls: imageDataUrls.length > 0 ? imageDataUrls : undefined,
         log,
       })) {
         fullResponse += chunk;
@@ -2169,6 +2329,293 @@ async function handleDingTalkMessage(params: {
       await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
         atUserId: !isDirect ? senderId : null,
       });
+    }
+  }
+}
+
+// ============ 钉钉文档 API ============
+
+/** 文档信息接口 */
+interface DocInfo {
+  docId: string;
+  title: string;
+  docType: string;
+  creatorId?: string;
+  updatedAt?: string;
+}
+
+/** 文档内容块 */
+interface DocBlock {
+  blockId: string;
+  blockType: string;
+  text?: string;
+  children?: DocBlock[];
+}
+
+/**
+ * 钉钉文档客户端
+ * 支持读写钉钉在线文档（文档、表格等）
+ */
+class DingtalkDocsClient {
+  private config: any;
+  private log?: any;
+
+  constructor(config: any, log?: any) {
+    this.config = config;
+    this.log = log;
+  }
+
+  /** 获取带鉴权的请求头 */
+  private async getHeaders(): Promise<Record<string, string>> {
+    const token = await getAccessToken(this.config);
+    return {
+      'x-acs-dingtalk-access-token': token,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  /**
+   * 获取文档元信息
+   * @param spaceId 空间 ID
+   * @param docId 文档 ID
+   */
+  async getDocInfo(spaceId: string, docId: string): Promise<DocInfo | null> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 获取文档信息: spaceId=${spaceId}, docId=${docId}`);
+
+      const resp = await axios.get(
+        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/docs/${docId}`,
+        { headers, timeout: 10_000 },
+      );
+
+      const data = resp.data;
+      this.log?.info?.(`[DingTalk][Docs] 文档信息获取成功: title=${data?.title}`);
+
+      return {
+        docId: data.docId || docId,
+        title: data.title || '',
+        docType: data.docType || 'unknown',
+        creatorId: data.creatorId,
+        updatedAt: data.updatedAt,
+      };
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 获取文档信息失败: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * 读取文档内容（获取文档所有 block）
+   * @param docId 文档 ID（知识库文档使用 dentryUuid）
+   */
+  async readDoc(docId: string): Promise<string | null> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 读取文档内容: docId=${docId}`);
+
+      const resp = await axios.get(
+        `${DINGTALK_API}/v1.0/doc/documents/${docId}/blocks/root/children`,
+        { headers, timeout: 30_000 },
+      );
+
+      const blocks: DocBlock[] = resp.data?.children || [];
+      const textParts = this.extractTextFromBlocks(blocks);
+      const content = textParts.join('\n');
+
+      this.log?.info?.(`[DingTalk][Docs] 文档读取成功: ${content.length} 字符, ${blocks.length} 个顶层 block`);
+      return content;
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 读取文档失败: ${err.message}`);
+      if (err.response) {
+        this.log?.error?.(`[DingTalk][Docs] 错误详情: status=${err.response.status} data=${JSON.stringify(err.response.data)}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * 从 block 树中递归提取纯文本内容
+   */
+  private extractTextFromBlocks(blocks: DocBlock[]): string[] {
+    const result: string[] = [];
+    for (const block of blocks) {
+      if (block.text) {
+        result.push(block.text);
+      }
+      if (block.children && block.children.length > 0) {
+        result.push(...this.extractTextFromBlocks(block.children));
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 向文档追加内容
+   * @param docId 文档 ID
+   * @param content 要追加的文本内容
+   * @param index 插入位置（-1 表示末尾）
+   */
+  async appendToDoc(
+    docId: string,
+    content: string,
+    index: number = -1,
+  ): Promise<boolean> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 向文档追加内容: docId=${docId}, contentLen=${content.length}`);
+
+      const body = {
+        blockType: 'PARAGRAPH',
+        body: {
+          text: content,
+        },
+        index,
+      };
+
+      await axios.post(
+        `${DINGTALK_API}/v1.0/doc/documents/${docId}/blocks/root/children`,
+        body,
+        { headers, timeout: 10_000 },
+      );
+
+      this.log?.info?.(`[DingTalk][Docs] 内容追加成功`);
+      return true;
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 追加内容失败: ${err.message}`);
+      if (err.response) {
+        this.log?.error?.(`[DingTalk][Docs] 错误详情: status=${err.response.status} data=${JSON.stringify(err.response.data)}`);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * 创建新文档
+   * @param spaceId 空间 ID
+   * @param title 文档标题
+   * @param content 初始内容（可选）
+   */
+  async createDoc(
+    spaceId: string,
+    title: string,
+    content?: string,
+  ): Promise<DocInfo | null> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 创建文档: spaceId=${spaceId}, title=${title}`);
+
+      const body: any = {
+        spaceId,
+        parentDentryId: '',
+        name: title,
+        docType: 'alidoc',
+      };
+
+      const resp = await axios.post(
+        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/docs`,
+        body,
+        { headers, timeout: 10_000 },
+      );
+
+      const data = resp.data;
+      this.log?.info?.(`[DingTalk][Docs] 文档创建成功: docId=${data?.docId}`);
+
+      const docInfo: DocInfo = {
+        docId: data.docId || data.dentryUuid || '',
+        title: title,
+        docType: data.docType || 'alidoc',
+      };
+
+      // 如果有初始内容，追加到文档
+      if (content && docInfo.docId) {
+        await this.appendToDoc(docInfo.docId, content);
+      }
+
+      return docInfo;
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 创建文档失败: ${err.message}`);
+      if (err.response) {
+        this.log?.error?.(`[DingTalk][Docs] 错误详情: status=${err.response.status} data=${JSON.stringify(err.response.data)}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * 搜索文档
+   * @param keyword 搜索关键词
+   * @param spaceId 空间 ID（可选，不填则搜索所有空间）
+   */
+  async searchDocs(
+    keyword: string,
+    spaceId?: string,
+  ): Promise<DocInfo[]> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 搜索文档: keyword=${keyword}, spaceId=${spaceId || '全部'}`);
+
+      const body: any = { keyword, maxResults: 20 };
+      if (spaceId) body.spaceId = spaceId;
+
+      const resp = await axios.post(
+        `${DINGTALK_API}/v1.0/doc/docs/search`,
+        body,
+        { headers, timeout: 10_000 },
+      );
+
+      const items = resp.data?.items || [];
+      const docs: DocInfo[] = items.map((item: any) => ({
+        docId: item.docId || item.dentryUuid || '',
+        title: item.name || item.title || '',
+        docType: item.docType || 'unknown',
+        creatorId: item.creatorId,
+        updatedAt: item.updatedAt,
+      }));
+
+      this.log?.info?.(`[DingTalk][Docs] 搜索到 ${docs.length} 个文档`);
+      return docs;
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 搜索文档失败: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * 列出空间下的文档
+   * @param spaceId 空间 ID
+   * @param parentId 父目录 ID（可选，不填则列出根目录）
+   */
+  async listDocs(
+    spaceId: string,
+    parentId?: string,
+  ): Promise<DocInfo[]> {
+    try {
+      const headers = await this.getHeaders();
+      this.log?.info?.(`[DingTalk][Docs] 列出文档: spaceId=${spaceId}, parentId=${parentId || '根目录'}`);
+
+      const params: any = { maxResults: 50 };
+      if (parentId) params.parentDentryId = parentId;
+
+      const resp = await axios.get(
+        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/dentries`,
+        { headers, params, timeout: 10_000 },
+      );
+
+      const items = resp.data?.items || [];
+      const docs: DocInfo[] = items.map((item: any) => ({
+        docId: item.dentryUuid || item.docId || '',
+        title: item.name || '',
+        docType: item.docType || item.dentryType || 'unknown',
+        creatorId: item.creatorId,
+        updatedAt: item.updatedAt,
+      }));
+
+      this.log?.info?.(`[DingTalk][Docs] 列出 ${docs.length} 个文档/目录`);
+      return docs;
+    } catch (err: any) {
+      this.log?.error?.(`[DingTalk][Docs] 列出文档失败: ${err.message}`);
+      return [];
     }
   }
 }
@@ -2639,7 +3086,134 @@ const plugin = {
       respond(result.ok, result);
     });
 
-    api.logger?.info('[DingTalk] 插件已注册（支持主动发送 AI Card 消息）');
+    // ===== 文档 API Methods =====
+
+    /**
+     * 读取钉钉文档内容
+     * 参数：
+     *   - docId: 文档 ID（dentryUuid）
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.docs.read', async ({ respond, cfg, params, log }: any) => {
+      const { docId, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+      if (!docId) {
+        return respond(false, { error: 'docId is required' });
+      }
+
+      const client = new DingtalkDocsClient(account.config, log);
+      const content = await client.readDoc(docId);
+
+      if (content !== null) {
+        respond(true, { content });
+      } else {
+        respond(false, { error: 'Failed to read document' });
+      }
+    });
+
+    /**
+     * 创建钉钉文档
+     * 参数：
+     *   - spaceId: 空间 ID
+     *   - title: 文档标题
+     *   - content?: 初始内容
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.docs.create', async ({ respond, cfg, params, log }: any) => {
+      const { spaceId, title, content, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+      if (!spaceId || !title) {
+        return respond(false, { error: 'spaceId and title are required' });
+      }
+
+      const client = new DingtalkDocsClient(account.config, log);
+      const doc = await client.createDoc(spaceId, title, content);
+
+      if (doc) {
+        respond(true, doc);
+      } else {
+        respond(false, { error: 'Failed to create document' });
+      }
+    });
+
+    /**
+     * 向钉钉文档追加内容
+     * 参数：
+     *   - docId: 文档 ID
+     *   - content: 要追加的内容
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.docs.append', async ({ respond, cfg, params, log }: any) => {
+      const { docId, content, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+      if (!docId || !content) {
+        return respond(false, { error: 'docId and content are required' });
+      }
+
+      const client = new DingtalkDocsClient(account.config, log);
+      const ok = await client.appendToDoc(docId, content);
+      respond(ok, ok ? { success: true } : { error: 'Failed to append to document' });
+    });
+
+    /**
+     * 搜索钉钉文档
+     * 参数：
+     *   - keyword: 搜索关键词
+     *   - spaceId?: 空间 ID（可选）
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.docs.search', async ({ respond, cfg, params, log }: any) => {
+      const { keyword, spaceId, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+      if (!keyword) {
+        return respond(false, { error: 'keyword is required' });
+      }
+
+      const client = new DingtalkDocsClient(account.config, log);
+      const docs = await client.searchDocs(keyword, spaceId);
+      respond(true, { docs });
+    });
+
+    /**
+     * 列出空间下的文档
+     * 参数：
+     *   - spaceId: 空间 ID
+     *   - parentId?: 父目录 ID（可选）
+     *   - accountId?: 账号 ID
+     */
+    api.registerGatewayMethod('dingtalk-connector.docs.list', async ({ respond, cfg, params, log }: any) => {
+      const { spaceId, parentId, accountId } = params || {};
+      const account = dingtalkPlugin.config.resolveAccount(cfg, accountId);
+
+      if (!account.config?.clientId) {
+        return respond(false, { error: 'DingTalk not configured' });
+      }
+      if (!spaceId) {
+        return respond(false, { error: 'spaceId is required' });
+      }
+
+      const client = new DingtalkDocsClient(account.config, log);
+      const docs = await client.listDocs(spaceId, parentId);
+      respond(true, { docs });
+    });
+
+    api.logger?.info('[DingTalk] 插件已注册（支持主动发送 AI Card 消息、文档读写）');
   },
 };
 
@@ -2654,4 +3228,6 @@ export {
   sendToUser,
   sendToGroup,
   sendProactive,
+  // 钉钉文档客户端
+  DingtalkDocsClient,
 };
