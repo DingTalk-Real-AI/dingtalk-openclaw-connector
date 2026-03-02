@@ -1147,6 +1147,9 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
   if (gatewayAuth) {
     headers['Authorization'] = `Bearer ${gatewayAuth}`;
   }
+  if (sessionKey) {
+    headers['x-openclaw-session-key'] = sessionKey;
+  }
 
   log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, messages=${messages.length}`);
 
@@ -1157,7 +1160,6 @@ async function* streamFromGateway(options: GatewayOptions): AsyncGenerator<strin
       model: 'default',
       messages,
       stream: true,
-      user: sessionKey,  // 用于 session 持久化
     }),
   });
 
@@ -2380,10 +2382,13 @@ async function handleDingTalkMessage(params: {
 
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
+      // 🆕 使用 agentId 指定目标 agent
+      const agentSessionKey = dingtalkConfig.agentId ? `agent:${dingtalkConfig.agentId}:${sessionKey}` : sessionKey;
+      
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: agentSessionKey,  // 🆕 使用带 agent 的 session key
         gatewayAuth,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
@@ -2460,10 +2465,13 @@ async function handleDingTalkMessage(params: {
 
     let fullResponse = '';
     try {
+      // 🆕 使用 agentId 指定目标 agent
+      const agentSessionKey = dingtalkConfig.agentId ? `agent:${dingtalkConfig.agentId}:${sessionKey}` : sessionKey;
+      
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: agentSessionKey,  // 🆕 使用带 agent 的 session key
         gatewayAuth,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
