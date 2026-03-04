@@ -2582,6 +2582,7 @@ async function handleDingTalkMessage(params: {
   }
 
   // AI Card 延迟创建：先缓冲响应，确认不是静默回复后再创建卡片
+  // 超时兜底：如果 1.5 秒内没有结论（LLM 在思考），先创建卡片显示 thinking 状态
   {
     let accumulated = '';
     let lastUpdateTime = 0;
@@ -2589,6 +2590,21 @@ async function handleDingTalkMessage(params: {
     let chunkCount = 0;
     let card: AICardInstance | null = null;
     let cardCreationFailed = false;
+    const streamStartTime = Date.now();
+    const SILENT_CHECK_TIMEOUT = 1500; // 1.5 秒内 NO_REPLY 应该已到达
+
+    // 启动超时兜底：1.5s 后如果还没创建卡片且还在缓冲，先创建
+    const cardTimeoutId = setTimeout(async () => {
+      if (!card && !cardCreationFailed && !isSilentReply(accumulated.trim())) {
+        log?.info?.(`[DingTalk] 超时兜底：1.5s 未收到完整静默回复，预创建 AI Card`);
+        card = await createAICard(dingtalkConfig, data, log);
+        if (card) {
+          log?.info?.(`[DingTalk] AI Card 超时预创建成功: ${card.cardInstanceId}`);
+        } else {
+          cardCreationFailed = true;
+        }
+      }
+    }, SILENT_CHECK_TIMEOUT);
 
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
@@ -2608,12 +2624,13 @@ async function handleDingTalkMessage(params: {
         }
 
         // 可能是静默回复前缀，暂不创建卡片
-        if (couldBeSilentReply(accumulated)) {
+        if (couldBeSilentReply(accumulated) && !card) {
           log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓: "${accumulated.trim()}"`);
           continue;
         }
 
-        // 确认不是静默，延迟创建 AI Card
+        // 确认不是静默，创建 AI Card（如果超时兜底没创建的话）
+        clearTimeout(cardTimeoutId);
         if (!card && !cardCreationFailed) {
           card = await createAICard(dingtalkConfig, data, log);
           if (card) {
@@ -2640,6 +2657,7 @@ async function handleDingTalkMessage(params: {
       }
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
+      clearTimeout(cardTimeoutId);
 
       // 静默回复：不创建卡片，直接返回
       if (isSilentReply(accumulated.trim())) {
