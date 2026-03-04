@@ -94,6 +94,13 @@ function isSilentReply(text: string): boolean {
   return trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK';
 }
 
+/** 检查当前累积内容是否可能是静默回复的前缀（用于流式阶段缓冲） */
+function couldBeSilentReply(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return 'NO_REPLY'.startsWith(trimmed) || 'HEARTBEAT_OK'.startsWith(trimmed);
+}
+
 /** 获取或创建用户 session key */
 function getSessionKey(
   senderId: string,
@@ -2597,14 +2604,19 @@ async function handleDingTalkMessage(params: {
         // 节流更新，避免过于频繁
         const now = Date.now();
         if (now - lastUpdateTime >= updateInterval) {
-          // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
-          const displayContent = accumulated
-            .replace(FILE_MARKER_PATTERN, '')
-            .replace(VIDEO_MARKER_PATTERN, '')
-            .replace(AUDIO_MARKER_PATTERN, '')
-            .trim();
-          await streamAICard(card, displayContent, false, log);
-          lastUpdateTime = now;
+          // 如果累积内容可能是静默回复的前缀，暂不推送到 AI Card
+          if (couldBeSilentReply(accumulated)) {
+            log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓推送: "${accumulated.trim()}"`);
+          } else {
+            // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
+            const displayContent = accumulated
+              .replace(FILE_MARKER_PATTERN, '')
+              .replace(VIDEO_MARKER_PATTERN, '')
+              .replace(AUDIO_MARKER_PATTERN, '')
+              .trim();
+            await streamAICard(card, displayContent, false, log);
+            lastUpdateTime = now;
+          }
         }
       }
 
