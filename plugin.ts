@@ -91,10 +91,14 @@ function isModeSwitch(text: string): 'async' | 'stream' | null {
 /** 静默回复关键词（大写，匹配时统一转大写） */
 const SILENT_REPLIES = ['NO_REPLY', 'HEARTBEAT_OK'];
 
-/** 检查 Gateway 响应是否为静默回复（NO_REPLY / HEARTBEAT_OK，忽略大小写） */
+/**
+ * 检查 Gateway 响应是否为静默回复（忽略大小写）
+ * 完整匹配或前缀匹配均视为静默（因为 Gateway 可能截断 NO_REPLY 只发出 NO 或 NO_）
+ */
 function isSilentReply(text: string): boolean {
   const trimmed = text.trim().toUpperCase();
-  return SILENT_REPLIES.includes(trimmed);
+  if (!trimmed) return false;
+  return SILENT_REPLIES.some(sr => sr === trimmed || sr.startsWith(trimmed));
 }
 
 /** 检查当前累积内容是否可能是静默回复的前缀（用于流式阶段缓冲，忽略大小写） */
@@ -2546,6 +2550,7 @@ async function handleDingTalkMessage(params: {
       fullResponse = await processFileMarkers(fullResponse, '', dingtalkConfig, oapiToken, log, true, proactiveMediaTarget);
 
       const finalText = fullResponse.trim() || '✅ 任务执行完成（无文本输出）';
+      log?.info?.(`[DingTalk][Async] finalText="${finalText}", bytes=[${Buffer.from(finalText).toString('hex')}], isSilent=${isSilentReply(finalText)}`);
       if (isSilentReply(finalText)) {
         log?.info?.(`[DingTalk][Async] 静默回复，跳过推送`);
       } else {
