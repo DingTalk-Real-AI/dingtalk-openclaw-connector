@@ -2666,65 +2666,45 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
       accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
-      // 完成 AI Card
+      // 完成输出
       const finalContent = accumulated.trim();
-      if (finalContent.length === 0) {
-        log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
-        await finishAICard(card, '✅ 媒体已发送', log);
-      } else {
-        await finishAICard(card, finalContent, log);
+
+      if (card) {
+        // AI Card 模式
+        if (finalContent.length === 0) {
+          log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
+          await finishAICard(card, '✅ 媒体已发送', log);
+        } else {
+          await finishAICard(card, finalContent, log);
+        }
+        log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
+      } else if (cardCreationFailed && finalContent) {
+        // AI Card 创建失败，降级为普通消息
+        log?.warn?.(`[DingTalk] AI Card 创建失败，降级为普通消息`);
+        await sendMessage(dingtalkConfig, sessionWebhook, finalContent, {
+          atUserId: !isDirect ? senderId : null,
+          useMarkdown: true,
+        });
+        log?.info?.(`[DingTalk] 降级普通消息回复完成，共 ${finalContent.length} 字符`);
       }
-      log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
       log?.error?.(`[DingTalk] 错误详情: ${err.stack}`);
       accumulated += `\n\n⚠️ 响应中断: ${err.message}`;
-      try {
-        await finishAICard(card, accumulated, log);
-      } catch (finishErr: any) {
-        log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
-      }
-    }
-
-  } else {
-    // ===== 降级：普通消息模式 =====
-    log?.warn?.(`[DingTalk] AI Card 创建失败，降级为普通消息`);
-
-    let fullResponse = '';
-    try {
-      for await (const chunk of streamFromGateway({
-        userContent,
-        systemPrompts,
-        sessionKey,
-        gatewayAuth,
-        imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
-        log,
-      }, accountId)) {
-        fullResponse += chunk;
-      }
-
-      // 后处理
-      fullResponse = await processLocalImages(fullResponse, oapiToken, log);
-      fullResponse = await processVideoMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
-      fullResponse = await processAudioMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
-      fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
-
-      if (isSilentReply(fullResponse.trim())) {
-        log?.info?.(`[DingTalk] 静默回复，跳过发送`);
+      if (card) {
+        try {
+          await finishAICard(card, accumulated, log);
+        } catch (finishErr: any) {
+          log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
+        }
       } else {
-        await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
-          atUserId: !isDirect ? senderId : null,
-          useMarkdown: true,
-        });
-        log?.info?.(`[DingTalk] 普通消息回复完成，共 ${fullResponse.length} 字符`);
+        try {
+          await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
+            atUserId: !isDirect ? senderId : null,
+          });
+        } catch {}
       }
-
-    } catch (err: any) {
-      log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
-      await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
-        atUserId: !isDirect ? senderId : null,
-      });
     }
   }
 }
