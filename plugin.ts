@@ -88,6 +88,12 @@ function isModeSwitch(text: string): 'async' | 'stream' | null {
   return null;
 }
 
+/** 检查 Gateway 响应是否为静默回复（NO_REPLY / HEARTBEAT_OK） */
+function isSilentReply(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK';
+}
+
 /** 获取或创建用户 session key */
 function getSessionKey(
   senderId: string,
@@ -2530,14 +2536,17 @@ async function handleDingTalkMessage(params: {
       fullResponse = await processFileMarkers(fullResponse, '', dingtalkConfig, oapiToken, log, true, proactiveMediaTarget);
 
       const finalText = fullResponse.trim() || '✅ 任务执行完成（无文本输出）';
-      await sendProactive(dingtalkConfig, proactiveTarget, finalText, {
-        msgType: 'markdown',
-        useAICard: false,
-        fallbackToNormal: true,
-        log,
-      });
-
-      log?.info?.(`[DingTalk][Async] 结果已主动推送，长度=${finalText.length}`);
+      if (isSilentReply(finalText)) {
+        log?.info?.(`[DingTalk][Async] 静默回复，跳过推送`);
+      } else {
+        await sendProactive(dingtalkConfig, proactiveTarget, finalText, {
+          msgType: 'markdown',
+          useAICard: false,
+          fallbackToNormal: true,
+          log,
+        });
+        log?.info?.(`[DingTalk][Async] 结果已主动推送，长度=${finalText.length}`);
+      }
     } catch (err: any) {
       const errMsg = `⚠️ 任务执行失败: ${err?.message || err}`;
       log?.error?.(`[DingTalk][Async] ${errMsg}`);
@@ -2625,7 +2634,11 @@ async function handleDingTalkMessage(params: {
 
       // 完成 AI Card（如果内容为空，说明是纯媒体消息，使用默认提示）
       const finalContent = accumulated.trim();
-      if (finalContent.length === 0) {
+      if (isSilentReply(finalContent)) {
+        // Gateway 返回 NO_REPLY / HEARTBEAT_OK，静默关闭卡片
+        log?.info?.(`[DingTalk][AICard] 静默回复，关闭卡片不显示内容`);
+        await finishAICard(card, '', log);
+      } else if (finalContent.length === 0) {
         log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
         await finishAICard(card, '✅ 媒体已发送', log);
       } else {
@@ -2677,11 +2690,15 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] (降级模式) 开始文件后处理`);
       fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
 
-      await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
-        atUserId: !isDirect ? senderId : null,
-        useMarkdown: true,
-      });
-      log?.info?.(`[DingTalk] 普通消息回复完成，共 ${fullResponse.length} 字符`);
+      if (isSilentReply(fullResponse.trim())) {
+        log?.info?.(`[DingTalk] 静默回复，跳过发送`);
+      } else {
+        await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
+          atUserId: !isDirect ? senderId : null,
+          useMarkdown: true,
+        });
+        log?.info?.(`[DingTalk] 普通消息回复完成，共 ${fullResponse.length} 字符`);
+      }
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
