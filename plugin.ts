@@ -2523,12 +2523,13 @@ async function handleDingTalkMessage(params: {
     let fullResponse = '';
     try {
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
-      })) {
+      }, accountId)) {
         fullResponse += chunk;
       }
 
