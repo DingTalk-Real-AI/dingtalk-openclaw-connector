@@ -2573,15 +2573,18 @@ async function handleDingTalkMessage(params: {
   }
 
   // 尝试创建 AI Card
-  // AI Card 延迟创建：先缓冲 Gateway 响应，确认不是静默回复后再创建卡片
-  {
-    // ===== AI Card 流式模式（延迟创建） =====
+  // 立即创建 AI Card（显示 thinking 状态），但等确认非静默回复后才推送内容
+  const card = await createAICard(dingtalkConfig, data, log);
+
+  if (card) {
+    // ===== AI Card 流式模式 =====
+    log?.info?.(`[DingTalk] AI Card 创建成功: ${card.cardInstanceId}`);
+
     let accumulated = '';
     let lastUpdateTime = 0;
     const updateInterval = 300; // 最小更新间隔 ms
     let chunkCount = 0;
-    let card: AICardInstance | null = null;
-    let cardCreationFailed = false;
+    let confirmedNotSilent = false;  // 是否已确认不是静默回复
 
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
@@ -2600,47 +2603,36 @@ async function handleDingTalkMessage(params: {
           log?.info?.(`[DingTalk] Gateway chunk #${chunkCount}: "${chunk.slice(0, 50)}..." (accumulated=${accumulated.length})`);
         }
 
-        // 如果累积内容可能是静默回复的前缀，暂不创建卡片也不推送
-        if (couldBeSilentReply(accumulated)) {
-          log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓: "${accumulated.trim()}"`);
-          continue;
-        }
-
-        // 确认不是静默回复，延迟创建 AI Card
-        if (!card && !cardCreationFailed) {
-          card = await createAICard(dingtalkConfig, data, log);
-          if (card) {
-            log?.info?.(`[DingTalk] AI Card 延迟创建成功: ${card.cardInstanceId}`);
-          } else {
-            log?.warn?.(`[DingTalk] AI Card 创建失败，将降级为普通消息`);
-            cardCreationFailed = true;
+        // 如果尚未确认非静默，检查是否可能是静默回复前缀
+        if (!confirmedNotSilent) {
+          if (couldBeSilentReply(accumulated)) {
+            log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓推送: "${accumulated.trim()}"`);
+            continue;
           }
+          confirmedNotSilent = true;
+          log?.info?.(`[DingTalk] 确认非静默回复，开始流式推送`);
         }
 
         // 节流更新，避免过于频繁
-        if (card) {
-          const now = Date.now();
-          if (now - lastUpdateTime >= updateInterval) {
-            // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
-            const displayContent = accumulated
-              .replace(FILE_MARKER_PATTERN, '')
-              .replace(VIDEO_MARKER_PATTERN, '')
-              .replace(AUDIO_MARKER_PATTERN, '')
-              .trim();
-            await streamAICard(card, displayContent, false, log);
-            lastUpdateTime = now;
-          }
+        const now = Date.now();
+        if (now - lastUpdateTime >= updateInterval) {
+          // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
+          const displayContent = accumulated
+            .replace(FILE_MARKER_PATTERN, '')
+            .replace(VIDEO_MARKER_PATTERN, '')
+            .replace(AUDIO_MARKER_PATTERN, '')
+            .trim();
+          await streamAICard(card, displayContent, false, log);
+          lastUpdateTime = now;
         }
       }
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
 
-      // 如果是静默回复，直接返回不做任何输出
+      // 如果是静默回复，静默关闭卡片
       if (isSilentReply(accumulated.trim())) {
-        log?.info?.(`[DingTalk] 静默回复，跳过所有输出`);
-        if (card) {
-          await finishAICard(card, '', log);
-        }
+        log?.info?.(`[DingTalk] 静默回复，关闭卡片`);
+        await finishAICard(card, '', log);
         return;
       }
 
@@ -2665,46 +2657,65 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
       accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
+      // 完成 AI Card
       const finalContent = accumulated.trim();
-
-      if (card) {
-        // AI Card 已创建，完成卡片
-        if (finalContent.length === 0) {
-          log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
-          await finishAICard(card, '✅ 媒体已发送', log);
-        } else {
-          await finishAICard(card, finalContent, log);
-        }
-        log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
-      } else if (cardCreationFailed && finalContent) {
-        // AI Card 创建失败，降级为普通消息
-        log?.warn?.(`[DingTalk] AI Card 创建失败，降级为普通消息`);
-        await sendMessage(dingtalkConfig, sessionWebhook, finalContent, {
-          atUserId: !isDirect ? senderId : null,
-          useMarkdown: true,
-        });
-        log?.info?.(`[DingTalk] 降级普通消息回复完成，共 ${finalContent.length} 字符`);
+      if (finalContent.length === 0) {
+        log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
+        await finishAICard(card, '✅ 媒体已发送', log);
+      } else {
+        await finishAICard(card, finalContent, log);
       }
-      // 如果 card 为 null 且未 cardCreationFailed，说明是静默回复（已在上面 return 了）
+      log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
       log?.error?.(`[DingTalk] 错误详情: ${err.stack}`);
       accumulated += `\n\n⚠️ 响应中断: ${err.message}`;
-      if (card) {
-        try {
-          await finishAICard(card, accumulated, log);
-        } catch (finishErr: any) {
-          log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
-        }
-      } else {
-        // 降级发送错误信息
-        try {
-          await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
-            atUserId: !isDirect ? senderId : null,
-          });
-        } catch {}
+      try {
+        await finishAICard(card, accumulated, log);
+      } catch (finishErr: any) {
+        log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
       }
+    }
+
+  } else {
+    // ===== 降级：普通消息模式 =====
+    log?.warn?.(`[DingTalk] AI Card 创建失败，降级为普通消息`);
+
+    let fullResponse = '';
+    try {
+      for await (const chunk of streamFromGateway({
+        userContent,
+        systemPrompts,
+        sessionKey,
+        gatewayAuth,
+        imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
+        log,
+      }, accountId)) {
+        fullResponse += chunk;
+      }
+
+      // 后处理
+      fullResponse = await processLocalImages(fullResponse, oapiToken, log);
+      fullResponse = await processVideoMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
+      fullResponse = await processAudioMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
+      fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
+
+      if (isSilentReply(fullResponse.trim())) {
+        log?.info?.(`[DingTalk] 静默回复，跳过发送`);
+      } else {
+        await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
+          atUserId: !isDirect ? senderId : null,
+          useMarkdown: true,
+        });
+        log?.info?.(`[DingTalk] 普通消息回复完成，共 ${fullResponse.length} 字符`);
+      }
+
+    } catch (err: any) {
+      log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
+      await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
+        atUserId: !isDirect ? senderId : null,
+      });
     }
   }
 }
