@@ -88,17 +88,20 @@ function isModeSwitch(text: string): 'async' | 'stream' | null {
   return null;
 }
 
-/** 检查 Gateway 响应是否为静默回复（NO_REPLY / HEARTBEAT_OK） */
+/** 静默回复关键词（大写，匹配时统一转大写） */
+const SILENT_REPLIES = ['NO_REPLY', 'HEARTBEAT_OK'];
+
+/** 检查 Gateway 响应是否为静默回复（NO_REPLY / HEARTBEAT_OK，忽略大小写） */
 function isSilentReply(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK';
+  const trimmed = text.trim().toUpperCase();
+  return SILENT_REPLIES.includes(trimmed);
 }
 
-/** 检查当前累积内容是否可能是静默回复的前缀（用于流式阶段缓冲） */
+/** 检查当前累积内容是否可能是静默回复的前缀（用于流式阶段缓冲，忽略大小写） */
 function couldBeSilentReply(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = text.trim().toUpperCase();
   if (!trimmed) return true;
-  return 'NO_REPLY'.startsWith(trimmed) || 'HEARTBEAT_OK'.startsWith(trimmed);
+  return SILENT_REPLIES.some(sr => sr.startsWith(trimmed));
 }
 
 /** 获取或创建用户 session key */
@@ -2629,10 +2632,10 @@ async function handleDingTalkMessage(params: {
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
 
-      // 如果是静默回复，静默关闭卡片
+      // 如果是静默回复，用空内容关闭卡片（AI Card 创建后无法删除，只能关闭）
       if (isSilentReply(accumulated.trim())) {
-        log?.info?.(`[DingTalk] 静默回复，关闭卡片`);
-        await finishAICard(card, '', log);
+        log?.info?.(`[DingTalk] 静默回复，静默关闭卡片`);
+        await finishAICard(card, ' ', log);
         return;
       }
 
