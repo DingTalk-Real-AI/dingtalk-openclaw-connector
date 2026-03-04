@@ -2581,19 +2581,14 @@ async function handleDingTalkMessage(params: {
     return;
   }
 
-  // 尝试创建 AI Card
-  // 立即创建 AI Card（显示 thinking 状态），但等确认非静默回复后才推送内容
-  const card = await createAICard(dingtalkConfig, data, log);
-
-  if (card) {
-    // ===== AI Card 流式模式 =====
-    log?.info?.(`[DingTalk] AI Card 创建成功: ${card.cardInstanceId}`);
-
+  // AI Card 延迟创建：先缓冲响应，确认不是静默回复后再创建卡片
+  {
     let accumulated = '';
     let lastUpdateTime = 0;
-    const updateInterval = 300; // 最小更新间隔 ms
+    const updateInterval = 300;
     let chunkCount = 0;
-    let confirmedNotSilent = false;  // 是否已确认不是静默回复
+    let card: AICardInstance | null = null;
+    let cardCreationFailed = false;
 
     try {
       log?.info?.(`[DingTalk] 开始请求 Gateway 流式接口...`);
@@ -2612,36 +2607,43 @@ async function handleDingTalkMessage(params: {
           log?.info?.(`[DingTalk] Gateway chunk #${chunkCount}: "${chunk.slice(0, 50)}..." (accumulated=${accumulated.length})`);
         }
 
-        // 如果尚未确认非静默，检查是否可能是静默回复前缀
-        if (!confirmedNotSilent) {
-          if (couldBeSilentReply(accumulated)) {
-            log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓推送: "${accumulated.trim()}"`);
-            continue;
-          }
-          confirmedNotSilent = true;
-          log?.info?.(`[DingTalk] 确认非静默回复，开始流式推送`);
+        // 可能是静默回复前缀，暂不创建卡片
+        if (couldBeSilentReply(accumulated)) {
+          log?.info?.(`[DingTalk] 可能是静默回复前缀，暂缓: "${accumulated.trim()}"`);
+          continue;
         }
 
-        // 节流更新，避免过于频繁
-        const now = Date.now();
-        if (now - lastUpdateTime >= updateInterval) {
-          // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
-          const displayContent = accumulated
-            .replace(FILE_MARKER_PATTERN, '')
-            .replace(VIDEO_MARKER_PATTERN, '')
-            .replace(AUDIO_MARKER_PATTERN, '')
-            .trim();
-          await streamAICard(card, displayContent, false, log);
-          lastUpdateTime = now;
+        // 确认不是静默，延迟创建 AI Card
+        if (!card && !cardCreationFailed) {
+          card = await createAICard(dingtalkConfig, data, log);
+          if (card) {
+            log?.info?.(`[DingTalk] AI Card 延迟创建成功: ${card.cardInstanceId}`);
+          } else {
+            log?.warn?.(`[DingTalk] AI Card 创建失败，降级为普通消息`);
+            cardCreationFailed = true;
+          }
+        }
+
+        // 节流更新
+        if (card) {
+          const now = Date.now();
+          if (now - lastUpdateTime >= updateInterval) {
+            const displayContent = accumulated
+              .replace(FILE_MARKER_PATTERN, '')
+              .replace(VIDEO_MARKER_PATTERN, '')
+              .replace(AUDIO_MARKER_PATTERN, '')
+              .trim();
+            await streamAICard(card, displayContent, false, log);
+            lastUpdateTime = now;
+          }
         }
       }
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
 
-      // 如果是静默回复，用空内容关闭卡片（AI Card 创建后无法删除，只能关闭）
+      // 静默回复：不创建卡片，直接返回
       if (isSilentReply(accumulated.trim())) {
-        log?.info?.(`[DingTalk] 静默回复，静默关闭卡片`);
-        await finishAICard(card, ' ', log);
+        log?.info?.(`[DingTalk] 静默回复，跳过所有输出`);
         return;
       }
 
