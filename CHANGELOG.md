@@ -6,6 +6,20 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-03-05
+
+### 修复 / Fixes
+- 🐛 修复 stream 模式 model 参数错误导致 session 路由失败的问题  
+  Fixed issue where incorrect model parameter in stream mode caused session routing failures
+- 🐛 将 Gateway 请求中的 model 参数从 `'default'` 更正为 `'main'`，确保正确的 Agent 路由  
+  Corrected model parameter in Gateway requests from `'default'` to `'main'` to ensure proper Agent routing
+
+### 改进 / Improvements
+- 优化异步模式处理流程，改进错误处理和日志输出  
+  Optimized async mode processing flow, improved error handling and log output
+- 增强 DM Policy 检查机制，支持白名单配置  
+  Enhanced DM Policy check mechanism, supporting allowlist configuration
+
 ## [0.7.0] - 2026-03-05
 
 ### 新增功能 / Added Features
