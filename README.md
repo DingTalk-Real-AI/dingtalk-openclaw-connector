@@ -2,6 +2,8 @@
 
 以下提供两种方案连接到 [OpenClaw](https://openclaw.ai) Gateway，分别是钉钉机器人和钉钉 DEAP Agent。
 
+> 📝 **版本信息**：当前版本 v0.7.1 | [查看变更日志](CHANGELOG.md) | [发布说明](RELEASE_NOTES_v0.7.1.md) | [发布指南](RELEASE.md)
+
 ## 快速导航
 
 | 方案 | 名称 | 详情 |
@@ -20,6 +22,12 @@
 - ✅ **手动新会话** - 发送 `/new` 或 `新会话` 清空对话历史
 - ✅ **图片自动上传** - 本地图片路径自动上传到钉钉
 - ✅ **主动发送消息** - 支持主动给钉钉个人或群发送消息
+- ✅ **富媒体接收** - 支持接收 JPEG/PNG 图片消息，自动下载并传递给视觉模型
+- ✅ **文件附件提取** - 支持解析 .docx、.pdf、纯文本文件（.txt、.md、.json 等）和二进制文件（.xlsx、.pptx、.zip 等）
+- ✅ **钉钉文档 API** - 支持创建、追加、搜索、列举钉钉文档
+- ✅ **多 Agent 路由** - 支持一个连接器实例连接多个 Agent，多个钉钉机器人可分别绑定到不同 Agent，实现角色分工和专业化服务
+- ✅ **Markdown 表格转换** - 自动将 Markdown 表格转换为钉钉支持的文本格式，提升消息可读性
+
 
 ## 架构
 
@@ -48,15 +56,18 @@ graph LR
 ### 1. 安装插件
 
 ```bash
-# 远程安装
-openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-moltbot-connector.git
+# 通过 npm 安装（推荐）
+openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+
+# 或通过 Git 安装
+openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
 
 # 升级插件
 openclaw plugins update dingtalk-connector
 
 # 或本地开发模式
-git clone https://github.com/DingTalk-Real-AI/dingtalk-moltbot-connector.git
-cd dingtalk-moltbot-connector
+git clone https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
+cd dingtalk-openclaw-connector
 npm install
 openclaw plugins install -l .
 ```
@@ -113,9 +124,10 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 2. 进入 **应用开发** → **企业内部开发** → 创建应用
 3. 添加 **机器人** 能力，消息接收模式选择 **Stream 模式**
 4. 开通权限：
-   - `Card.Streaming.Write`
-   - `Card.Instance.Write`
-   - `qyapi_robot_sendmsg`
+   - `Card.Streaming.Write` - AI Card 流式响应
+   - `Card.Instance.Write` - AI Card 实例写入
+   - `qyapi_robot_sendmsg` - 主动发送消息
+   - 如需使用文档 API 功能，还需开通文档相关权限
 5. **发布应用**，记录 **AppKey** 和 **AppSecret**
 
 ## 配置参考
@@ -128,6 +140,59 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 | `gatewayPassword` | — | Gateway 认证 password（可选，与 token 二选一） |
 | `sessionTimeout` | — | 会话超时时间，单位毫秒（默认 1800000 = 30分钟） |
 
+## 多 Agent 配置
+
+钉钉 Connector 支持多 Agent 模式，可以配置多个钉钉机器人连接到不同的 Agent，实现角色分工和专业化服务。
+
+### 核心配置
+
+在 `~/.openclaw/openclaw.json` 中配置多个钉钉账号和 Agent 绑定：
+
+```json5
+{
+  "channels": {
+    "dingtalk-connector": {
+      "enabled": true,
+      "accounts": {
+        "bot1": {
+          "enabled": true,
+          "clientId": "ding_bot1_app_key",
+          "clientSecret": "bot1_secret"
+        },
+        "bot2": {
+          "enabled": true,
+          "clientId": "ding_bot2_app_key",
+          "clientSecret": "bot2_secret"
+        }
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "ding-bot1",
+      "match": {
+        "channel": "dingtalk-connector",
+        "accountId": "bot1"
+      }
+    },
+    {
+      "agentId": "ding-bot2",
+      "match": {
+        "channel": "dingtalk-connector",
+        "accountId": "bot2"
+      }
+    }
+  ]
+}
+```
+
+### 官方文档
+
+详细的配置指南和架构说明，请参考 OpenClaw 官方文档：
+
+- [OpenClaw 多 Agent 架构配置指南](https://gist.github.com/smallnest/c5c13482740fd179e40070e620f66a52)
+
+
 ## 会话命令
 
 用户可以发送以下命令开启新会话（清空对话历史）：
@@ -135,10 +200,103 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 - `/new`、`/reset`、`/clear`
 - `新会话`、`重新开始`、`清空对话`
 
+## 富媒体接收
+
+### 图片消息支持
+
+连接器支持接收和处理钉钉中的图片消息：
+
+- **JPEG 图片** - 直接发送的 JPEG 图片会自动下载到 `~/.openclaw/workspace/media/inbound/` 目录
+- **PNG 图片** - 富文本消息中包含的 PNG 图片会自动提取 URL 和 downloadCode 并下载
+- **视觉模型集成** - 下载的图片会自动传递给视觉模型，AI 可以识别和分析图片内容
+
+### 媒体文件存储
+
+所有接收的媒体文件会保存在：
+
+```bash
+~/.openclaw/workspace/media/inbound/
+```
+
+文件命名格式：`openclaw-media-{timestamp}.{ext}`
+
+查看媒体目录：
+
+```bash
+ls -la ~/.openclaw/workspace/media/inbound/
+```
+
+## 文件附件提取
+
+连接器支持自动提取和处理钉钉消息中的文件附件：
+
+### 支持的文件类型
+
+| 文件类型 | 处理方式 | 说明 |
+|---------|---------|------|
+| `.docx` | 通过 `mammoth` 解析 | 提取 Word 文档中的文本内容，注入到 AI 上下文 |
+| `.pdf` | 通过 `pdf-parse` 解析 | 提取 PDF 文档中的文本内容，注入到 AI 上下文 |
+| `.txt`、`.md`、`.json` 等 | 直接读取 | 纯文本文件内容直接读取并注入到消息中 |
+| `.xlsx`、`.pptx`、`.zip` 等 | 保存到磁盘 | 二进制文件保存到磁盘，文件路径和名称会在消息中报告 |
+
+### 使用方式
+
+直接在钉钉中发送文件附件，连接器会自动：
+1. 下载文件到本地
+2. 根据文件类型进行解析或保存
+3. 将文本内容注入到 AI 对话上下文中
+
+## 钉钉文档 API
+
+连接器提供了丰富的钉钉文档操作能力，可在 OpenClaw Agent 中调用：
+
+### 创建文档
+
+```javascript
+dingtalk-connector.docs.create({
+  spaceId: "your-space-id",
+  title: "测试文档",
+  content: "# 测试内容"
+})
+```
+
+### 追加内容
+
+```javascript
+dingtalk-connector.docs.append({
+  docId: "your-doc-id",
+  markdownContent: "\n## 追加的内容"
+})
+```
+
+### 搜索文档
+
+```javascript
+dingtalk-connector.docs.search({
+  keyword: "搜索关键词"
+})
+```
+
+### 列举文档
+
+```javascript
+dingtalk-connector.docs.list({
+  spaceId: "your-space-id"
+})
+```
+
+## 多 Agent 路由支持
+
+连接器支持同时连接多个 Agent，实现多 Agent 会话隔离：
+
+- **独立会话空间** - 每个 Agent 拥有独立的会话上下文，互不干扰
+- **灵活路由** - 可根据不同场景将请求路由到不同的 Agent
+- **向后兼容** - 单 Agent 场景下功能完全兼容，无需额外配置
+
 ## 项目结构
 
 ```
-dingtalk-moltbot-connector/
+dingtalk-openclaw-connector/
 ├── plugin.ts              # 插件入口
 ├── openclaw.plugin.json   # 插件清单
 ├── package.json           # npm 依赖
@@ -197,7 +355,7 @@ dingtalk-moltbot-connector/
 rm -rf ~/.clawdbot/extensions/dingtalk-connector
 rm -rf ~/.moltbot/extensions/dingtalk-connector
 rm -rf ~/.openclaw/extensions/dingtalk-connector
-openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-moltbot-connector.git
+openclaw plugins install @dingtalk-real-ai/dingtalk-connector
 ```
 
 ### Q: 图片不显示
@@ -206,12 +364,38 @@ openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-moltbot-co
 2. 检查日志 `[DingTalk][Media]` 相关输出
 3. 确认钉钉应用有图片上传权限
 
+### Q: 图片消息无法识别
+
+1. 检查图片是否成功下载到 `~/.openclaw/workspace/media/inbound/` 目录
+2. 确认 Gateway 配置的模型支持视觉能力（vision model）
+3. 查看日志中是否有图片下载或处理的错误信息
+
+### Q: 文件附件无法解析
+
+1. **Word 文档（.docx）**：确认已安装 `mammoth` 依赖包
+2. **PDF 文档**：确认已安装 `pdf-parse` 依赖包
+3. 检查文件是否成功下载，查看日志中的文件处理信息
+4. 对于不支持的二进制文件，会保存到磁盘并在消息中报告文件路径
+
+### Q: 钉钉文档 API 调用失败
+
+1. 确认钉钉应用已开通文档相关权限
+2. 检查 `spaceId`、`docId` 等参数是否正确
+3. 确认 API 调用时的认证信息（AppKey/AppSecret）有效
+4. 注意：读取文档功能需要 MCP 提供相应的 tool，当前版本暂不支持
+
+### Q: 多 Agent 路由如何配置
+
+多 Agent 路由功能会自动处理，无需额外配置。连接器会根据配置自动管理多个 Agent 的会话隔离。如需自定义路由逻辑，请参考插件源码中的路由实现。
+
 ## 依赖
 
 | 包 | 用途 |
 |----|------|
 | `dingtalk-stream` | 钉钉 Stream 协议客户端 |
 | `axios` | HTTP 客户端 |
+| `mammoth` | Word 文档（.docx）解析 |
+| `pdf-parse` | PDF 文档解析 |
 
 # 方案二：钉钉 DEAP Agent 集成
 
@@ -284,7 +468,7 @@ openclaw gateway start
 
 ### 第三步：启动 Connector 客户端
 
-1. 从 [Releases](https://github.com/hoskii/dingtalk-moltbot-connector/releases/tag/v0.0.1) 页面下载适配您操作系统的安装包
+1. 从 [Releases](https://github.com/hoskii/dingtalk-openclaw-connector/releases/tag/v0.0.1) 页面下载适配您操作系统的安装包
 2. 解压并运行 Connector（以 macOS 为例）：
 
    ```bash
