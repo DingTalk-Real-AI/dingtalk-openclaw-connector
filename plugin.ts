@@ -2302,6 +2302,16 @@ async function handleDingTalkMessage(params: {
 
   log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${content.text.slice(0, 50)}..." images=${content.imageUrls.length} downloadCodes=${content.downloadCodes.length}`);
 
+  // ===== DM Policy 检查 =====
+  if (isDirect) {
+    const dmPolicy = dingtalkConfig.dmPolicy || 'open';
+    const allowFrom: string[] = dingtalkConfig.allowFrom || [];
+    if (dmPolicy === 'allowlist' && allowFrom.length > 0 && !allowFrom.includes(senderId)) {
+      log?.warn?.(`[DingTalk] DM 被拦截: senderId=${senderId} 不在 allowFrom 白名单中`);
+      return;
+    }
+  }
+
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
   const forceNewSession = isNewSessionCommand(content.text);
