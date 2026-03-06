@@ -2,7 +2,7 @@
 
 以下提供两种方案连接到 [OpenClaw](https://openclaw.ai) Gateway，分别是钉钉机器人和钉钉 DEAP Agent。
 
-> 📝 **版本信息**：当前版本 v0.7.2 | [查看变更日志](CHANGELOG.md) | [发布说明](RELEASE_NOTES_v0.7.2.md) | [发布指南](RELEASE.md)
+> 📝 **版本信息**：当前版本 v0.7.3 | [查看变更日志](CHANGELOG.md) | [发布指南](RELEASE.md)
 
 ## 快速导航
 

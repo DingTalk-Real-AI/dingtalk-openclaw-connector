@@ -16,6 +16,9 @@ import type { ClawdbotPluginApi, PluginRuntime, ClawdbotConfig } from 'clawdbot/
 
 export const id = 'dingtalk-connector';
 
+/** 默认账号 ID，用于标记单账号模式（无 accounts 配置）时的内部标识，映射到 'main' agent */
+const DEFAULT_ACCOUNT_ID = '__default__';
+
 let runtime: PluginRuntime | null = null;
 
 function getRuntime(): PluginRuntime {
@@ -1219,10 +1222,10 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
   if (gatewayAuth) {
     headers['Authorization'] = `Bearer ${gatewayAuth}`;
   }
-  // 使用 HTTP Header 传递 accountId 用于 agent 路由（'default' 不发，让 gateway 路由到默认 agent）
-  if (accountId && accountId !== 'default') {
-    headers['X-OpenClaw-Agent-Id'] = accountId;
-  }
+  // 使用 HTTP Header 传递 accountId 用于 agent 路由
+  // DEFAULT_ACCOUNT_ID 映射到 'main' agent
+  const agentId = accountId === DEFAULT_ACCOUNT_ID ? 'main' : accountId;
+  headers['X-OpenClaw-Agent-Id'] = agentId;
 
   log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, accountId=${accountId}, messages=${messages.length}`);
 
@@ -3044,19 +3047,21 @@ const dingtalkPlugin = {
   config: {
     listAccountIds: (cfg: ClawdbotConfig) => {
       const config = getConfig(cfg);
+      // __default__ 是内部标记，表示使用顶层配置（单账号模式）
       return config.accounts
         ? Object.keys(config.accounts)
-        : (isConfigured(cfg) ? ['default'] : []);
+        : (isConfigured(cfg) ? ['__default__'] : []);
     },
     resolveAccount: (cfg: ClawdbotConfig, accountId?: string) => {
       const config = getConfig(cfg);
-      const id = accountId || 'default';
+      const id = accountId || DEFAULT_ACCOUNT_ID;
       if (config.accounts?.[id]) {
         return { accountId: id, config: config.accounts[id], enabled: config.accounts[id].enabled !== false };
       }
-      return { accountId: 'default', config, enabled: config.enabled !== false };
+      // 没有 accounts 配置或找不到指定账号时，使用顶层配置
+      return { accountId: DEFAULT_ACCOUNT_ID, config, enabled: config.enabled !== false };
     },
-    defaultAccountId: () => 'default',
+    defaultAccountId: () => '__default__',
     isConfigured: (account: any) => Boolean(account.config?.clientId && account.config?.clientSecret),
     describeAccount: (account: any) => ({
       accountId: account.accountId,
@@ -3277,7 +3282,7 @@ const dingtalkPlugin = {
     },
   },
   status: {
-    defaultRuntime: { accountId: 'default', running: false, lastStartAt: null, lastStopAt: null, lastError: null },
+    defaultRuntime: { accountId: DEFAULT_ACCOUNT_ID, running: false, lastStartAt: null, lastStopAt: null, lastError: null },
     probe: async ({ cfg }: any) => {
       if (!isConfigured(cfg)) return { ok: false, error: 'Not configured' };
       try {
@@ -3334,7 +3339,7 @@ const plugin = {
      *   - title?: markdown 消息标题
      *   - useAICard?: 是否使用 AI Card（默认 true）
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
-     *   - accountId?: 使用的账号 ID（默认 default）
+     *   - accountId?: 使用的账号 ID（可选，不传则使用默认配置）
      */
     api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ respond, cfg, params, log }: any) => {
       const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
@@ -3372,7 +3377,7 @@ const plugin = {
      *   - title?: markdown 消息标题
      *   - useAICard?: 是否使用 AI Card（默认 true）
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
-     *   - accountId?: 使用的账号 ID（默认 default）
+     *   - accountId?: 使用的账号 ID（可选，不传则使用默认配置）
      */
     api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ respond, cfg, params, log }: any) => {
       const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};

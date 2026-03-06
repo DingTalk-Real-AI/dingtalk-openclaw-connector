@@ -6,6 +6,20 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-03-07
+
+### 修复 / Fixes
+- 🐛 **兼容性修复**：修复 0.7.0 引入的默认 Agent 路由回归问题。0.7.0 之前默认路由到 `main` agent，0.7.0 之后错误地路由到 `default` agent，现已恢复为 `main` agent  
+  **Compatibility fix**: Fixed default agent routing regression introduced in 0.7.0. Before 0.7.0 default routed to `main` agent, after 0.7.0 incorrectly routed to `default` agent, now restored to `main` agent
+- 🐛 修复用户显式配置名为 `default` 的账号时被错误映射的问题：使用 `__default__` 作为内部默认账号标识  
+  Fixed issue where user-configured account named `default` was incorrectly mapped: Use `__default__` as internal default account identifier
+
+### 改进 / Improvements
+- 抽取 `DEFAULT_ACCOUNT_ID` 常量到文件顶部，统一管理默认账号标识  
+  Extracted `DEFAULT_ACCOUNT_ID` constant to file top, unified management of default account identifier
+- 更新 API 文档注释，移除对 `default` 的硬编码引用  
+  Updated API documentation comments, removed hardcoded references to `default`
+
 ## [0.7.2] - 2026-03-05
 
 ### 新增功能 / Added Features
