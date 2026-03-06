@@ -75,45 +75,49 @@ function isNewSessionCommand(text: string): boolean {
   return NEW_SESSION_COMMANDS.some(cmd => trimmed === cmd.toLowerCase());
 }
 
-/** 获取或创建用户 session key */
+/** 获取或创建 session key
+ * - 群聊 (conversationId 存在): 整个群共享一个会话
+ * - 私聊: 每个用户独立会话
+ * - 多账号场景: accountId 隔离会话
+ */
 function getSessionKey(
   senderId: string,
-  accountId: string,  // 添加 accountId 参数，支持多 agent 路由
+  accountId: string,
   forceNew: boolean,
   sessionTimeout: number,
   log?: any,
+  conversationId?: string,
 ): { sessionKey: string; isNew: boolean } {
   const now = Date.now();
-  const sessionKeyPrefix = `dingtalk-connector:${accountId}`;  // 使用 accountId 作为前缀
-  const cacheKey = `${accountId}:${senderId}`;  // 使用 accountId:senderId 作为缓存键
+  const sessionIdentifier = conversationId || senderId; // 群聊用 conversationId，私聊用 senderId
+  const sessionType = conversationId ? '群' : '私聊';
+  const sessionKeyPrefix = `dingtalk-connector:${accountId}`;
+  const cacheKey = `${accountId}:${sessionIdentifier}`;
   const existing = userSessions.get(cacheKey);
 
-  // 强制新会话
   if (forceNew) {
-    const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
+    const sessionId = `${sessionKeyPrefix}:${sessionIdentifier}:${now}`;
     userSessions.set(cacheKey, { lastActivity: now, sessionId });
-    log?.info?.(`[DingTalk][Session] 账号[${accountId}] 用户主动开启新会话: ${senderId}`);
+    log?.info?.(`[DingTalk][Session] 账号[${accountId}] ${sessionType}主动开启新会话: ${sessionIdentifier}`);
     return { sessionKey: sessionId, isNew: true };
   }
 
-  // 检查超时
   if (existing) {
     const elapsed = now - existing.lastActivity;
     if (elapsed > sessionTimeout) {
-      const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
+      const sessionId = `${sessionKeyPrefix}:${sessionIdentifier}:${now}`;
       userSessions.set(cacheKey, { lastActivity: now, sessionId });
-      log?.info?.(`[DingTalk][Session] 账号[${accountId}] 会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${senderId}`);
+      log?.info?.(`[DingTalk][Session] 账号[${accountId}] ${sessionType}会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${sessionIdentifier}`);
       return { sessionKey: sessionId, isNew: true };
     }
-    // 更新活跃时间
+
     existing.lastActivity = now;
     return { sessionKey: existing.sessionId, isNew: false };
   }
 
-  // 首次会话
-  const sessionId = `${sessionKeyPrefix}:${senderId}`;
+  const sessionId = `${sessionKeyPrefix}:${sessionIdentifier}`;
   userSessions.set(cacheKey, { lastActivity: now, sessionId });
-  log?.info?.(`[DingTalk][Session] 账号[${accountId}] 新用户首次会话: ${senderId}`);
+  log?.info?.(`[DingTalk][Session] 账号[${accountId}] ${sessionType}首次会话: ${sessionIdentifier}`);
   return { sessionKey: sessionId, isNew: false };
 }
 
@@ -2316,8 +2320,9 @@ async function handleDingTalkMessage(params: {
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
+  const conversationId = isDirect ? undefined : data.conversationId;  // 群聊时获取群会话ID
 
-  log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${content.text.slice(0, 50)}..." images=${content.imageUrls.length} downloadCodes=${content.downloadCodes.length}`);
+  log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${content.text.slice(0, 50)}..." images=${content.imageUrls.length} downloadCodes=${content.downloadCodes.length}${conversationId ? ` 群=${conversationId}` : ''}`);
 
   // ===== DM Policy 检查 =====
   if (isDirect) {
@@ -2335,7 +2340,7 @@ async function handleDingTalkMessage(params: {
 
   // 如果是新会话命令，直接回复确认消息
   if (forceNewSession) {
-    const { sessionKey } = getSessionKey(senderId, accountId, true, sessionTimeout, log);
+    const { sessionKey } = getSessionKey(senderId, accountId, true, sessionTimeout, log, conversationId);
     await sendMessage(dingtalkConfig, sessionWebhook, '✨ 已开启新会话，之前的对话已清空。', {
       atUserId: !isDirect ? senderId : null,
     });
@@ -2343,8 +2348,8 @@ async function handleDingTalkMessage(params: {
     return;
   }
 
-  // 获取或创建 session
-  const { sessionKey, isNew } = getSessionKey(senderId, accountId, false, sessionTimeout, log);
+  // 获取或创建 session（群聊共享会话，私聊独立会话，按账号隔离）
+  const { sessionKey, isNew } = getSessionKey(senderId, accountId, false, sessionTimeout, log, conversationId);
   log?.info?.(`[DingTalk][Session] key=${sessionKey}, isNew=${isNew}`);
 
   // Gateway 认证：优先使用 token，其次 password
