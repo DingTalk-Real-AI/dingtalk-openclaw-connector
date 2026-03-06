@@ -1,24 +1,45 @@
 {
-  "name": "@openclaw/dingtalk-connector",
-  "version": "0.6.0",
-  "description": "DingTalk (钉钉) channel plugin for OpenClaw — Stream mode with AI Card streaming",
+  "name": "@dingtalk-real-ai/dingtalk-connector",
+  "version": "0.7.1",
+  "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
   "main": "plugin.ts",
   "type": "module",
   "scripts": {
     "build": "echo 'No build needed - jiti loads TS at runtime'"
   },
-  "keywords": ["openclaw", "dingtalk", "channel", "stream", "ai-card"],
+  "keywords": [
+    "dingtalk",
+    "channel",
+    "stream",
+    "ai-card",
+    "connector"
+  ],
   "author": "DingTalk Real Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git"
+  },
+  "homepage": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector#readme",
+  "bugs": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "dingtalk-stream": "^2.1.4",
     "axios": "^1.6.0",
     "fluent-ffmpeg": "^2.1.3",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0"
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1"
   },
   "openclaw": {
-    "extensions": ["./plugin.ts"],
-    "channels": ["dingtalk-connector"],
+    "extensions": [
+      "./plugin.ts"
+    ],
+    "channels": [
+      "dingtalk-connector"
+    ],
     "installDependencies": true
   }
 }

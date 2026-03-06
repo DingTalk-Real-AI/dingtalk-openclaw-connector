@@ -9,4 +9,7 @@ build/
 node_modules/
 package-lock.json
 
+# IDE
+.idea/
+
 openclaw/

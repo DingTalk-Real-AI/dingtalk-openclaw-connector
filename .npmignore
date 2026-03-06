@@ -1,13 +1,4 @@
 .git/
-.venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-src/
-examples/
-pyproject.toml
-*.egg
+.claude/
 .env
 .gitignore
