@@ -75,6 +75,43 @@ function isNewSessionCommand(text: string): boolean {
   return NEW_SESSION_COMMANDS.some(cmd => trimmed === cmd.toLowerCase());
 }
 
+/** 计算 scope：单聊 direct，群聊 group:conversationId，无效 legacy */
+function getSessionScope(convCtx?: { conversationType: string; conversationId?: string }): string {
+  if (!convCtx) return 'legacy';
+  if (convCtx.conversationType === '1') return 'direct';
+  if (convCtx.conversationType === '2') {
+    const cid = convCtx.conversationId?.trim();
+    return cid ? `group:${cid}` : 'group:unknown';
+  }
+  return 'legacy';
+}
+
+/**
+ * 构建 Gateway 可识别的 session key 格式。
+ * Gateway 通过检查 :group: 或 :channel: 识别群聊。
+ * - 单聊: dingtalk-connector:accountId:senderId
+ * - 群聊: dingtalk-connector:accountId:group:conversationId:senderId
+ */
+function buildSessionIdForGateway(
+  accountId: string,
+  senderId: string,
+  scope: string,
+  forceNew: boolean,
+): string {
+  const base = `dingtalk-connector:${accountId}`;
+  const now = Date.now();
+  if (scope === 'direct') {
+    return forceNew ? `${base}:${senderId}:${now}` : `${base}:${senderId}`;
+  }
+  if (scope.startsWith('group:')) {
+    const conversationId = scope.slice(6);
+    const sessionId = `${base}:group:${conversationId}:${senderId}`;
+    return forceNew ? `${sessionId}:${now}` : sessionId;
+  }
+  // legacy
+  return forceNew ? `${base}:${senderId}:${now}` : `${base}:${senderId}`;
+}
+
 /** 获取或创建用户 session key */
 function getSessionKey(
   senderId: string,
@@ -82,15 +119,17 @@ function getSessionKey(
   forceNew: boolean,
   sessionTimeout: number,
   log?: any,
+  /** 可选：区分单聊/群聊。conversationType: '1'=单聊, '2'=群聊；群聊时需传 conversationId */
+  conversationContext?: { conversationType: string; conversationId?: string },
 ): { sessionKey: string; isNew: boolean } {
   const now = Date.now();
-  const sessionKeyPrefix = `dingtalk-connector:${accountId}`;  // 使用 accountId 作为前缀
-  const cacheKey = `${accountId}:${senderId}`;  // 使用 accountId:senderId 作为缓存键
+  const scope = getSessionScope(conversationContext);
+  const cacheKey = `${accountId}:${senderId}:${scope}`;
   const existing = userSessions.get(cacheKey);
 
   // 强制新会话
   if (forceNew) {
-    const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
+    const sessionId = buildSessionIdForGateway(accountId, senderId, scope, true);
     userSessions.set(cacheKey, { lastActivity: now, sessionId });
     log?.info?.(`[DingTalk][Session] 账号[${accountId}] 用户主动开启新会话: ${senderId}`);
     return { sessionKey: sessionId, isNew: true };
@@ -100,7 +139,7 @@ function getSessionKey(
   if (existing) {
     const elapsed = now - existing.lastActivity;
     if (elapsed > sessionTimeout) {
-      const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
+      const sessionId = buildSessionIdForGateway(accountId, senderId, scope, true);
       userSessions.set(cacheKey, { lastActivity: now, sessionId });
       log?.info?.(`[DingTalk][Session] 账号[${accountId}] 会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${senderId}`);
       return { sessionKey: sessionId, isNew: true };
@@ -111,7 +150,7 @@ function getSessionKey(
   }
 
   // 首次会话
-  const sessionId = `${sessionKeyPrefix}:${senderId}`;
+  const sessionId = buildSessionIdForGateway(accountId, senderId, scope, false);
   userSessions.set(cacheKey, { lastActivity: now, sessionId });
   log?.info?.(`[DingTalk][Session] 账号[${accountId}] 新用户首次会话: ${senderId}`);
   return { sessionKey: sessionId, isNew: false };
@@ -1191,13 +1230,15 @@ interface GatewayOptions {
   systemPrompts: string[];
   sessionKey: string;
   gatewayAuth?: string;  // token 或 password，都用 Bearer 格式
+  /** 记忆归属用户标识，用于 Gateway 区分记忆；sharedMemoryAcrossConversations=true 时传 accountId，false 时传 sessionKey */
+  memoryUser?: string;
   /** 本地图片文件路径列表，用于 OpenClaw AgentMediaPayload */
   imageLocalPaths?: string[];
   log?: any;
 }
 
 async function* streamFromGateway(options: GatewayOptions, accountId: string): AsyncGenerator<string, void, unknown> {
-  const { userContent, systemPrompts, sessionKey, gatewayAuth, imageLocalPaths, log } = options;
+  const { userContent, systemPrompts, sessionKey, gatewayAuth, memoryUser, imageLocalPaths, log } = options;
   const rt = getRuntime();
   const gatewayUrl = `http://127.0.0.1:${rt.gateway?.port || 18789}/v1/chat/completions`;
 
@@ -1221,6 +1262,9 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
   }
   // 使用 HTTP Header 传递 accountId 用于 agent 路由
   headers['X-OpenClaw-Agent-Id'] = accountId;
+  if (memoryUser) {
+    headers['X-OpenClaw-Memory-User'] = memoryUser;
+  }
 
   log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, accountId=${accountId}, messages=${messages.length}`);
 
@@ -2330,10 +2374,13 @@ async function handleDingTalkMessage(params: {
   // ===== Session 管理 =====
   const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
   const forceNewSession = isNewSessionCommand(content.text);
+  const convCtx = dingtalkConfig.separateSessionByConversation !== false
+    ? { conversationType: data.conversationType, conversationId: data.conversationId }
+    : undefined;
 
   // 如果是新会话命令，直接回复确认消息
   if (forceNewSession) {
-    const { sessionKey } = getSessionKey(senderId, accountId, true, sessionTimeout, log);
+    const { sessionKey } = getSessionKey(senderId, accountId, true, sessionTimeout, log, convCtx);
     await sendMessage(dingtalkConfig, sessionWebhook, '✨ 已开启新会话，之前的对话已清空。', {
       atUserId: !isDirect ? senderId : null,
     });
@@ -2342,8 +2389,10 @@ async function handleDingTalkMessage(params: {
   }
 
   // 获取或创建 session
-  const { sessionKey, isNew } = getSessionKey(senderId, accountId, false, sessionTimeout, log);
+  const { sessionKey, isNew } = getSessionKey(senderId, accountId, false, sessionTimeout, log, convCtx);
   log?.info?.(`[DingTalk][Session] key=${sessionKey}, isNew=${isNew}`);
+
+  const memoryUser = dingtalkConfig.sharedMemoryAcrossConversations === true ? accountId : sessionKey;
 
   // Gateway 认证：优先使用 token，其次 password
   const gatewayAuth = dingtalkConfig.gatewayToken || dingtalkConfig.gatewayPassword || '';
@@ -2496,9 +2545,10 @@ async function handleDingTalkMessage(params: {
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
-      })) {
+      }, accountId)) {
         fullResponse += chunk;
       }
 
@@ -2565,6 +2615,7 @@ async function handleDingTalkMessage(params: {
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
       }, accountId)) {
@@ -2645,6 +2696,7 @@ async function handleDingTalkMessage(params: {
         systemPrompts,
         sessionKey,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
         log,
       }, accountId)) {
@@ -3025,6 +3077,8 @@ const dingtalkPlugin = {
         gatewayToken: { type: 'string', default: '', description: 'Gateway auth token (Bearer)' },
         gatewayPassword: { type: 'string', default: '', description: 'Gateway auth password (alternative to token)' },
         sessionTimeout: { type: 'number', default: 1800000, description: 'Session timeout in ms (default 30min)' },
+        separateSessionByConversation: { type: 'boolean', default: true, description: '是否按单聊/群聊/群区分 session' },
+        sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
         debug: { type: 'boolean', default: false },
