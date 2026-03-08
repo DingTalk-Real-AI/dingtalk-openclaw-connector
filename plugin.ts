@@ -1201,6 +1201,9 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
   const rt = getRuntime();
   const gatewayUrl = `http://127.0.0.1:${rt.gateway?.port || 18789}/v1/chat/completions`;
 
+  // 某些调用链里 accountId 会意外丢失；从 sessionKey 回填，避免落到 workspace-undefined。
+  const resolvedAccountId = accountId || sessionKey.split(':')[1] || 'main';
+
   const messages: any[] = [];
   for (const prompt of systemPrompts) {
     messages.push({ role: 'system', content: prompt });
@@ -1219,21 +1222,23 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
   if (gatewayAuth) {
     headers['Authorization'] = `Bearer ${gatewayAuth}`;
   }
-  // 使用 HTTP Header 传递 accountId 用于 agent 路由（'default' 不发，让 gateway 路由到默认 agent）
-  if (accountId && accountId !== 'default') {
-    headers['X-OpenClaw-Agent-Id'] = accountId;
-  }
+  // 官方文档支持：
+  // 1) x-openclaw-agent-id 选择智能体
+  // 2) x-openclaw-session-key 完全控制会话路由
+  // 这里显式指定完整 session key，避免运行时把 agentId 解析成 undefined。
+  headers['X-OpenClaw-Agent-Id'] = resolvedAccountId;
+  headers['X-OpenClaw-Session-Key'] = `agent:${resolvedAccountId}:openai-user:${sessionKey}`;
 
-  log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, accountId=${accountId}, messages=${messages.length}`);
+  log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, fullSession=${headers['X-OpenClaw-Session-Key']}, accountId=${resolvedAccountId}, messages=${messages.length}`);
 
   const response = await fetch(gatewayUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      model: 'main',
+      model: `openclaw:${resolvedAccountId}`,
       messages,
       stream: true,
-      user: sessionKey,  // 用于 session 持久化
+      user: sessionKey,
     }),
   });
 
@@ -2494,7 +2499,7 @@ async function handleDingTalkMessage(params: {
     let fullResponse = '';
     try {
       for await (const chunk of streamFromGateway({
-        userContent,
+        userContent: content.text,
         systemPrompts,
         sessionKey,
         gatewayAuth,
