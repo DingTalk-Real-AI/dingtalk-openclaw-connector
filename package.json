@@ -8,8 +8,9 @@
     "build": "echo 'No build needed - jiti loads TS at runtime'",
     "lint": "echo 'Lint check skipped'",
     "lint:fix": "echo 'Lint fix skipped'",
-    "test": "echo 'Tests skipped'",
-    "test:watch": "echo 'Tests skipped'",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "type-check": "npx tsc --noEmit",
     "version:check": "echo 'Version check skipped'",
     "release:prepare": "echo 'Release prepare skipped'",
@@ -45,6 +46,11 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "mammoth": "^1.8.0",
     "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "typescript": "^5.0.0"
   },
   "openclaw": {
     "extensions": [
