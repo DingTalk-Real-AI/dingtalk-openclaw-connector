@@ -3435,6 +3435,27 @@ const dingtalkPlugin = {
 
       ctx.log?.info(`[${account.accountId}] 启动钉钉 Stream 客户端...`);
 
+      // 【修复2：状态上报】辅助函数，向 Gateway 报告运行状态
+      const reportStatus = (next: Record<string, any>) => {
+        try {
+          ctx.setStatus?.({
+            accountId: account.accountId,
+            enabled: true,
+            configured: true,
+            ...next,
+          });
+        } catch (error: any) {
+          ctx.log?.warn?.(`[${account.accountId}] setStatus 失败: ${error?.message || String(error)}`);
+        }
+      };
+
+      // 启动时上报初始状态
+      reportStatus({
+        running: true,
+        connected: false,
+        lastError: null,
+      });
+
       // 启用 DWClient 内置的 autoReconnect 和 keepAlive
       // - autoReconnect: 连接断开时自动重连
       // - keepAlive: 启用心跳机制，防止服务端因长时间无活动而断开连接
@@ -3447,6 +3468,14 @@ const dingtalkPlugin = {
       } as any);
 
       client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
+        // 收到回调时上报状态
+        reportStatus({
+          running: true,
+          connected: true,
+          lastEventAt: Date.now(),
+          lastError: null,
+        });
+
         const messageId = res.headers?.messageId;
         ctx.log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}, headers=${JSON.stringify(res.headers)}`);
 
@@ -3490,18 +3519,36 @@ const dingtalkPlugin = {
       await client.connect();
       ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接`);
 
+      // 连接成功后上报已连接状态
+      reportStatus({
+        running: true,
+        connected: true,
+        lastStartAt: Date.now(),
+        lastEventAt: Date.now(),
+        lastError: null,
+      });
+
       const rt = getRuntime();
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
 
+      // 【修复1：长生命周期】用 Promise 挂住，防止 startAccount 提前返回导致重连循环
       let stopped = false;
-      
-      // 统一的停止逻辑
-      const doStop = (reason: string) => {
+
+      // 统一的停止逻辑：保留上游 disconnect()，并补上状态上报
+      const doStop = (reason: 'abortSignal' | 'manual') => {
         if (stopped) return;
         stopped = true;
-        ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端 (${reason})...`);
+        if (reason === 'abortSignal') {
+          ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端...`);
+        } else {
+          ctx.log?.info(`[${account.accountId}] 钉钉 Channel 已停止`);
+        }
+        reportStatus({
+          running: false,
+          connected: false,
+          lastStopAt: Date.now(),
+        });
         try {
-          // 【关键】调用 disconnect() 正确关闭 WebSocket 连接
           client.disconnect();
         } catch (err: any) {
           ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错: ${err.message}`);
@@ -3509,7 +3556,7 @@ const dingtalkPlugin = {
         rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
       };
 
-      // 【关键修复】返回一个 Promise 并保持 pending 状态直到 abortSignal 触发
+      // 返回一个 Promise 并保持 pending 状态直到 abortSignal 触发
       // 这样框架不会认为账号已退出，避免触发 auto-restart
       // 参考：OpenClaw changelog - "keep startAccount pending until abort to prevent restart-loop storms"
       return new Promise((resolve) => {
