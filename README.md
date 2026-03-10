@@ -160,16 +160,32 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 - **默认开启**（`true`）：单聊、群聊、不同群各自拥有独立的 session
 - **关闭**（`false`）：按用户维度维护 session，不区分单聊/群聊（兼容旧行为）
 
+**Session Key 格式**：
+- **单聊**：`dingtalk-connector:accountId:senderId`
+- **群聊**：`dingtalk-connector:accountId:group:conversationId:senderId`
+
+Gateway 通过检查 `:group:` 或 `:channel:` 识别群聊场景，便于 Gateway 侧进行更精细的会话管理。
+
 ### 记忆隔离（sharedMemoryAcrossConversations）
 
 - **默认关闭**（`false`）：不同群聊、群聊与私聊之间的记忆隔离，AI 不会混淆不同场景下的对话历史
 - **开启**（`true`）：单 Agent 场景下，同一用户在不同会话间共享记忆
+
+**Memory User 标识**：
+- **`sharedMemoryAcrossConversations: false`**：`memoryUser = sessionKey`，每个 session 独立记忆
+- **`sharedMemoryAcrossConversations: true`**：`memoryUser = accountId`，所有会话共享记忆
+
+连接器通过 `X-OpenClaw-Memory-User` HTTP 请求头将 `memoryUser` 传递给 Gateway，支持 Gateway 侧更精细的记忆管理。
 
 ### 适用场景
 
 - ✅ 同一机器人在多个群中服务，希望每个群的对话互不干扰
 - ✅ 用户既在私聊也在群聊中使用机器人，希望私聊与群聊上下文分离
 - ✅ 需要跨会话共享记忆时，可设置 `sharedMemoryAcrossConversations: true`
+
+### 注意事项
+
+⚠️ **记忆存储说明**：如果用户的描述中存在"记住""保存"等字样，模型可能会绕过 Gateway，直接存到本地文件系统，此时配置不生效（此行为需要在模型层面设置，而非插件层面）。
 
 ## 异步模式
 
