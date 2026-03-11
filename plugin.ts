@@ -28,6 +28,15 @@ function getRuntime(): PluginRuntime {
 
 // ============ Session 管理 ============
 
+/** 用户会话状态：记录最后活跃时间和当前 session 标识 */
+interface UserSession {
+  lastActivity: number;
+  sessionId: string;  // 格式: dingtalk-connector:<senderId> 或 dingtalk-connector:<senderId>:<timestamp>
+}
+
+/** 用户会话缓存 Map<senderId, UserSession> */
+const userSessions = new Map<string, UserSession>();
+
 /** 消息去重缓存 Map<messageId, timestamp> - 防止同一消息被重复处理 */
 const processedMessages = new Map<string, number>();
 
@@ -2702,7 +2711,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
         memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
@@ -2778,7 +2787,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
         memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
@@ -2861,7 +2870,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
         memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
@@ -3245,8 +3254,8 @@ const dingtalkPlugin = {
         groupPolicy: { type: 'string', enum: ['open', 'allowlist'], default: 'open' },
         gatewayToken: { type: 'string', default: '', description: 'Gateway auth token (Bearer)' },
         gatewayPassword: { type: 'string', default: '', description: 'Gateway auth password (alternative to token)' },
-        separateSessionByConversation: { type: 'boolean', default: true, description: '是否按单聊/群聊/群区分 session；false 时按用户维度维护 session' },
-        groupSessionScope: { type: 'string', enum: ['group', 'group_sender'], default: 'group', description: '群聊会话隔离策略（仅当 separateSessionByConversation=true 时生效）：group=群共享，group_sender=群内用户独立' },
+        sessionTimeout: { type: 'number', default: 1800000, description: 'Session timeout in ms (default 30min)' },
+        separateSessionByConversation: { type: 'boolean', default: true, description: '是否按单聊/群聊/群区分 session' },
         sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
@@ -3485,7 +3494,7 @@ const dingtalkPlugin = {
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
 
       let stopped = false;
-
+      
       // 统一的停止逻辑
       const doStop = (reason: string) => {
         if (stopped) return;
