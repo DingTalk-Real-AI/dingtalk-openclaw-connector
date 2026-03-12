@@ -6,6 +6,97 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.6] - 2026-03-12
+
+### 修复 / Fixes
+- 🐛 **Gateway 端口连接修复** - 修复修改 gateway 端口后无法连接的问题，确保配置中的 `gateway.port` 能够正确生效  
+  **Gateway port connection fix** - Fixed issue where connection fails after modifying gateway port, ensuring that `gateway.port` in configuration takes effect correctly
+- 🐛 **新会话命令修复** - 修复新会话命令（`/new`、`/reset`、`/clear`、`新会话` 等）未真正清理会话的问题，统一将命令透传到 Gateway 由 Gateway 统一处理会话重置  
+  **New session command fix** - Fixed issue where new session commands (`/new`, `/reset`, `/clear`, `新会话`, etc.) did not actually clear sessions, commands are now forwarded to Gateway for unified session reset handling
+
+## [0.7.5] - 2026-03-10
+
+### 修复 / Fixes
+- 🐛 **修复 Stream 客户端频繁重连问题** - 禁用 `DWClient` 内置的 `autoReconnect`，由框架的 health-monitor 统一管理重连逻辑，避免双重重连机制冲突  
+  **Fixed Stream client frequent reconnection issue** - Disabled `DWClient` built-in `autoReconnect`, reconnection is now managed by framework's health-monitor to avoid dual reconnection mechanism conflict
+- 🐛 **修复连接关闭不完整问题** - `stop()` 方法现在正确调用 `client.disconnect()` 关闭 WebSocket 连接  
+  **Fixed incomplete connection closure** - `stop()` method now correctly calls `client.disconnect()` to close WebSocket connection
+- 🐛 **Gateway 端口连接修复** - 修复修改 gateway 端口后无法连接的问题
+  **Gateway port connection fix** - Fixed issue where connection fails after modifying gateway port
+
+### 重构 / Refactoring
+- ✅ **OpenClaw session.dmScope 机制** - 会话管理由 OpenClaw Gateway 统一处理，插件不再内部管理会话超时  
+  **OpenClaw session.dmScope mechanism** - Session management is now handled by OpenClaw Gateway, plugin no longer manages session timeout internally
+- ✅ **SessionContext 标准化** - 使用 OpenClaw 标准的 SessionContext JSON 格式传递会话上下文  
+  **SessionContext standardization** - Use OpenClaw standard SessionContext JSON format for session context
+
+### 配置变更 / Configuration Changes
+- 新增 `groupSessionScope`（默认：`group`）- 群聊会话隔离策略（仅当 separateSessionByConversation=true 时生效）：`group`=群共享，`group_sender`=群内用户独立  
+  Added `groupSessionScope` (default: `group`) - Group chat session isolation (only when separateSessionByConversation=true): `group`=shared, `group_sender`=per-user
+- ⚠️ **废弃** `sessionTimeout` - 会话超时由 OpenClaw Gateway 的 `session.reset.idleMinutes` 配置控制，详见 [Gateway 配置文档](https://docs.openclaw.ai/gateway/configuration)  
+  **Deprecated** `sessionTimeout` - Session timeout is now controlled by OpenClaw Gateway's `session.reset.idleMinutes`, see [Gateway Configuration](https://docs.openclaw.ai/gateway/configuration)
+
+### 向后兼容 / Backward Compatibility
+- 旧配置 `sessionTimeout` 仍可使用，但会打印废弃警告日志  
+  Old config `sessionTimeout` still works but will print deprecation warning
+
+## [0.7.4] - 2026-03-09
+
+### 新增功能 / Added Features
+- ✅ **按会话区分 Session** - 支持按单聊、群聊、不同群分别维护独立会话，单聊与群聊、不同群之间的对话上下文互不干扰  
+  **Session by conversation** - Support separate sessions for direct chat, group chat, and different groups; conversation context is isolated between DMs, group chats, and different groups
+- ✅ **记忆隔离/共享配置** - 新增 `sharedMemoryAcrossConversations` 配置，控制单 Agent 场景下是否在不同会话间共享记忆；默认 `false` 实现群聊与私聊、不同群之间的记忆隔离  
+  **Memory isolation/sharing config** - Added `sharedMemoryAcrossConversations` option to control whether memory is shared across conversations in single-Agent mode; default `false` isolates memory between DMs, group chats, and different groups
+- ✅ **Gateway Session 格式增强** - Session key 支持 `group:conversationId` 格式，便于 Gateway 识别群聊场景  
+  **Gateway session format enhancement** - Session key supports `group:conversationId` format for Gateway to identify group chat scenarios
+- ✅ **X-OpenClaw-Memory-User 支持** - 向 Gateway 传递记忆归属用户标识，支持 Gateway 侧记忆管理  
+  **X-OpenClaw-Memory-User support** - Pass memory user identifier to Gateway for memory management
+
+### 配置 / Configuration
+- 新增 `separateSessionByConversation`（默认：`true`）- 是否按单聊/群聊/群区分 session  
+  Added `separateSessionByConversation` (default: `true`) - Whether to separate sessions by direct/group/different groups  
+  Added `separateSessionByConversation` (default: `true`) - Whether to separate sessions by direct/group/different groups (deprecated in 0.7.5)
+- 新增 `sharedMemoryAcrossConversations`（默认：`false`）- 单 Agent 场景下是否在不同会话间共享记忆；`false` 时不同群聊、群聊与私聊记忆隔离  
+  Added `sharedMemoryAcrossConversations` (default: `false`) - Whether to share memory across conversations in single-Agent mode; when `false`, memory is isolated between different groups and between DMs and groups
+
+## [0.7.3] - 2026-03-09
+
+### 修复 / Fixes
+- 🐛 **兼容性修复**：修复 0.7.0 引入的默认 Agent 路由回归问题。0.7.0 之前默认路由到 `main` agent，0.7.0 之后错误地路由到 `default` agent，现已恢复为 `main` agent  
+  **Compatibility fix**: Fixed default agent routing regression introduced in 0.7.0. Before 0.7.0 default routed to `main` agent, after 0.7.0 incorrectly routed to `default` agent, now restored to `main` agent
+- 🐛 修复用户显式配置名为 `default` 的账号时被错误映射的问题：使用 `__default__` 作为内部默认账号标识  
+  Fixed issue where user-configured account named `default` was incorrectly mapped: Use `__default__` as internal default account identifier
+
+### 改进 / Improvements
+- 抽取 `DEFAULT_ACCOUNT_ID` 常量到文件顶部，统一管理默认账号标识  
+  Extracted `DEFAULT_ACCOUNT_ID` constant to file top, unified management of default account identifier
+- 更新 API 文档注释，移除对 `default` 的硬编码引用  
+  Updated API documentation comments, removed hardcoded references to `default`
+
+## [0.7.2] - 2026-03-05
+
+### 新增功能 / Added Features
+- ✅ 新增异步模式：立即回执用户消息，后台处理任务，然后主动推送最终结果作为独立消息  
+  Added async mode: immediately acknowledge user messages, process in background, then push the final result as a separate message
+- ✅ 支持自定义回执消息文本，可通过 `ackText` 配置项设置  
+  Support custom acknowledgment message text, configurable via `ackText` option
+
+### 修复 / Fixes
+- 🐛 修复异步模式下 Agent 路由问题：`streamFromGateway` 调用时缺少 `accountId` 参数，导致会话路由到 undefined agent  
+  Fixed agent routing in async mode: `streamFromGateway` was called without `accountId`, causing sessions to route to undefined agent
+- 🐛 修复默认 Agent 路由：当 `accountId` 为 `'default'` 时跳过 `X-OpenClaw-Agent-Id` header，让 gateway 路由到其配置的默认 agent  
+  Fixed default agent routing: Skip `X-OpenClaw-Agent-Id` header when `accountId` is `'default'`, letting gateway route to its configured default agent
+- 🐛 修复异步模式内容处理：使用 `userContent`（包含文件附件）替代原始 `content.text`  
+  Fixed async mode content: Use `userContent` (includes file attachments) instead of raw `content.text`
+- 🐛 修复异步模式图片支持：将 `imageLocalPaths` 传递给 gateway stream  
+  Fixed image support for async mode: Pass `imageLocalPaths` to gateway stream
+
+### 配置 / Configuration
+- 新增 `asyncMode` 配置项（默认：`false`）- 启用异步模式  
+  Added `asyncMode` configuration option (default: `false`) - Enable async mode
+- 新增 `ackText` 配置项（默认：`'🫡 任务已接收，处理中...'`）- 自定义回执消息文本  
+  Added `ackText` configuration option (default: `'🫡 任务已接收，处理中...'`) - Custom ack message text
+
 ## [0.7.1] - 2026-03-05
 
 ### 修复 / Fixes

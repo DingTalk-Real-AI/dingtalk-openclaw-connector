@@ -1,0 +1,49 @@
+# Issue 自动同步到钉钉群
+# 当有新 Issue 时，自动发送到钉钉群（不包括 comment）
+name: 🔔 Issue Notification to DingTalk
+
+on:
+  issues:
+    types: [opened, reopened, closed, labeled]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📬 Send Issue to DingTalk
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const webhook = process.env.DINGTALK_WEBHOOK;
+            if (!webhook) {
+              console.log('⚠️ DINGTALK_WEBHOOK not set, skipping notification');
+              return;
+            }
+            
+            const payload = context.payload;
+            const issue = payload.issue;
+            const action = payload.action;
+            
+            // 构建消息标题和内容（确保包含关键字 "issue" 以支持 Custom Keywords 模式）
+            const title = `[${action.toUpperCase()}] Issue #${issue.number}: ${issue.title}`;
+            const content = issue.body?.substring(0, 500) || 'No description';
+            const url = issue.html_url;
+            
+            // 消息内容必须包含关键字（如 "issue"）以支持 Custom Keywords 安全模式
+            const message = {
+              msgtype: 'markdown',
+              markdown: {
+                title: 'GitHub Issue 通知',
+                text: `## 🔔 GitHub Issue 通知\n\n**${title}**\n\n${content}${content.length >= 500 ? '...' : ''}\n\n[点击查看详情](${url})\n\n---\n📦 ${context.repo.owner}/${context.repo.repo}\n\n**关键词**: issue`
+              }
+            };
+            
+            await fetch(webhook, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(message)
+            });
+            
+            console.log('✅ DingTalk notification sent');
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}

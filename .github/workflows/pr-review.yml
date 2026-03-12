@@ -1,0 +1,108 @@
+# PR 审核提醒工作流
+# PR 创建/更新时自动通知钉钉群，提醒审核
+name: 👀 PR Review Request
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify-review-request:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📢 Notify DingTalk - Review Request
+        if: env.DINGTALK_WEBHOOK != ''
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          
+          curl -X POST "${{ secrets.DINGTALK_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"msgtype\": \"markdown\",
+              \"markdown\": {
+                \"title\": \"PR审核提醒\",
+                \"text\": \"## 👀 新的 PR 需要审核\\n\\n**#${PR_NUMBER}**: ${PR_TITLE}\\n\\n**作者**: @${PR_AUTHOR}\\n\\n[点击审核](${PR_URL})\\n\\n---\\n📦 ${{ github.repository }}\\n\\n**关键词**: pr\"
+              }
+            }"
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+
+  notify-review-completed:
+    if: github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📢 Notify DingTalk - Review Completed
+        if: env.DINGTALK_WEBHOOK != ''
+        run: |
+          REVIEW_STATE="${{ github.event.review.state }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          REVIEWER="${{ github.event.review.user.login }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          
+          if [ "$REVIEW_STATE" == "approved" ]; then
+            EMOJI="✅"
+            STATUS="已通过"
+          elif [ "$REVIEW_STATE" == "changes_requested" ]; then
+            EMOJI="🔄"
+            STATUS="需要修改"
+          else
+            EMOJI="💬"
+            STATUS="已评论"
+          fi
+          
+          curl -X POST "${{ secrets.DINGTALK_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"msgtype\": \"markdown\",
+              \"markdown\": {
+                \"title\": \"PR审核完成\",
+                \"text\": \"## ${EMOJI} PR 审核${STATUS}\\n\\n**#${PR_NUMBER}**: ${PR_TITLE}\\n\\n**审核人**: @${REVIEWER}\\n\\n**状态**: ${REVIEW_STATE}\\n\\n[查看详情](${PR_URL})\\n\\n---\\n📦 ${{ github.repository }}\\n\\n**关键词**: pr\"
+              }
+            }"
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+
+  auto-merge-check:
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Check Auto-Merge Conditions
+        id: check
+        run: |
+          # 检查是否满足自动合并条件
+          REVIEWS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews")
+          
+          APPROVALS=$(echo "$REVIEWS" | grep -c '"state": "APPROVED"' || true)
+          
+          echo "approvals=$APPROVALS" >> $GITHUB_OUTPUT
+          echo "✅ 当前 approvals: $APPROVALS"
+
+      - name: 📢 Notify DingTalk - Ready to Merge
+        if: steps.check.outputs.approvals >= 1 && env.DINGTALK_WEBHOOK != ''
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          
+          curl -X POST "${{ secrets.DINGTALK_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"msgtype\": \"markdown\",
+              \"markdown\": {
+                \"title\": \"PR可合并\",
+                \"text\": \"## 🎉 PR 已审核通过，可以合并\\n\\n**#${PR_NUMBER}**: ${PR_TITLE}\\n\\n**审核状态**: ✅ 已通过\\n\\n**操作**: 点击合并到 main\\n\\n[立即合并](${PR_URL})\\n\\n---\\n📦 ${{ github.repository }}\\n\\n**关键词**: pr\"
+              }
+            }"
+        env:
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}

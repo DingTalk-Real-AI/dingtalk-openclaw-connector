@@ -13,3 +13,5 @@ package-lock.json
 .idea/
 
 openclaw/
+.aone_copilot/
+AGENTS.md

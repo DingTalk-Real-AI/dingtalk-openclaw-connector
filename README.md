@@ -1,8 +1,9 @@
-# DingTalk OpenClaw Connector
+# Offical DingTalk OpenClaw Connector 
+## 钉钉官方OpenClaw连接器
 
 以下提供两种方案连接到 [OpenClaw](https://openclaw.ai) Gateway，分别是钉钉机器人和钉钉 DEAP Agent。
 
-> 📝 **版本信息**：当前版本 v0.7.1 | [查看变更日志](CHANGELOG.md) | [发布说明](RELEASE_NOTES_v0.7.1.md) | [发布指南](RELEASE.md)
+> 📝 **版本信息**：当前版本 v0.7.6 | [查看变更日志](CHANGELOG.md) | [发布说明](docs/RELEASE_NOTES_V0.7.6.md) | [发布指南](RELEASE.md)
 
 ## 快速导航
 
@@ -18,15 +19,18 @@
 
 - ✅ **AI Card 流式响应** - 打字机效果，实时显示 AI 回复
 - ✅ **会话持久化** - 同一用户的多轮对话共享上下文
+- ✅ **会话与记忆隔离** - 按单聊/群聊/群区分 session，不同场景下的对话上下文互不干扰，可配置跨会话记忆共享
 - ✅ **超时自动新会话** - 默认 30 分钟无活动自动开启新对话
 - ✅ **手动新会话** - 发送 `/new` 或 `新会话` 清空对话历史
 - ✅ **图片自动上传** - 本地图片路径自动上传到钉钉
 - ✅ **主动发送消息** - 支持主动给钉钉个人或群发送消息
 - ✅ **富媒体接收** - 支持接收 JPEG/PNG 图片消息，自动下载并传递给视觉模型
 - ✅ **文件附件提取** - 支持解析 .docx、.pdf、纯文本文件（.txt、.md、.json 等）和二进制文件（.xlsx、.pptx、.zip 等）
+- ✅ **音频消息支持** - 支持发送音频消息，支持多种格式（mp3、wav、amr、ogg），自动提取音频时长，支持通过标记或文件附件方式发送
 - ✅ **钉钉文档 API** - 支持创建、追加、搜索、列举钉钉文档
 - ✅ **多 Agent 路由** - 支持一个连接器实例连接多个 Agent，多个钉钉机器人可分别绑定到不同 Agent，实现角色分工和专业化服务
 - ✅ **Markdown 表格转换** - 自动将 Markdown 表格转换为钉钉支持的文本格式，提升消息可读性
+- ✅ **异步模式** - 立即回执用户消息，后台处理任务，然后主动推送最终结果作为独立消息（可选）
 
 
 ## 架构
@@ -87,7 +91,12 @@ openclaw plugins install -l .
       "clientSecret": "your_secret_here", // 钉钉 AppSecret
       "gatewayToken": "",                 // 可选：Gateway 认证 token, openclaw.json配置中 gateway.auth.token 的值 
       "gatewayPassword": "",              // 可选：Gateway 认证 password（与 token 二选一）
-      "sessionTimeout": 1800000           // 可选：会话超时(ms)，默认 30 分钟
+      "sessionTimeout": 1800000,          // ⚠️ 已废弃，请使用 Gateway 的 session.reset.idleMinutes 配置
+      "separateSessionByConversation": true,  // 可选：是否按单聊/群聊/群区分 session（默认：true）
+      "groupSessionScope": "group",       // 可选：群聊会话隔离策略，group=群共享，group_sender=群内用户独立（默认：group）
+      "sharedMemoryAcrossConversations": false, // 可选：是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false）
+      "asyncMode": false,                 // 可选：异步模式，立即回执用户消息，后台处理并推送结果（默认：false）
+      "ackText": "🫡 任务已接收"      // 可选：异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'）
     }
   },
   "gateway": { // gateway通常是已有的节点，配置时注意把http部分追加到已有节点下
@@ -138,7 +147,81 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 | `clientSecret` | `DINGTALK_CLIENT_SECRET` | 钉钉 AppSecret |
 | `gatewayToken` | `OPENCLAW_GATEWAY_TOKEN` | Gateway 认证 token（可选） |
 | `gatewayPassword` | — | Gateway 认证 password（可选，与 token 二选一） |
-| `sessionTimeout` | — | 会话超时时间，单位毫秒（默认 1800000 = 30分钟） |
+| `sessionTimeout` | — | ⚠️ 已废弃，请使用 Gateway 的 [`session.reset.idleMinutes`](https://docs.openclaw.ai/gateway/configuration) 配置 |
+| `separateSessionByConversation` | — | 是否按单聊/群聊/群区分 session（默认：true） |
+| `groupSessionScope` | — | 群聊会话隔离策略（仅当 separateSessionByConversation=true 时生效）：`group`=群共享，`group_sender`=群内用户独立（默认：group） |
+| `sharedMemoryAcrossConversations` | — | 是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false） |
+| `asyncMode` | — | 异步模式，立即回执用户消息，后台处理并推送结果（默认：false） |
+| `ackText` | — | 异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'） |
+
+## 会话与记忆隔离
+
+连接器支持按单聊、群聊、不同群分别维护独立会话和记忆，确保同一用户在不同场景下的对话上下文互不干扰。
+
+### 会话隔离（separateSessionByConversation）
+
+- **默认开启**（`true`）：单聊、群聊、不同群各自拥有独立的 session
+- **关闭**（`false`）：按用户维度维护 session，不区分单聊/群聊（兼容旧行为）
+
+### 群聊会话隔离（groupSessionScope）
+
+仅当 `separateSessionByConversation=true` 时生效：
+
+- **`group`**（默认）：整个群共享一个会话，群内所有用户共用同一个对话上下文
+- **`group_sender`**：群内每个用户独立会话，不同用户的对话上下文互不干扰
+
+### 记忆隔离（sharedMemoryAcrossConversations）
+
+- **默认关闭**（`false`）：不同群聊、群聊与私聊之间的记忆隔离，AI 不会混淆不同场景下的对话历史
+- **开启**（`true`）：单 Agent 场景下，同一用户在不同会话间共享记忆
+
+### 适用场景
+
+- ✅ 同一机器人在多个群中服务，希望每个群的对话互不干扰
+- ✅ 用户既在私聊也在群聊中使用机器人，希望私聊与群聊上下文分离
+- ✅ 群内所有成员共享对话上下文（默认 `groupSessionScope: "group"`）
+- ✅ 群内每个用户独立对话（设置 `groupSessionScope: "group_sender"`）
+- ✅ 需要跨会话共享记忆时，可设置 `sharedMemoryAcrossConversations: true`
+
+## 异步模式
+
+异步模式允许连接器立即回执用户消息，然后在后台处理任务，最后主动推送最终结果作为独立消息。这种模式特别适合处理耗时较长的任务，可以给用户更好的交互体验。
+
+### 启用异步模式
+
+在配置中设置 `asyncMode: true`：
+
+```json5
+{
+  "channels": {
+    "dingtalk-connector": {
+      "enabled": true,
+      "clientId": "dingxxxxxxxxx",
+      "clientSecret": "your_secret_here",
+      "asyncMode": true,              // 启用异步模式
+      "ackText": "🫡 任务已接收"  // 可选：自定义回执消息
+    }
+  }
+}
+```
+
+### 工作流程
+
+1. **立即回执** - 用户发送消息后，连接器立即发送回执消息（默认：`🫡 任务已接收，处理中...`）
+2. **后台处理** - 连接器在后台调用 Gateway 处理任务，支持文件附件和图片
+3. **推送结果** - 处理完成后，连接器主动推送最终结果作为独立消息
+
+### 适用场景
+
+- ✅ 处理耗时较长的任务（如文档分析、代码生成等）
+- ✅ 需要给用户即时反馈的场景
+- ✅ 希望将处理过程和结果分离的场景
+
+### 注意事项
+
+- 异步模式下不支持 AI Card 流式响应（因为结果通过主动推送发送）
+- 异步模式支持文件附件和图片处理
+- 错误信息也会通过主动推送发送给用户
 
 ## 多 Agent 配置
 
@@ -185,6 +268,74 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
   ]
 }
 ```
+
+### 基于单聊/群聊的路由（peer.kind）
+
+连接器支持根据会话类型（单聊/群聊）将消息路由到不同的 Agent。这对于以下场景非常有用：
+
+- **安全隔离**：群聊使用受限功能的 Agent，单聊使用完整功能的 Agent
+- **多角色支持**：不同用户或会话类型分配不同的 Agent
+- **成本优化**：普通用户路由到低成本模型，VIP 用户使用高端模型
+
+#### 配置示例
+
+```json5
+{
+  "bindings": [
+    // 场景1：特定用户的单聊 → main agent（完整功能）
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "dingtalk-connector",
+        "peer": {
+          "kind": "direct",
+          "id": "YOUR_VIP_USER_ID"
+        }
+      }
+    },
+    // 场景2：所有群聊 → guest agent（受限功能）
+    {
+      "agentId": "guest",
+      "match": {
+        "channel": "dingtalk-connector",
+        "peer": {
+          "kind": "group",
+          "id": "*"
+        }
+      }
+    },
+    // 场景3：其他单聊 → guest agent（受限功能）
+    {
+      "agentId": "guest",
+      "match": {
+        "channel": "dingtalk-connector",
+        "peer": {
+          "kind": "direct",
+          "id": "*"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### peer.kind 配置说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `peer.kind` | `'direct'` \| `'group'` | 会话类型：`direct` 表示单聊，`group` 表示群聊 |
+| `peer.id` | `string` | 发送者 ID（单聊）或 `*` 通配符匹配所有 |
+
+#### 匹配优先级
+
+bindings 按以下优先级匹配（从高到低）：
+
+1. **peer.kind + peer.id 精确匹配**：指定会话类型和具体用户 ID
+2. **peer.kind + peer.id='*' 通配匹配**：指定会话类型，匹配所有用户
+3. **仅 peer.kind 匹配**：只指定会话类型（无 peer.id）
+4. **accountId 匹配**：按钉钉账号路由
+5. **channel 匹配**：仅指定 channel
+6. **默认 fallback**：使用 `main` agent
 
 ### 官方文档
 
@@ -397,6 +548,39 @@ openclaw plugins install @dingtalk-real-ai/dingtalk-connector
 | `mammoth` | Word 文档（.docx）解析 |
 | `pdf-parse` | PDF 文档解析 |
 
+### Q: Stream 客户端连接 400 错误
+
+日志中出现 `channel exited: Request failed with status code 400`，表示钉钉 Stream 连接失败。
+
+**常见原因：**
+
+| 原因 | 排查方法 |
+|------|----------|
+| **应用未发布** | 钉钉开放平台 → 应用 → 版本管理 → 确认已发布 |
+| **凭证错误** | 检查 `clientId`/`clientSecret` 是否有空格或换行 |
+| **非 Stream 模式** | 确认机器人消息接收模式为 **Stream 模式** |
+| **IP 白名单限制** | 检查应用是否设置了 IP 白名单 |
+
+**排查步骤：**
+
+1. **验证凭证有效性**
+   ```bash
+   curl -X POST "https://api.dingtalk.com/v1.0/oauth2/accessToken" \
+     -H "Content-Type: application/json" \
+     -d '{"appKey": "你的clientId", "appSecret": "你的clientSecret"}'
+   ```
+   - 返回 `accessToken` → 凭证正确
+   - 返回 `400`/`invalid` → 凭证错误或应用未发布
+
+2. **检查应用状态**
+   - 登录 [钉钉开放平台](https://open-dev.dingtalk.com/)
+   - 确认应用已发布（版本管理 → 发布）
+   - 确认机器人已启用且为 Stream 模式
+
+3. **重新发布应用**
+   - 修改任何配置后，必须点击 **保存** → **发布**
+
+
 # 方案二：钉钉 DEAP Agent 集成
 
 通过将钉钉 [DEAP](https://deap.dingtalk.com) Agent 与 [OpenClaw](https://openclaw.ai) Gateway 连接，实现自然语言驱动的本地设备操作能力。
@@ -495,6 +679,9 @@ openclaw gateway start
    | gatewayToken | 第一步获取 | Gateway 配置的认证令牌 |
 
    <img width="3426" height="1752" alt="配置 OpenClaw 技能参数" src="https://github.com/user-attachments/assets/bc725789-382f-41b5-bbdb-ba8f29923d5c" />
+
+注意 OpenClaw 属于一个MCP，还需要配置他的触发规则，满足规则的情况下才会使用这个MCP:
+<img width="1088" height="526" alt="image" src="https://github.com/user-attachments/assets/8b0b6f6d-70ff-4edc-b674-7a24126aadfa" />
 
 4. 发布 Agent：
 

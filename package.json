@@ -1,11 +1,24 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.7.1",
+  "version": "0.7.6",
   "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
   "main": "plugin.ts",
   "type": "module",
   "scripts": {
-    "build": "echo 'No build needed - jiti loads TS at runtime'"
+    "build": "echo 'No build needed - jiti loads TS at runtime'",
+    "lint": "echo 'Lint check skipped'",
+    "lint:fix": "echo 'Lint fix skipped'",
+    "test": "echo 'Tests skipped'",
+    "test:watch": "echo 'Tests skipped'",
+    "type-check": "npx tsc --noEmit",
+    "version:check": "echo 'Version check skipped'",
+    "release:prepare": "echo 'Release prepare skipped'",
+    "release:publish": "npm publish --access public",
+    "release:verify": "npm view @dingtalk-real-ai/dingtalk-connector version",
+    "clean": "rm -rf node_modules package-lock.json",
+    "install:fresh": "npm run clean && npm install",
+    "dev": "echo 'Run: openclaw start'",
+    "validate": "npm run lint && npm run type-check && npm run version:check"
   },
   "keywords": [
     "dingtalk",

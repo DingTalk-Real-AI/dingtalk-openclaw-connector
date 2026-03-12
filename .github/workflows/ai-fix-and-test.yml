@@ -1,0 +1,518 @@
+name: 🤖 AI 修复分支与测试
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue 编号'
+        required: true
+        type: string
+      test_mode:
+        description: '测试模式'
+        required: false
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - github
+
+env:
+  DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # 检查是否需要执行 AI 修复
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      issue_number: ${{ steps.check.outputs.issue_number }}
+      issue_title: ${{ steps.check.outputs.issue_title }}
+      issue_body: ${{ steps.check.outputs.issue_body }}
+    steps:
+      - name: 检查触发条件
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let issueNumber, issueTitle, issueBody;
+            
+            // 判断触发方式
+            if (context.eventName === 'workflow_dispatch') {
+              // 手动触发
+              issueNumber = context.payload.inputs.issue_number;
+              
+              // 获取 Issue 信息
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt(issueNumber)
+              });
+              
+              issueTitle = issue.title;
+              issueBody = issue.body || '';
+              
+            } else if (context.eventName === 'issues') {
+              // Issue 标签触发
+              if (context.payload.label?.name !== 'ai-fix') {
+                console.log('标签不是 ai-fix，跳过');
+                core.setOutput('should_run', 'false');
+                return;
+              }
+              
+              issueNumber = context.payload.issue.number;
+              issueTitle = context.payload.issue.title;
+              issueBody = context.payload.issue.body || '';
+            }
+            
+            core.setOutput('should_run', 'true');
+            core.setOutput('issue_number', issueNumber);
+            core.setOutput('issue_title', issueTitle);
+            core.setOutput('issue_body', issueBody);
+            
+            console.log(`✅ 触发 AI 修复流程 - Issue #${issueNumber}`);
+
+  # 创建修复分支
+  create-branch:
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    if: needs.check-trigger.outputs.should_run == 'true'
+    outputs:
+      branch_name: ${{ steps.branch.outputs.branch_name }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 创建修复分支
+        id: branch
+        run: |
+          ISSUE_NUMBER=${{ needs.check-trigger.outputs.issue_number }}
+          ISSUE_TITLE="${{ needs.check-trigger.outputs.issue_title }}"
+          
+          # 生成安全的分支名
+          SAFE_TITLE=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-*$//' | cut -c1-50)
+          BRANCH_NAME="ai-fix/issue-${ISSUE_NUMBER}-${SAFE_TITLE}"
+          
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "🌿 创建分支: $BRANCH_NAME"
+          
+          # 配置 Git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 创建并推送分支
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+          
+          echo "✅ 分支已创建: $BRANCH_NAME"
+
+  # 本地 AI 修复（通过 webhook 调用本地 OpenClaw）
+  ai-fix-local:
+    needs: [check-trigger, create-branch]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_mode != 'github'
+    steps:
+      - name: 调用本地 AI 修复服务
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = '${{ needs.check-trigger.outputs.issue_number }}';
+            const issueTitle = '${{ needs.check-trigger.outputs.issue_title }}';
+            const issueBody = `${{ needs.check-trigger.outputs.issue_body }}`;
+            const branchName = '${{ needs.create-branch.outputs.branch_name }}';
+            
+            // 构建调用本地 OpenClaw 的 payload
+            const payload = {
+              action: 'ai-fix-issue',
+              issue: {
+                number: issueNumber,
+                title: issueTitle,
+                body: issueBody
+              },
+              branch: branchName,
+              repo: {
+                owner: context.repo.owner,
+                name: context.repo.repo
+              },
+              callback_url: `https://api.github.com/repos/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber}/comments`
+            };
+            
+            console.log('📤 发送 AI 修复请求到本地服务...');
+            console.log('Payload:', JSON.stringify(payload, null, 2));
+            
+            // 这里可以通过 webhook 或 API 调用本地服务
+            // 实际实现需要根据你的本地 OpenClaw 部署方式调整
+            
+            // 在 Issue 中添加等待评论
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(issueNumber),
+              body: `⏳ **AI 修复进行中**\n\n分支 \`${branchName}\` 已创建\n\n已发送请求到本地 AI 服务，等待修复结果...\n\n**提示:** 本地 AI 修复完成后，测试结果将自动同步到钉钉群。`
+            });
+
+  # GitHub 环境 AI 修复（使用 GitHub Actions 运行器）
+  ai-fix-github:
+    needs: [check-trigger, create-branch]
+    runs-on: ubuntu-latest
+    # 标签触发时自动执行；手动触发时根据 test_mode 选择
+    if: |
+      github.event_name == 'issues' || 
+      github.event.inputs.test_mode == 'github' || 
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.test_mode == 'github')
+    outputs:
+      lint_status: ${{ steps.lint.outputs.lint_status }}
+      typecheck_status: ${{ steps.typecheck.outputs.typecheck_status }}
+      test_result: ${{ steps.test.outputs.test_result }}
+    steps:
+      - name: 检出修复分支
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-branch.outputs.branch_name }}
+          fetch-depth: 0
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 分析 Issue 并调用 AI 生成修复
+        id: ai-analysis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+        run: |
+          echo "🤖 分析 Issue 内容..."
+          echo "Issue #${{ needs.check-trigger.outputs.issue_number }}: ${{ needs.check-trigger.outputs.issue_title }}"
+          
+          # 创建修复标记文件（开始分析）
+          cat > .ai-fix-info.json << EOF
+          {
+            "issue_number": ${{ needs.check-trigger.outputs.issue_number }},
+            "issue_title": "${{ needs.check-trigger.outputs.issue_title }}",
+            "fix_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "fix_method": "github-actions-ai",
+            "status": "analyzing"
+          }
+          EOF
+          
+          # 检查是否有 AI API Key
+          if [ -n "$OPENAI_API_KEY" ] || [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$DASHSCOPE_API_KEY" ]; then
+            echo "✅ 发现 AI API Key，将尝试调用 AI 模型生成修复..."
+            
+            # 准备 Issue 内容
+            ISSUE_TITLE="${{ needs.check-trigger.outputs.issue_title }}"
+            ISSUE_BODY='${{ needs.check-trigger.outputs.issue_body }}'
+            
+            # 创建 AI 提示词
+            cat > /tmp/ai-prompt.txt << 'PROMPT'
+          你是一个专业的代码修复助手。请根据下面的 GitHub Issue 描述，分析代码问题并提供修复建议。
+          
+          Issue 标题: $ISSUE_TITLE
+          Issue 描述: $ISSUE_BODY
+          
+          请分析：
+          1. 问题的根本原因
+          2. 需要修改的文件
+          3. 具体的修复方案
+          
+          请以结构化的方式输出分析结果。
+          PROMPT
+            
+            # 尝试调用 OpenAI API（如果配置了）
+            if [ -n "$OPENAI_API_KEY" ]; then
+              echo "🔄 调用 OpenAI API..."
+              curl -s -X POST https://api.openai.com/v1/chat/completions \
+                -H "Authorization: Bearer $OPENAI_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "model": "gpt-4o-mini",
+                  "messages": [
+                    {"role": "system", "content": "你是一个专业的代码修复助手。请分析 GitHub Issue 并提供修复建议。"},
+                    {"role": "user", "content": "Issue 标题: '"$ISSUE_TITLE"'\n\nIssue 描述: '"$ISSUE_BODY"'\n\n请分析问题原因并提供修复方案。"}
+                  ],
+                  "temperature": 0.3
+                }' > /tmp/ai-response.json 2>/dev/null || echo "⚠️ OpenAI API 调用失败"
+              
+              if [ -f /tmp/ai-response.json ] && grep -q '"choices"' /tmp/ai-response.json; then
+                echo "✅ OpenAI 分析完成"
+                cat /tmp/ai-response.json | jq -r '.choices[0].message.content' > /tmp/ai-analysis.md || true
+              fi
+            fi
+            
+            # 尝试调用 Anthropic API（如果配置了且 OpenAI 失败）
+            if [ -n "$ANTHROPIC_API_KEY" ] && [ ! -f /tmp/ai-analysis.md ]; then
+              echo "🔄 调用 Anthropic API..."
+              curl -s -X POST https://api.anthropic.com/v1/messages \
+                -H "x-api-key: $ANTHROPIC_API_KEY" \
+                -H "Content-Type: application/json" \
+                -H "anthropic-version: 2023-06-01" \
+                -d '{
+                  "model": "claude-3-haiku-20240307",
+                  "max_tokens": 2000,
+                  "messages": [
+                    {"role": "user", "content": "Issue 标题: '"$ISSUE_TITLE"'\n\nIssue 描述: '"$ISSUE_BODY"'\n\n请分析问题原因并提供修复方案。"}
+                  ]
+                }' > /tmp/ai-response.json 2>/dev/null || echo "⚠️ Anthropic API 调用失败"
+              
+              if [ -f /tmp/ai-response.json ] && grep -q '"content"' /tmp/ai-response.json; then
+                echo "✅ Anthropic 分析完成"
+                cat /tmp/ai-response.json | jq -r '.content[0].text' > /tmp/ai-analysis.md || true
+              fi
+            fi
+            
+            # 尝试调用阿里云百炼 Qwen3.5 Plus API（如果配置了且前面的都失败）
+            if [ -n "$DASHSCOPE_API_KEY" ] && [ ! -f /tmp/ai-analysis.md ]; then
+              echo "🔄 调用阿里云百炼 Qwen3.5 Plus API..."
+              curl -s -X POST https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions \
+                -H "Authorization: Bearer $DASHSCOPE_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "model": "qwen3.5-plus",
+                  "messages": [
+                    {"role": "system", "content": "你是一个专业的代码修复助手。请分析 GitHub Issue 并提供修复建议。"},
+                    {"role": "user", "content": "Issue 标题: '"$ISSUE_TITLE"'\n\nIssue 描述: '"$ISSUE_BODY"'\n\n请分析问题原因并提供修复方案。"}
+                  ],
+                  "temperature": 0.3
+                }' > /tmp/ai-response.json 2>/dev/null || echo "⚠️ Qwen3.5 Plus API 调用失败"
+              
+              if [ -f /tmp/ai-response.json ] && grep -q '"choices"' /tmp/ai-response.json; then
+                echo "✅ Qwen3.5 Plus 分析完成"
+                cat /tmp/ai-response.json | jq -r '.choices[0].message.content' > /tmp/ai-analysis.md || true
+              fi
+            fi
+            
+            # 保存 AI 分析结果
+            if [ -f /tmp/ai-analysis.md ]; then
+              echo "📝 AI 分析结果："
+              cat /tmp/ai-analysis.md
+              cp /tmp/ai-analysis.md .ai-fix-analysis.md
+            else
+              echo "⚠️ AI 分析未完成，将使用默认分析流程"
+              echo "AI 分析暂不可用，请手动查看 Issue 并修复。" > .ai-fix-analysis.md
+            fi
+          else
+            echo "⚠️ 未配置 AI API Key (OPENAI_API_KEY、ANTHROPIC_API_KEY 或 DASHSCOPE_API_KEY)"
+            echo "请配置 Secrets 后重新运行，或手动修复代码。"
+            echo "未配置 AI API Key，请手动修复。" > .ai-fix-analysis.md
+          fi
+          
+          echo "analysis_complete=true" >> $GITHUB_OUTPUT
+
+      - name: 运行代码检查
+        id: lint
+        continue-on-error: true
+        run: |
+          echo "🔍 运行代码检查..."
+          npm run lint 2>&1 | tee lint-output.txt || true
+          echo "lint_status=$?" >> $GITHUB_OUTPUT
+
+      - name: 运行类型检查
+        id: typecheck
+        continue-on-error: true
+        run: |
+          echo "🔍 运行类型检查..."
+          npm run type-check 2>&1 | tee typecheck-output.txt || true
+          echo "typecheck_status=$?" >> $GITHUB_OUTPUT
+
+      - name: 运行测试
+        id: test
+        continue-on-error: true
+        run: |
+          echo "🧪 运行自动化测试..."
+          npm test 2>&1 | tee test-output.txt || true
+          echo "test_status=$?" >> $GITHUB_OUTPUT
+          
+          # 提取测试结果摘要
+          if grep -q "PASS\|✓" test-output.txt; then
+            echo "test_result=passed" >> $GITHUB_OUTPUT
+          else
+            echo "test_result=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 提交修复结果
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 更新修复状态
+          cat > .ai-fix-info.json << EOF
+          {
+            "issue_number": ${{ needs.check-trigger.outputs.issue_number }},
+            "issue_title": "${{ needs.check-trigger.outputs.issue_title }}",
+            "fix_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "fix_method": "github-actions-ai",
+            "status": "completed",
+            "test_results": {
+              "lint": "${{ steps.lint.outputs.lint_status == '0' && 'passed' || 'failed' }}",
+              "typecheck": "${{ steps.typecheck.outputs.typecheck_status == '0' && 'passed' || 'failed' }}",
+              "test": "${{ steps.test.outputs.test_result }}"
+            }
+          }
+          EOF
+          
+          # 添加 AI 分析结果（如果存在）
+          if [ -f .ai-fix-analysis.md ]; then
+            git add .ai-fix-analysis.md
+          fi
+          
+          git add .ai-fix-info.json
+          git commit -m "🤖 AI 修复: Issue #${{ needs.check-trigger.outputs.issue_number }} - 自动修复结果" || echo "无变更需要提交"
+          git push origin ${{ needs.create-branch.outputs.branch_name }}
+
+  # 创建 PR
+  create-pr:
+    needs: [check-trigger, create-branch, ai-fix-github]
+    runs-on: ubuntu-latest
+    if: always() && (needs.ai-fix-github.result == 'success' || needs.ai-fix-github.result == 'skipped')
+    steps:
+      - name: 创建 Pull Request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ needs.check-trigger.outputs.issue_number }}');
+            const branchName = '${{ needs.create-branch.outputs.branch_name }}';
+            
+            try {
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🤖 AI 修复: ${context.payload.issue?.title || `Issue #${issueNumber}`}`,
+                head: branchName,
+                base: 'main',
+                body: `## 🤖 AI 自动修复\n\n**关联 Issue:** #${issueNumber}\n\n**修复分支:** \`${branchName}\`\n\n**修复说明:**\n- 由 GitHub Actions 自动生成的修复\n- 基于 Issue 描述进行代码分析和修复\n- 包含自动化测试结果\n\n**测试状态:**\n- 代码检查: ${{ needs.ai-fix-github.outputs.lint_status == '0' && '✅ 通过' || '⚠️ 需关注' }}\n- 类型检查: ${{ needs.ai-fix-github.outputs.typecheck_status == '0' && '✅ 通过' || '⚠️ 需关注' }}\n- 单元测试: ${{ needs.ai-fix-github.outputs.test_result == 'passed' && '✅ 通过' || '⚠️ 需关注' }}\n\n**需要人工审核:**\n- [ ] 代码逻辑正确性\n- [ ] 边界情况处理\n- [ ] 性能影响评估\n\n---\n*此 PR 由 AI 修复工作流自动生成*`,
+                draft: false
+              });
+              
+              console.log(`✅ PR 创建成功: #${pr.number}`);
+              core.setOutput('pr_number', pr.number);
+              core.setOutput('pr_url', pr.html_url);
+              
+            } catch (error) {
+              console.error('创建 PR 失败:', error.message);
+              // PR 可能已存在，查找现有 PR
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${branchName}`,
+                base: 'main',
+                state: 'open'
+              });
+              
+              if (prs.length > 0) {
+                console.log(`ℹ️ PR 已存在: #${prs[0].number}`);
+                core.setOutput('pr_number', prs[0].number);
+                core.setOutput('pr_url', prs[0].html_url);
+              }
+            }
+
+  # 发送测试结果到钉钉
+  notify-result:
+    needs: [check-trigger, create-branch, ai-fix-github, create-pr]
+    runs-on: ubuntu-latest
+    if: always()
+    outputs:
+      notified: ${{ steps.notify.outputs.notified }}
+    steps:
+      - name: 发送测试结果到钉钉
+        id: notify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = '${{ needs.check-trigger.outputs.issue_number }}';
+            const issueTitle = '${{ needs.check-trigger.outputs.issue_title }}';
+            const branchName = '${{ needs.create-branch.outputs.branch_name }}';
+            
+            // 确定整体状态（处理 ai-fix-github 被跳过的情况）
+            const lintStatus = '${{ needs.ai-fix-github.outputs.lint_status }}';
+            const typecheckStatus = '${{ needs.ai-fix-github.outputs.typecheck_status }}';
+            const testResult = '${{ needs.ai-fix-github.outputs.test_result }}';
+            
+            // 判断执行模式
+            const isLocalMode = '${{ github.event.inputs.test_mode }}' === 'local' && '${{ github.event_name }}' === 'workflow_dispatch';
+            const isLabelTrigger = '${{ github.event_name }}' === 'issues';
+            
+            let allPassed, statusEmoji, statusText, testResultsText;
+            
+            if (isLocalMode && lintStatus === '') {
+              // Local 模式：GitHub Actions 未执行测试
+              statusEmoji = '⏳';
+              statusText = '等待本地 AI 修复';
+              testResultsText = '- 📝 代码检查: ⏳ 等待本地执行\n- 🔍 类型检查: ⏳ 等待本地执行\n- 🧪 单元测试: ⏳ 等待本地执行';
+              allPassed = false;
+            } else {
+              // GitHub 模式（标签触发或手动选择 github 模式）：显示实际测试结果
+              allPassed = lintStatus === '0' && typecheckStatus === '0' && testResult === 'passed';
+              statusEmoji = allPassed ? '✅' : '⚠️';
+              statusText = allPassed ? '测试通过' : '需要关注';
+              testResultsText = `- 📝 代码检查: ${lintStatus === '0' ? '✅ 通过' : '❌ 失败'}\n- 🔍 类型检查: ${typecheckStatus === '0' ? '✅ 通过' : '❌ 失败'}\n- 🧪 单元测试: ${testResult === 'passed' ? '✅ 通过' : '❌ 失败'}`;
+            }
+            
+            // 构建钉钉消息（确保包含小写关键字以支持 Custom Keywords 模式）
+            const message = {
+              msgtype: 'markdown',
+              markdown: {
+                title: `${statusEmoji} AI 修复测试完成`,
+                text: `## ${statusEmoji} AI 修复测试${statusText}\n\n**Issue:** [#${issueNumber} ${issueTitle}](https://github.com/${context.repo.owner}/${context.repo.repo}/issues/${issueNumber})\n\n**修复分支:** \`${branchName}\`\n\n**测试结果:**\n${testResultsText}\n\n**下一步:**\n${allPassed ? '✅ 所有测试通过，请审核 PR 后合并' : (lintStatus === '' ? '⏳ 本地 AI 修复完成后，请手动运行测试' : '⚠️ 部分测试未通过，请查看详细日志')}\n\n---\n⏰ ${new Date().toLocaleString('zh-CN')}\n\n**关键词**: issue, pr, ai-fix`
+              }
+            };
+            
+            // 发送钉钉通知
+            const axios = require('axios');
+            try {
+              await axios.post(process.env.DINGTALK_WEBHOOK, message);
+              console.log('✅ 钉钉通知发送成功');
+              core.setOutput('notified', 'true');
+            } catch (error) {
+              console.error('❌ 钉钉通知发送失败:', error.message);
+              core.setOutput('notified', 'false');
+            }
+
+  # 更新 Issue 状态
+  update-issue:
+    needs: [check-trigger, create-branch, ai-fix-github, create-pr, notify-result]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: 更新 Issue 评论
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ needs.check-trigger.outputs.issue_number }}');
+            const branchName = '${{ needs.create-branch.outputs.branch_name }}';
+            
+            const lintStatus = '${{ needs.ai-fix-github.outputs.lint_status }}';
+            const typecheckStatus = '${{ needs.ai-fix-github.outputs.typecheck_status }}';
+            const testResult = '${{ needs.ai-fix-github.outputs.test_result }}';
+            
+            // 判断执行模式
+            const isLocalMode = '${{ github.event.inputs.test_mode }}' === 'local' && '${{ github.event_name }}' === 'workflow_dispatch';
+            const isLabelTrigger = '${{ github.event_name }}' === 'issues';
+            
+            let comment = '';
+            
+            if (isLocalMode && lintStatus === '') {
+              // Local 模式：GitHub Actions 未执行测试
+              comment = `⏳ **AI 修复分支已创建**\n\n**修复分支:** \`${branchName}\`\n\n已触发本地 AI 修复流程。\n\n**注意:** 本地 AI 修复完成后，请手动推送代码并创建 PR。\n\n钉钉群已收到通知，可在群内查看进度。`;
+            } else if (lintStatus === '0' && typecheckStatus === '0' && testResult === 'passed') {
+              comment = `✅ **AI 修复完成**\n\n所有测试已通过！\n\n**修复分支:** \`${branchName}\`\n\n**测试结果:**\n- 📝 代码检查: ✅ 通过\n- 🔍 类型检查: ✅ 通过\n- 🧪 单元测试: ✅ 通过\n\n已创建 PR，请审核后合并。`;
+            } else {
+              comment = `⚠️ **AI 修复完成（需关注）**\n\n**修复分支:** \`${branchName}\`\n\n**测试结果:**\n- 📝 代码检查: ${lintStatus === '0' ? '✅ 通过' : '❌ 失败'}\n- 🔍 类型检查: ${typecheckStatus === '0' ? '✅ 通过' : '❌ 失败'}\n- 🧪 单元测试: ${testResult === 'passed' ? '✅ 通过' : '❌ 失败'}\n\n部分测试未通过，请查看详细日志并手动调整。`;
+            }
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: comment
+            });

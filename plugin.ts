@@ -16,6 +16,9 @@ import type { ClawdbotPluginApi, PluginRuntime, ClawdbotConfig } from 'clawdbot/
 
 export const id = 'dingtalk-connector';
 
+/** 默认账号 ID，用于标记单账号模式（无 accounts 配置）时的内部标识，映射到 'main' agent */
+const DEFAULT_ACCOUNT_ID = '__default__';
+
 let runtime: PluginRuntime | null = null;
 
 function getRuntime(): PluginRuntime {
@@ -70,51 +73,100 @@ function markMessageProcessed(messageId: string): void {
 const NEW_SESSION_COMMANDS = ['/new', '/reset', '/clear', '新会话', '重新开始', '清空对话'];
 
 /** 检查消息是否是新会话命令 */
-function isNewSessionCommand(text: string): boolean {
-  const trimmed = text.trim().toLowerCase();
-  return NEW_SESSION_COMMANDS.some(cmd => trimmed === cmd.toLowerCase());
+function normalizeSlashCommand(text: string): string {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  if (NEW_SESSION_COMMANDS.some(cmd => lower === cmd.toLowerCase())) {
+    return '/new';
+  }
+  return text;
 }
 
-/** 获取或创建用户 session key */
-function getSessionKey(
-  senderId: string,
-  accountId: string,  // 添加 accountId 参数，支持多 agent 路由
-  forceNew: boolean,
-  sessionTimeout: number,
-  log?: any,
-): { sessionKey: string; isNew: boolean } {
-  const now = Date.now();
-  const sessionKeyPrefix = `dingtalk-connector:${accountId}`;  // 使用 accountId 作为前缀
-  const cacheKey = `${accountId}:${senderId}`;  // 使用 accountId:senderId 作为缓存键
-  const existing = userSessions.get(cacheKey);
+/**
+ * OpenClaw 标准会话上下文
+ * 遵循 OpenClaw session.dmScope 机制，让 Gateway 根据配置自动处理会话隔离
+ */
+interface SessionContext {
+  channel: 'dingtalk-connector';
+  accountId: string;
+  chatType: 'direct' | 'group';
+  peerId: string;
+  conversationId?: string;
+  senderName?: string;
+  groupSubject?: string;
+}
 
-  // 强制新会话
-  if (forceNew) {
-    const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
-    userSessions.set(cacheKey, { lastActivity: now, sessionId });
-    log?.info?.(`[DingTalk][Session] 账号[${accountId}] 用户主动开启新会话: ${senderId}`);
-    return { sessionKey: sessionId, isNew: true };
+/**
+ * 构建 OpenClaw 标准会话上下文
+ * 遵循 OpenClaw session.dmScope 机制，让 Gateway 根据配置自动处理会话隔离
+ *
+ * @param separateSessionByConversation - 是否按单聊/群聊/群区分 session（默认 true）
+ *   - true: 单聊、群聊、不同群各自拥有独立的 session
+ *   - false: 按用户维度维护 session，不区分单聊/群聊（兼容旧行为）
+ * @param groupSessionScope - 群聊会话隔离策略（仅当 separateSessionByConversation=true 时生效）
+ *   - 'group': 整个群共享一个会话（默认）
+ *   - 'group_sender': 群内每个用户独立会话
+ */
+function buildSessionContext(params: {
+  accountId: string;
+  senderId: string;
+  senderName?: string;
+  conversationType: string;
+  conversationId?: string;
+  groupSubject?: string;
+  separateSessionByConversation?: boolean;
+  groupSessionScope?: 'group' | 'group_sender';
+}): SessionContext {
+  const { accountId, senderId, senderName, conversationType, conversationId, groupSubject, separateSessionByConversation, groupSessionScope } = params;
+  const isDirect = conversationType === '1';
+
+  // separateSessionByConversation=false 时，不区分单聊/群聊，按用户维度维护 session
+  if (separateSessionByConversation === false) {
+    return {
+      channel: 'dingtalk-connector',
+      accountId,
+      chatType: isDirect ? 'direct' : 'group',
+      peerId: senderId, // 只用 senderId，不区分会话
+      senderName,
+    };
   }
 
-  // 检查超时
-  if (existing) {
-    const elapsed = now - existing.lastActivity;
-    if (elapsed > sessionTimeout) {
-      const sessionId = `${sessionKeyPrefix}:${senderId}:${now}`;
-      userSessions.set(cacheKey, { lastActivity: now, sessionId });
-      log?.info?.(`[DingTalk][Session] 账号[${accountId}] 会话超时(${Math.round(elapsed / 60000)}分钟)，自动开启新会话: ${senderId}`);
-      return { sessionKey: sessionId, isNew: true };
-    }
-    // 更新活跃时间
-    existing.lastActivity = now;
-    return { sessionKey: existing.sessionId, isNew: false };
+  // 以下是 separateSessionByConversation=true（默认）的逻辑
+  if (isDirect) {
+    // 单聊：peerId 为发送者 ID，由 OpenClaw Gateway 根据 dmScope 配置处理
+    return {
+      channel: 'dingtalk-connector',
+      accountId,
+      chatType: 'direct',
+      peerId: senderId,
+      senderName,
+    };
   }
 
-  // 首次会话
-  const sessionId = `${sessionKeyPrefix}:${senderId}`;
-  userSessions.set(cacheKey, { lastActivity: now, sessionId });
-  log?.info?.(`[DingTalk][Session] 账号[${accountId}] 新用户首次会话: ${senderId}`);
-  return { sessionKey: sessionId, isNew: false };
+  // 群聊：根据 groupSessionScope 配置决定会话隔离策略
+  if (groupSessionScope === 'group_sender') {
+    // 群内每个用户独立会话
+    return {
+      channel: 'dingtalk-connector',
+      accountId,
+      chatType: 'group',
+      peerId: `${conversationId}:${senderId}`,
+      conversationId,
+      senderName,
+      groupSubject,
+    };
+  }
+
+  // 默认：整个群共享一个会话
+  return {
+    channel: 'dingtalk-connector',
+    accountId,
+    chatType: 'group',
+    peerId: conversationId || senderId,
+    conversationId,
+    senderName,
+    groupSubject,
+  };
 }
 
 // ============ Access Token 缓存 ============
@@ -1186,20 +1238,158 @@ async function finishAICard(
 
 // ============ Gateway SSE Streaming ============
 
+// ============ Bindings 匹配逻辑 ============
+
+interface BindingMatch {
+  channel?: string;
+  accountId?: string;
+  peer?: {
+    kind?: 'direct' | 'group';
+    id?: string;
+  };
+}
+
+interface Binding {
+  agentId: string;
+  match?: BindingMatch;
+}
+
+/**
+ * 根据 OpenClaw bindings 配置解析 agentId
+ *
+ * 匹配优先级（从高到低）：
+ * 1. peer.kind + peer.id 精确匹配（非 '*'）
+ * 2. peer.kind + peer.id='*' 通配匹配
+ * 3. peer.kind 匹配（无 peer.id）
+ * 4. accountId 匹配
+ * 5. channel 匹配
+ * 6. 默认 fallback
+ *
+ * @param accountId 账号 ID
+ * @param peerKind 会话类型：'direct'（单聊）或 'group'（群聊）
+ * @param peerId 发送者 ID（单聊）或会话 ID（群聊）
+ * @param log 日志对象
+ * @returns 匹配到的 agentId
+ */
+function resolveAgentIdByBindings(
+  accountId: string,
+  peerKind: 'direct' | 'group',
+  peerId: string,
+  log?: any,
+): string {
+  const rt = getRuntime();
+  const defaultAgentId = accountId === DEFAULT_ACCOUNT_ID ? 'main' : accountId;
+
+  // 读取 OpenClaw 配置
+  let bindings: Binding[] = [];
+  try {
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    if (fs.existsSync(configPath)) {
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(configContent);
+      bindings = config.bindings || [];
+    }
+  } catch (err: any) {
+    log?.warn?.(`[DingTalk][Bindings] 读取 OpenClaw 配置失败: ${err.message}`);
+    return defaultAgentId;
+  }
+
+  if (bindings.length === 0) {
+    log?.info?.(`[DingTalk][Bindings] 无 bindings 配置，使用默认 agentId=${defaultAgentId}`);
+    return defaultAgentId;
+  }
+
+  // 筛选 channel='dingtalk-connector' 的 bindings
+  const channelBindings = bindings.filter(b =>
+    !b.match?.channel || b.match.channel === 'dingtalk-connector'
+  );
+
+  if (channelBindings.length === 0) {
+    log?.info?.(`[DingTalk][Bindings] 无匹配 channel 的 bindings，使用默认 agentId=${defaultAgentId}`);
+    return defaultAgentId;
+  }
+
+  log?.info?.(`[DingTalk][Bindings] 开始匹配: accountId=${accountId}, peerKind=${peerKind}, peerId=${peerId}, bindings数量=${channelBindings.length}`);
+
+  // 按优先级匹配
+  // 优先级1: peer.kind + peer.id 精确匹配
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind &&
+        match.peer?.id &&
+        match.peer.id !== '*' &&
+        match.peer.id === peerId) {
+      // 还需检查 accountId 是否匹配（如果指定了）
+      if (match.accountId && match.accountId !== accountId) continue;
+      log?.info?.(`[DingTalk][Bindings] 精确匹配 peer.id: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级2: peer.kind + peer.id='*' 通配匹配
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind && match.peer?.id === '*') {
+      if (match.accountId && match.accountId !== accountId) continue;
+      log?.info?.(`[DingTalk][Bindings] 通配匹配 peer.kind=${peerKind}, peer.id=*: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级3: 仅 peer.kind 匹配（无 peer.id）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind && !match.peer?.id) {
+      if (match.accountId && match.accountId !== accountId) continue;
+      log?.info?.(`[DingTalk][Bindings] 匹配 peer.kind=${peerKind}: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级4: accountId 匹配（无 peer 配置）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (!match.peer && match.accountId === accountId) {
+      log?.info?.(`[DingTalk][Bindings] 匹配 accountId=${accountId}: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级5: 仅 channel 匹配（无 peer 和 accountId）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (!match.peer && !match.accountId) {
+      log?.info?.(`[DingTalk][Bindings] 匹配 channel=dingtalk-connector: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  log?.info?.(`[DingTalk][Bindings] 无匹配，使用默认 agentId=${defaultAgentId}`);
+  return defaultAgentId;
+}
+
 interface GatewayOptions {
   userContent: string;
   systemPrompts: string[];
-  sessionKey: string;
+  sessionContext: SessionContext;
   gatewayAuth?: string;  // token 或 password，都用 Bearer 格式
+  /** 记忆归属用户标识，用于 Gateway 区分记忆；sharedMemoryAcrossConversations=true 时传 accountId，false 时传 sessionContext JSON */
+  memoryUser?: string;
   /** 本地图片文件路径列表，用于 OpenClaw AgentMediaPayload */
   imageLocalPaths?: string[];
+  /** 会话类型：'direct'（单聊）或 'group'（群聊），用于 bindings 匹配 */
+  peerKind?: 'direct' | 'group';
+  /** 发送者 ID，用于 bindings 匹配 */
+  peerId?: string;
+  gatewayPort?: number;
   log?: any;
 }
 
 async function* streamFromGateway(options: GatewayOptions, accountId: string): AsyncGenerator<string, void, unknown> {
-  const { userContent, systemPrompts, sessionKey, gatewayAuth, imageLocalPaths, log } = options;
+  const { userContent, systemPrompts, sessionKey, gatewayAuth, memoryUser, imageLocalPaths, peerKind, peerId, gatewayPort, log } = options;
   const rt = getRuntime();
-  const gatewayUrl = `http://127.0.0.1:${rt.gateway?.port || 18789}/v1/chat/completions`;
+  const port = gatewayPort || rt.gateway?.port || 18789;
+  const gatewayUrl = `http://127.0.0.1:${port}/v1/chat/completions`;
 
   const messages: any[] = [];
   for (const prompt of systemPrompts) {
@@ -1219,10 +1409,19 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
   if (gatewayAuth) {
     headers['Authorization'] = `Bearer ${gatewayAuth}`;
   }
-  // 使用 HTTP Header 传递 accountId 用于 agent 路由
-  headers['X-OpenClaw-Agent-Id'] = accountId;
+  // 使用 bindings 配置解析 agentId，支持基于 peer.kind（单聊/群聊）的路由
+  // 如果没有提供 peerKind/peerId，则回退到原有逻辑
+  const agentId = (peerKind && peerId)
+    ? resolveAgentIdByBindings(accountId, peerKind, peerId, log)
+    : (accountId === DEFAULT_ACCOUNT_ID ? 'main' : accountId);
+  headers['X-OpenClaw-Agent-Id'] = agentId;
+  if (memoryUser) {
+    // 使用 Base64 编码处理可能包含中文字符的 memoryUser
+    // HTTP Header 只能包含 ASCII 字符，中文字符会导致 ByteString 编码错误
+    headers['X-OpenClaw-Memory-User'] = Buffer.from(memoryUser, 'utf-8').toString('base64');
+  }
 
-  log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, accountId=${accountId}, messages=${messages.length}`);
+  log?.info?.(`[DingTalk][Gateway] POST ${gatewayUrl}, session=${sessionKey}, accountId=${accountId}, agentId=${agentId}, peerKind=${peerKind}, messages=${messages.length}`);
 
   const response = await fetch(gatewayUrl, {
     method: 'POST',
@@ -2383,23 +2582,31 @@ async function handleDingTalkMessage(params: {
     }
   }
 
-  // ===== Session 管理 =====
-  const sessionTimeout = dingtalkConfig.sessionTimeout ?? 1800000; // 默认 30 分钟
-  const forceNewSession = isNewSessionCommand(content.text);
-
-  // 如果是新会话命令，直接回复确认消息
-  if (forceNewSession) {
-    const { sessionKey } = getSessionKey(senderId, accountId, true, sessionTimeout, log);
-    await sendMessage(dingtalkConfig, sessionWebhook, '✨ 已开启新会话，之前的对话已清空。', {
-      atUserId: !isDirect ? senderId : null,
-    });
-    log?.info?.(`[DingTalk] 用户请求新会话: ${senderId}, newKey=${sessionKey}`);
-    return;
+  // 构建 OpenClaw 标准会话上下文
+  // 兼容旧配置：sessionTimeout 已废弃，打印警告
+  if (dingtalkConfig.sessionTimeout !== undefined) {
+    log?.warn?.(`[DingTalk][Deprecation] 'sessionTimeout' 配置已废弃，会话超时由 OpenClaw Gateway 的 session.reset 配置控制`);
   }
+  const separateSessionByConversation = dingtalkConfig.separateSessionByConversation as boolean | undefined;
+  const groupSessionScope = dingtalkConfig.groupSessionScope as 'group' | 'group_sender' | undefined;
+  const sessionContext = buildSessionContext({
+    accountId,
+    senderId,
+    senderName,
+    conversationType: data.conversationType,
+    conversationId: data.conversationId,
+    groupSubject: data.conversationTitle,
+    separateSessionByConversation,
+    groupSessionScope,
+  });
+  const sessionContextJson = JSON.stringify(sessionContext);
+  log?.info?.(`[DingTalk][Session] context=${sessionContextJson}`);
 
-  // 获取或创建 session
-  const { sessionKey, isNew } = getSessionKey(senderId, accountId, false, sessionTimeout, log);
-  log?.info?.(`[DingTalk][Session] key=${sessionKey}, isNew=${isNew}`);
+  // memoryUser 用于 Gateway 区分记忆归属
+  // 使用 peerId（不包含中文）作为标识符，避免 HTTP Header 编码问题
+  const memoryUser = dingtalkConfig.sharedMemoryAcrossConversations === true
+    ? accountId
+    : `${sessionContext.channel}:${sessionContext.accountId}:${sessionContext.peerId}`;
 
   // Gateway 认证：优先使用 token，其次 password
   const gatewayAuth = dingtalkConfig.gatewayToken || dingtalkConfig.gatewayPassword || '';
@@ -2518,7 +2725,9 @@ async function handleDingTalkMessage(params: {
   }
 
   // 对于纯图片消息（无文本），添加默认提示
-  let userContent = content.text || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new，再交由 Gateway 解析
+  const rawText = content.text || '';
+  let userContent = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
   // 追加文件内容
   if (fileContentParts.length > 0) {
     const fileText = fileContentParts.join('\n\n');
@@ -2549,16 +2758,24 @@ async function handleDingTalkMessage(params: {
       log?.warn?.(`[DingTalk][Async] 回执发送失败: ${ackErr?.message || ackErr}`);
     }
 
+    // 计算 peerKind 和 peerId 用于 bindings 匹配
+    const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
+    const peerId = senderId;
+
     let fullResponse = '';
     try {
       for await (const chunk of streamFromGateway({
-        userContent: content.text,
+        userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
+        peerKind,
+        peerId,
+        gatewayPort: cfg.gateway?.port,
         log,
-      })) {
+      }, accountId)) {
         fullResponse += chunk;
       }
 
@@ -2606,6 +2823,10 @@ async function handleDingTalkMessage(params: {
     return;
   }
 
+  // 计算 peerKind 和 peerId 用于 bindings 匹配（在 asyncMode 外部定义，供所有分支使用）
+  const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
+  const peerId = senderId;
+
   // 尝试创建 AI Card
   const card = await createAICard(dingtalkConfig, data, log);
 
@@ -2623,9 +2844,13 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
+        peerKind,
+        peerId,
+        gatewayPort: cfg.gateway?.port,
         log,
       }, accountId)) {
         accumulated += chunk;
@@ -2703,9 +2928,13 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey,
+        sessionKey: sessionContextJson,
         gatewayAuth,
+        memoryUser,
         imageLocalPaths: imageLocalPaths.length > 0 ? imageLocalPaths : undefined,
+        peerKind,
+        peerId,
+        gatewayPort: cfg.gateway?.port,
         log,
       }, accountId)) {
         fullResponse += chunk;
@@ -3089,6 +3318,8 @@ const dingtalkPlugin = {
         gatewayToken: { type: 'string', default: '', description: 'Gateway auth token (Bearer)' },
         gatewayPassword: { type: 'string', default: '', description: 'Gateway auth password (alternative to token)' },
         sessionTimeout: { type: 'number', default: 1800000, description: 'Session timeout in ms (default 30min)' },
+        separateSessionByConversation: { type: 'boolean', default: true, description: '是否按单聊/群聊/群区分 session' },
+        sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
         debug: { type: 'boolean', default: false },
@@ -3106,19 +3337,21 @@ const dingtalkPlugin = {
   config: {
     listAccountIds: (cfg: ClawdbotConfig) => {
       const config = getConfig(cfg);
+      // __default__ 是内部标记，表示使用顶层配置（单账号模式）
       return config.accounts
         ? Object.keys(config.accounts)
-        : (isConfigured(cfg) ? ['default'] : []);
+        : (isConfigured(cfg) ? ['__default__'] : []);
     },
     resolveAccount: (cfg: ClawdbotConfig, accountId?: string) => {
       const config = getConfig(cfg);
-      const id = accountId || 'default';
+      const id = accountId || DEFAULT_ACCOUNT_ID;
       if (config.accounts?.[id]) {
         return { accountId: id, config: config.accounts[id], enabled: config.accounts[id].enabled !== false };
       }
-      return { accountId: 'default', config, enabled: config.enabled !== false };
+      // 没有 accounts 配置或找不到指定账号时，使用顶层配置
+      return { accountId: DEFAULT_ACCOUNT_ID, config, enabled: config.enabled !== false };
     },
-    defaultAccountId: () => 'default',
+    defaultAccountId: () => '__default__',
     isConfigured: (account: any) => Boolean(account.config?.clientId && account.config?.clientSecret),
     describeAccount: (account: any) => ({
       accountId: account.accountId,
@@ -3265,11 +3498,16 @@ const dingtalkPlugin = {
 
       ctx.log?.info(`[${account.accountId}] 启动钉钉 Stream 客户端...`);
 
+      // 启用 DWClient 内置的 autoReconnect 和 keepAlive
+      // - autoReconnect: 连接断开时自动重连
+      // - keepAlive: 启用心跳机制，防止服务端因长时间无活动而断开连接
       const client = new DWClient({
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         debug: config.debug || false,
-      });
+        autoReconnect: true,
+        keepAlive: true,
+      } as any);
 
       client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
         const messageId = res.headers?.messageId;
@@ -3319,27 +3557,39 @@ const dingtalkPlugin = {
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
 
       let stopped = false;
-      if (abortSignal) {
-        abortSignal.addEventListener('abort', () => {
-          if (stopped) return;
-          stopped = true;
-          ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端...`);
-          rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
-        });
-      }
-
-      return {
-        stop: () => {
-          if (stopped) return;
-          stopped = true;
-          ctx.log?.info(`[${account.accountId}] 钉钉 Channel 已停止`);
-          rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
-        },
+      
+      // 统一的停止逻辑
+      const doStop = (reason: string) => {
+        if (stopped) return;
+        stopped = true;
+        ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端 (${reason})...`);
+        try {
+          // 【关键】调用 disconnect() 正确关闭 WebSocket 连接
+          client.disconnect();
+        } catch (err: any) {
+          ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错: ${err.message}`);
+        }
+        rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
       };
+
+      // 【关键修复】返回一个 Promise 并保持 pending 状态直到 abortSignal 触发
+      // 这样框架不会认为账号已退出，避免触发 auto-restart
+      // 参考：OpenClaw changelog - "keep startAccount pending until abort to prevent restart-loop storms"
+      return new Promise((resolve) => {
+        if (abortSignal) {
+          abortSignal.addEventListener('abort', () => {
+            doStop('abortSignal');
+            resolve({
+              stop: () => doStop('manual'),
+              isHealthy: () => !stopped,
+            });
+          });
+        }
+      });
     },
   },
   status: {
-    defaultRuntime: { accountId: 'default', running: false, lastStartAt: null, lastStopAt: null, lastError: null },
+    defaultRuntime: { accountId: DEFAULT_ACCOUNT_ID, running: false, lastStartAt: null, lastStopAt: null, lastError: null },
     probe: async ({ cfg }: any) => {
       if (!isConfigured(cfg)) return { ok: false, error: 'Not configured' };
       try {
@@ -3396,7 +3646,7 @@ const plugin = {
      *   - title?: markdown 消息标题
      *   - useAICard?: 是否使用 AI Card（默认 true）
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
-     *   - accountId?: 使用的账号 ID（默认 default）
+     *   - accountId?: 使用的账号 ID（可选，不传则使用默认配置）
      */
     api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ respond, cfg, params, log }: any) => {
       const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
@@ -3434,7 +3684,7 @@ const plugin = {
      *   - title?: markdown 消息标题
      *   - useAICard?: 是否使用 AI Card（默认 true）
      *   - fallbackToNormal?: AI Card 失败时是否降级到普通消息（默认 true）
-     *   - accountId?: 使用的账号 ID（默认 default）
+     *   - accountId?: 使用的账号 ID（可选，不传则使用默认配置）
      */
     api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ respond, cfg, params, log }: any) => {
       const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
