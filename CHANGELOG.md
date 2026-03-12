@@ -6,6 +6,14 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.6] - 2026-03-12
+
+### 修复 / Fixes
+- 🐛 **Gateway 端口连接修复** - 修复修改 gateway 端口后无法连接的问题，确保配置中的 `gateway.port` 能够正确生效  
+  **Gateway port connection fix** - Fixed issue where connection fails after modifying gateway port, ensuring that `gateway.port` in configuration takes effect correctly
+- 🐛 **新会话命令修复** - 修复新会话命令（`/new`、`/reset`、`/clear`、`新会话` 等）未真正清理会话的问题，统一将命令透传到 Gateway 由 Gateway 统一处理会话重置  
+  **New session command fix** - Fixed issue where new session commands (`/new`, `/reset`, `/clear`, `新会话`, etc.) did not actually clear sessions, commands are now forwarded to Gateway for unified session reset handling
+
 ## [0.7.5] - 2026-03-10
 
 ### 修复 / Fixes
