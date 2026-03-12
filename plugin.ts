@@ -73,9 +73,13 @@ function markMessageProcessed(messageId: string): void {
 const NEW_SESSION_COMMANDS = ['/new', '/reset', '/clear', '新会话', '重新开始', '清空对话'];
 
 /** 检查消息是否是新会话命令 */
-function isNewSessionCommand(text: string): boolean {
-  const trimmed = text.trim().toLowerCase();
-  return NEW_SESSION_COMMANDS.some(cmd => trimmed === cmd.toLowerCase());
+function normalizeSlashCommand(text: string): string {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  if (NEW_SESSION_COMMANDS.some(cmd => lower === cmd.toLowerCase())) {
+    return '/new';
+  }
+  return text;
 }
 
 /**
@@ -2522,18 +2526,6 @@ async function handleDingTalkMessage(params: {
     }
   }
 
-  // ===== Session 管理 =====
-  const forceNewSession = isNewSessionCommand(content.text);
-
-  // 如果是新会话命令，直接回复确认消息
-  if (forceNewSession) {
-    await sendMessage(dingtalkConfig, sessionWebhook, '✨ 已开启新会话，之前的对话已清空。', {
-      atUserId: !isDirect ? senderId : null,
-    });
-    log?.info?.(`[DingTalk] 用户请求新会话: ${senderId}`);
-    return;
-  }
-
   // 构建 OpenClaw 标准会话上下文
   // 兼容旧配置：sessionTimeout 已废弃，打印警告
   if (dingtalkConfig.sessionTimeout !== undefined) {
@@ -2677,7 +2669,9 @@ async function handleDingTalkMessage(params: {
   }
 
   // 对于纯图片消息（无文本），添加默认提示
-  let userContent = content.text || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new，再交由 Gateway 解析
+  const rawText = content.text || '';
+  let userContent = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
   // 追加文件内容
   if (fileContentParts.length > 0) {
     const fileText = fileContentParts.join('\n\n');
