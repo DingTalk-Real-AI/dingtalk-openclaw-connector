@@ -3510,90 +3510,228 @@ const dingtalkPlugin = {
 
       ctx.log?.info(`[${account.accountId}] 启动钉钉 Stream 客户端...`);
 
+      // ============ 连接状态管理 ============
+      let stopped = false;
+      let client: any = null;
+      let healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+      let reconnectAttempts = 0;
+      const MAX_RECONNECT_ATTEMPTS = 10;
+      const BASE_RECONNECT_DELAY = 1000; // 1秒
+      const MAX_RECONNECT_DELAY = 60000; // 最大60秒
+      const HEALTH_CHECK_INTERVAL = 15000; // 15秒检查一次
+
+      // ============ 创建客户端工厂函数 ============
       // 启用 DWClient 内置的 autoReconnect 和 keepAlive
       // - autoReconnect: 连接断开时自动重连
       // - keepAlive: 启用心跳机制，防止服务端因长时间无活动而断开连接
-      const client = new DWClient({
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        debug: config.debug || false,
-        autoReconnect: true,
-        keepAlive: true,
-      } as any);
+      // 注意：由于 dingtalk-stream 库的 keepAlive 心跳超时会调用 terminate() 而非 close()，
+      // 不会触发 autoReconnect，因此需要外部健康检查来补充重连逻辑
+      const createClient = () => {
+        return new DWClient({
+          clientId: config.clientId,
+          clientSecret: config.clientSecret,
+          debug: config.debug || false,
+          autoReconnect: true,
+          keepAlive: true,
+        } as any);
+      };
 
-      client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
-        const messageId = res.headers?.messageId;
-        ctx.log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}, headers=${JSON.stringify(res.headers)}`);
+      // ============ 注册消息回调 ============
+      const registerCallbacks = (dwClient: any) => {
+        dwClient.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
+          const messageId = res.headers?.messageId;
+          ctx.log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}, headers=${JSON.stringify(res.headers)}`);
 
-        // 【关键修复】立即确认回调，避免钉钉服务器因超时而重发
-        // 钉钉 Stream 模式要求及时响应，否则约60秒后会重发消息
-        if (messageId) {
-          client.socketCallBackResponse(messageId, { success: true });
-          ctx.log?.info?.(`[DingTalk] 已立即确认回调: messageId=${messageId}`);
-        }
+          // 【关键修复】立即确认回调，避免钉钉服务器因超时而重发
+          if (messageId) {
+            dwClient.socketCallBackResponse(messageId, { success: true });
+            ctx.log?.info?.(`[DingTalk] 已立即确认回调: messageId=${messageId}`);
+          }
 
-        // 【消息去重】检查是否已处理过该消息（按账号维度隔离）
-        if (messageId && isMessageProcessed(account.accountId, messageId)) {
-          ctx.log?.warn?.(`[DingTalk][${account.accountId}] 检测到重复消息，跳过处理: messageId=${messageId}`);
+          // 【消息去重】检查是否已处理过该消息
+          if (messageId && isMessageProcessed(messageId)) {
+            ctx.log?.warn?.(`[DingTalk][${account.accountId}] 检测到重复消息，跳过处理: messageId=${messageId}`);
+            return;
+          }
+
+          if (messageId) {
+            markMessageProcessed(messageId);
+          }
+
+          // 异步处理消息（不阻塞回调确认）
+          try {
+            ctx.log?.info?.(`[DingTalk] 原始 data: ${typeof res.data === 'string' ? res.data.slice(0, 500) : JSON.stringify(res.data).slice(0, 500)}`);
+            const data = JSON.parse(res.data);
+
+            await handleDingTalkMessage({
+              cfg,
+              accountId: account.accountId,
+              data,
+              sessionWebhook: data.sessionWebhook,
+              log: ctx.log,
+              dingtalkConfig: config,
+            });
+          } catch (error: any) {
+            ctx.log?.error?.(`[DingTalk] 处理消息异常: ${error.message}`);
+          }
+        });
+      };
+
+      // ============ 指数退避计算 ============
+      const getReconnectDelay = () => {
+        const delay = Math.min(
+          BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts),
+          MAX_RECONNECT_DELAY
+        );
+        // 添加 ±20% 抖动，避免多实例同时重连
+        const jitter = delay * 0.2 * (Math.random() - 0.5);
+        return Math.floor(delay + jitter);
+      };
+
+      // ============ 手动重连逻辑 ============
+      const doReconnect = async (): Promise<void> => {
+        if (stopped) return;
+
+        reconnectAttempts++;
+        const delay = getReconnectDelay();
+
+        ctx.log?.warn?.(`[${account.accountId}] 尝试重连 (第 ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} 次, 延迟 ${delay}ms)...`);
+
+        if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+          ctx.log?.error?.(`[${account.accountId}] 重连次数超过上限，停止重连`);
           return;
         }
 
-        // 标记消息为已处理（按账号维度隔离）
-        if (messageId) {
-          markMessageProcessed(account.accountId, messageId);
-        }
+        await new Promise(resolve => setTimeout(resolve, delay));
 
-        // 异步处理消息（不阻塞回调确认）
+        if (stopped) return;
+
         try {
-          ctx.log?.info?.(`[DingTalk] 原始 data: ${typeof res.data === 'string' ? res.data.slice(0, 500) : JSON.stringify(res.data).slice(0, 500)}`);
-          const data = JSON.parse(res.data);
+          // 清理旧连接
+          if (client) {
+            try {
+              client.disconnect();
+            } catch (e) {
+              // 忽略断开错误
+            }
+          }
 
-          await handleDingTalkMessage({
-            cfg,
-            accountId: account.accountId,
-            data,
-            sessionWebhook: data.sessionWebhook,
-            log: ctx.log,
-            dingtalkConfig: config,
+          // 创建新客户端
+          client = createClient();
+          registerCallbacks(client);
+          await client.connect();
+
+          // 等待 registered 状态确认连接真正可用
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('等待 REGISTERED 超时'));
+            }, 10000);
+
+            const checkRegistered = setInterval(() => {
+              if (client.registered) {
+                clearInterval(checkRegistered);
+                clearTimeout(timeout);
+                resolve();
+              }
+            }, 100);
           });
+
+          ctx.log?.info?.(`[${account.accountId}] 重连成功`);
+          reconnectAttempts = 0; // 重置计数器
+
         } catch (error: any) {
-          ctx.log?.error?.(`[DingTalk] 处理消息异常: ${error.message}`);
-          // 注意：即使处理失败，也不需要再次响应（已经提前确认了）
+          ctx.log?.error?.(`[${account.accountId}] 重连失败: ${error.message}`);
+          // 递归重试
+          doReconnect();
         }
+      };
+
+      // ============ 健康检查逻辑 ============
+      const startHealthCheck = () => {
+        if (healthCheckTimer) {
+          clearInterval(healthCheckTimer);
+        }
+
+        healthCheckTimer = setInterval(() => {
+          if (stopped) return;
+
+          // 检查连接状态
+          // 1. connected=false 表示 WebSocket 未连接
+          // 2. registered=false 表示未完成注册（连接不可用）
+          // 3. reconnecting=true 表示库内部正在重连（不需要干预）
+          const isHealthy = client?.connected && client?.registered;
+          const isLibraryReconnecting = client?.reconnecting;
+
+          if (!isHealthy && !isLibraryReconnecting) {
+            ctx.log?.warn?.(`[${account.accountId}] 健康检查失败: connected=${client?.connected}, registered=${client?.registered}, reconnecting=${client?.reconnecting}`);
+            doReconnect();
+          } else if (config.debug) {
+            ctx.log?.info?.(`[${account.accountId}] 健康检查通过: connected=${client?.connected}, registered=${client?.registered}`);
+          }
+        }, HEALTH_CHECK_INTERVAL);
+      };
+
+      // ============ 停止逻辑 ============
+      const doStop = (reason: string) => {
+        if (stopped) return;
+        stopped = true;
+
+        ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端 (${reason})...`);
+
+        // 清理健康检查定时器
+        if (healthCheckTimer) {
+          clearInterval(healthCheckTimer);
+          healthCheckTimer = null;
+        }
+
+        // 断开连接
+        try {
+          client?.disconnect();
+        } catch (err: any) {
+          ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错: ${err.message}`);
+        }
+
+        const rt = getRuntime();
+        rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
+      };
+
+      // ============ 初始化连接 ============
+      client = createClient();
+      registerCallbacks(client);
+      await client.connect();
+
+      // 等待 registered 状态
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('初始连接等待 REGISTERED 超时'));
+        }, 15000);
+
+        const checkRegistered = setInterval(() => {
+          if (client.registered) {
+            clearInterval(checkRegistered);
+            clearTimeout(timeout);
+            resolve();
+          }
+        }, 100);
       });
 
-      await client.connect();
-      ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接`);
+      ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接并注册`);
 
       const rt = getRuntime();
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
 
-      let stopped = false;
-      
-      // 统一的停止逻辑
-      const doStop = (reason: string) => {
-        if (stopped) return;
-        stopped = true;
-        ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端 (${reason})...`);
-        try {
-          // 【关键】调用 disconnect() 正确关闭 WebSocket 连接
-          client.disconnect();
-        } catch (err: any) {
-          ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错: ${err.message}`);
-        }
-        rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
-      };
+      // 启动健康检查
+      startHealthCheck();
 
       // 【关键修复】返回一个 Promise 并保持 pending 状态直到 abortSignal 触发
       // 这样框架不会认为账号已退出，避免触发 auto-restart
-      // 参考：OpenClaw changelog - "keep startAccount pending until abort to prevent restart-loop storms"
       return new Promise((resolve) => {
         if (abortSignal) {
           abortSignal.addEventListener('abort', () => {
             doStop('abortSignal');
             resolve({
               stop: () => doStop('manual'),
-              isHealthy: () => !stopped,
+              isHealthy: () => !stopped && client?.connected && client?.registered,
             });
           });
         }
