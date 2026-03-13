@@ -6,6 +6,22 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.8] - 2026-03-13
+
+### 修复 / Fixes
+- 🐛 **AI 卡片模版与渲染优化** - 更新 AI 卡片模版 ID，使卡片样式与最新官方规范保持一致，并提升多终端展示效果  
+  **AI card template & rendering optimization** - Updated the AI card template ID to match the latest official standard and improved rendering across clients
+- 🐛 **Markdown 表格渲染修复** - 在发送到钉钉前自动为 Markdown 表格头部补充必要空行，避免因缺少空行导致表格被当作普通文本渲染  
+  **Markdown table rendering fix** - Automatically inserts required blank lines before Markdown table headers to prevent DingTalk from rendering tables as plain text
+- 🐛 **消息去重逻辑优化** - 将消息去重维度从「账号 + 消息 ID」简化为单一「消息 ID」，避免多账号场景下的重复处理或误判  
+  **Message de-duplication optimization** - Simplified de-duplication from `(accountId, messageId)` to `messageId` only, preventing duplicate handling or misjudgment in multi-account scenarios
+
+### 改进 / Improvements
+- ✅ **统一 Markdown 修正管道** - 对 AI 卡片流式内容、最终内容、普通 Markdown 消息及 `sampleMarkdown` 卡片文本统一应用 Markdown 修正规则，确保表格等格式在各入口行为一致  
+  **Unified Markdown normalization pipeline** - Applies the same Markdown normalization to streaming AI card content, final content, regular Markdown messages, and `sampleMarkdown` card text for consistent behavior
+- ✅ **AI 卡片状态内容一致性** - 在完成 AI 卡片时，对展示内容和写入 `cardParamMap.msgContent` 的内容使用同一份 Markdown 修正结果，确保用户看到的内容与内部状态一致  
+  **Consistent AI card status content** - Ensures the same normalized Markdown is used both for the visible content and `cardParamMap.msgContent` when finishing AI cards
+
 ## [0.7.7] - 2026-03-13
 
 ### 新增 / Added
