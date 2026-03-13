@@ -20,6 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-
 
 ### 手动安装
 
+#### 方式一：从 GitHub 安装（标准版）
+
 ```bash
 # 克隆升级分支
 git clone --single-branch --branch feat/migrate-to-openclaw-sdk \
@@ -36,17 +38,55 @@ openclaw plugins install -l .
 openclaw gateway restart
 ```
 
+#### 方式二：本地开发版本安装
+
+如果你使用的是本地开发的 OpenClaw 版本，请按以下步骤操作：
+
+```bash
+# 1. 克隆升级分支
+git clone --single-branch --branch feat/migrate-to-openclaw-sdk \
+    https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git \
+    dingtalk-openclaw-connector-beta
+
+cd dingtalk-openclaw-connector-beta
+npm install
+
+# 2. 修改 OpenClaw 配置，添加本地插件路径
+# 编辑 ~/.openclaw/config.json，在 plugins.load.paths 中添加插件路径
+# {
+#   "plugins": {
+#     "load": {
+#       "paths": [
+#         "/path/to/dingtalk-openclaw-connector-beta"
+#       ]
+#     }
+#   }
+# }
+
+# 3. 重启 Gateway
+openclaw gateway restart
+```
+
+> 💡 **提示**：本地开发版本安装后，插件会自动从配置的 `paths` 中加载，无需运行 `openclaw plugins install`
+
 ## ✅ 验证安装
 
 安装完成后，运行以下命令验证是否安装成功且为内测版本：
 
 ```bash
-openclaw plugins list && openclaw plugins info dingtalk-connector
+openclaw plugins list | grep dingtalk-connector
 ```
 
 应该看到：
-- 插件状态：`✓ dingtalk-connector (enabled)`
-- 版本号：`v0.8.0-beta` 或更高（包含 `beta` 标识）
+```
+✓ dingtalk-connector (enabled)
+```
+
+```bash
+openclaw plugins info dingtalk-connector | grep version
+```
+
+应该看到版本号：`v0.8.0-beta` 或更高（包含 `beta` 标识）
 
 ```bash
 # 测试连接
