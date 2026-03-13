@@ -3621,15 +3621,15 @@ const dingtalkPlugin = {
           registerCallbacks(client);
           await client.connect();
 
-          // 等待 registered 状态确认连接真正可用
+          // 等待 connected 状态确认连接建立
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
-              reject(new Error('等待 REGISTERED 超时'));
+              reject(new Error('重连等待 connected 超时'));
             }, 10000);
 
-            const checkRegistered = setInterval(() => {
-              if (client.registered) {
-                clearInterval(checkRegistered);
+            const checkConnected = setInterval(() => {
+              if (client.connected) {
+                clearInterval(checkConnected);
                 clearTimeout(timeout);
                 resolve();
               }
@@ -3657,16 +3657,16 @@ const dingtalkPlugin = {
 
           // 检查连接状态
           // 1. connected=false 表示 WebSocket 未连接
-          // 2. registered=false 表示未完成注册（连接不可用）
-          // 3. reconnecting=true 表示库内部正在重连（不需要干预）
-          const isHealthy = client?.connected && client?.registered;
+          // 2. reconnecting=true 表示库内部正在重连（不需要干预）
+          // 注：registered 不一定会被设置，因此只检查 connected 状态
+          const isHealthy = client?.connected;
           const isLibraryReconnecting = client?.reconnecting;
 
           if (!isHealthy && !isLibraryReconnecting) {
-            ctx.log?.warn?.(`[${account.accountId}] 健康检查失败: connected=${client?.connected}, registered=${client?.registered}, reconnecting=${client?.reconnecting}`);
+            ctx.log?.warn?.(`[${account.accountId}] 健康检查失败: connected=${client?.connected}, reconnecting=${client?.reconnecting}`);
             doReconnect();
           } else if (config.debug) {
-            ctx.log?.info?.(`[${account.accountId}] 健康检查通过: connected=${client?.connected}, registered=${client?.registered}`);
+            ctx.log?.info?.(`[${account.accountId}] 健康检查通过: connected=${client?.connected}`);
           }
         }, HEALTH_CHECK_INTERVAL);
       };
@@ -3700,22 +3700,22 @@ const dingtalkPlugin = {
       registerCallbacks(client);
       await client.connect();
 
-      // 等待 registered 状态
+      // 等待 connected 状态（注：registered 不一定会被设置，取决于钉钉服务端是否发送 REGISTERED 消息）
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error('初始连接等待 REGISTERED 超时'));
+          reject(new Error('初始连接等待 connected 超时'));
         }, 15000);
 
-        const checkRegistered = setInterval(() => {
-          if (client.registered) {
-            clearInterval(checkRegistered);
+        const checkConnected = setInterval(() => {
+          if (client.connected) {
+            clearInterval(checkConnected);
             clearTimeout(timeout);
             resolve();
           }
         }, 100);
       });
 
-      ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接并注册`);
+      ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接`);
 
       const rt = getRuntime();
       rt.channel.activity.record('dingtalk-connector', account.accountId, 'start');
@@ -3731,7 +3731,7 @@ const dingtalkPlugin = {
             doStop('abortSignal');
             resolve({
               stop: () => doStop('manual'),
-              isHealthy: () => !stopped && client?.connected && client?.registered,
+              isHealthy: () => !stopped && client?.connected,
             });
           });
         }
