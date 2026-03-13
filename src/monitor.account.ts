@@ -682,7 +682,7 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
     }
 
     // Register message handler
-    client.registerCallback(TOPIC_ROBOT, async (res: any) => {
+    client.registerAllEventListener(async (res: any) => {
       const messageId = res.headers?.messageId;
       log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}`);
 
