@@ -1466,9 +1466,19 @@ async function* streamFromGateway(options: GatewayOptions, accountId: string): A
 
       try {
         const chunk = JSON.parse(data);
+
+        // OpenAI 兼容流里可能出现 error 事件，不能静默吞掉
+        if (chunk?.error?.message) {
+          throw new Error(`Upstream stream error: ${chunk.error.message}`);
+        }
+
         const content = chunk.choices?.[0]?.delta?.content;
         if (content) yield content;
-      } catch {}
+      } catch (parseErr: any) {
+        if (parseErr?.message?.includes('Upstream stream error:')) {
+          throw parseErr;
+        }
+      }
     }
   }
 }
@@ -2883,6 +2893,14 @@ async function handleDingTalkMessage(params: {
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
 
+      // 兜底：流式结束但没有任何文本输出（常见于上游超时/空响应）
+      if (chunkCount === 0 || accumulated.trim().length === 0) {
+        const fallbackText = '⚠️ 刚刚处理超时了，我已经收到你的消息。请重发一次，或稍后再试。';
+        log?.warn?.(`[DingTalk][Fallback] 空响应兜底触发: chunkCount=${chunkCount}, accumulatedLen=${accumulated.length}`);
+        await finishAICard(card, fallbackText, log);
+        return;
+      }
+
       // 后处理01：上传本地图片到钉钉，替换 file:// 路径为 media_id
       log?.info?.(`[DingTalk][Media] 开始图片后处理，内容片段="${accumulated.slice(0, 200)}..."`);
       accumulated = await processLocalImages(accumulated, oapiToken, log);
@@ -2946,6 +2964,16 @@ async function handleDingTalkMessage(params: {
         log,
       }, accountId)) {
         fullResponse += chunk;
+      }
+
+      // 兜底：普通消息模式下也避免空响应
+      if (fullResponse.trim().length === 0) {
+        const fallbackText = '⚠️ 刚刚处理超时了，我已经收到你的消息。请重发一次，或稍后再试。';
+        log?.warn?.(`[DingTalk][Fallback] 降级模式空响应兜底触发`);
+        await sendMessage(dingtalkConfig, sessionWebhook, fallbackText, {
+          atUserId: !isDirect ? senderId : null,
+        });
+        return;
       }
 
       // 后处理01：上传本地图片到钉钉，替换 file:// 路径为 media_id
