@@ -32,7 +32,21 @@ import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { setMessageHandler } from "./monitor-single";
+
+// ============ Bindings 类型定义 ============
+
+interface Binding {
+  agentId?: string;
+  match?: {
+    channel?: string;
+    accountId?: string;
+    peer?: {
+      kind?: 'direct' | 'group';
+      id?: string;
+    };
+  };
+}
+
 
 // ============ 常量 ============
 
@@ -62,6 +76,111 @@ export type MonitorDingtalkAccountOpts = {
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
 };
+
+// ============ Agent 路由解析 ============
+
+/**
+ * 根据 bindings 配置解析 agentId
+ * @param accountId 账号 ID
+ * @param peerKind 会话类型：'direct'（单聊）或 'group'（群聊）
+ * @param peerId 发送者 ID（单聊）或会话 ID（群聊）
+ * @param log 日志对象
+ * @returns 匹配到的 agentId
+ */
+function resolveAgentIdByBindings(
+  accountId: string,
+  peerKind: 'direct' | 'group',
+  peerId: string,
+  log?: any,
+): string {
+  const defaultAgentId = accountId === '__default__' ? 'main' : accountId;
+
+  // 读取 OpenClaw 配置
+  let bindings: Binding[] = [];
+  try {
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    if (fs.existsSync(configPath)) {
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      const config = JSON.parse(configContent);
+      bindings = config.bindings || [];
+    }
+  } catch (err: any) {
+    log?.warn?.(`[DingTalk][Bindings] 读取 OpenClaw 配置失败: ${err.message}`);
+    return defaultAgentId;
+  }
+
+  if (bindings.length === 0) {
+    log?.info?.(`[DingTalk][Bindings] 无 bindings 配置，使用默认 agentId=${defaultAgentId}`);
+    return defaultAgentId;
+  }
+
+  // 筛选 channel='dingtalk-connector' 的 bindings
+  const channelBindings = bindings.filter(b =>
+    !b.match?.channel || b.match.channel === 'dingtalk-connector'
+  );
+
+  if (channelBindings.length === 0) {
+    log?.info?.(`[DingTalk][Bindings] 无匹配 channel 的 bindings，使用默认 agentId=${defaultAgentId}`);
+    return defaultAgentId;
+  }
+
+  log?.info?.(`[DingTalk][Bindings] 开始匹配: accountId=${accountId}, peerKind=${peerKind}, peerId=${peerId}, bindings数量=${channelBindings.length}`);
+
+  // 按优先级匹配
+  // 优先级1: peer.kind + peer.id 精确匹配
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind &&
+        match.peer?.id &&
+        match.peer.id !== '*' &&
+        match.peer.id === peerId) {
+      // 还需检查 accountId 是否匹配（如果指定了）
+      if (match.accountId && match.accountId !== accountId) continue;
+      log?.info?.(`[DingTalk][Bindings] 精确匹配 peer.id: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级2: peer.kind + peer.id='*' 通配匹配
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind && match.peer?.id === '*') {
+      if (match.accountId && match.accountId !== accountId) continue;
+      log?.info?.(`[DingTalk][Bindings] 通配匹配 peer.kind: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级3: 仅 accountId 匹配（无 peer）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (!match.peer && match.accountId === accountId) {
+      log?.info?.(`[DingTalk][Bindings] 匹配 accountId: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级4: 仅 peer.kind 匹配（无 accountId 和 peer.id）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (match.peer?.kind === peerKind && !match.peer?.id && !match.accountId) {
+      log?.info?.(`[DingTalk][Bindings] 匹配 peer.kind（无 accountId）: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  // 优先级5: 仅 channel 匹配（无 peer 和 accountId）
+  for (const binding of channelBindings) {
+    const match = binding.match || {};
+    if (!match.peer && !match.accountId) {
+      log?.info?.(`[DingTalk][Bindings] 匹配 channel=dingtalk-connector: agentId=${binding.agentId}`);
+      return binding.agentId || defaultAgentId;
+    }
+  }
+
+  log?.info?.(`[DingTalk][Bindings] 无匹配，使用默认 agentId=${defaultAgentId}`);
+  return defaultAgentId;
+}
 
 // ============ 消息内容提取 ============
 
@@ -437,13 +556,29 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
 
       messages.push({ role: 'user', content: finalContent });
 
+      // 解析 agentId（通过 bindings 配置）
+      const resolvedAgentId = resolveAgentIdByBindings(
+        accountId,
+        isDirect ? 'direct' : 'group',
+        isDirect ? senderId : data.conversationId,
+        log
+      );
+      log?.info?.(`[DingTalk][Bindings] 解析结果: accountId=${accountId} -> agentId=${resolvedAgentId}`);
+
+      // Gateway 认证：优先使用 token，其次 password
+      const gatewayAuth = config.gatewayToken || config.gatewayPassword || '';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-OpenClaw-Agent-Id': resolvedAgentId,
+        'X-OpenClaw-Memory-User': Buffer.from(`${sessionContext.channel}:${sessionContext.accountId}:${sessionContext.peerId}`, 'utf-8').toString('base64'),
+      };
+      if (gatewayAuth) {
+        headers['Authorization'] = `Bearer ${gatewayAuth}`;
+      }
+
       const response = await fetch(gatewayUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-OpenClaw-Agent-Id': accountId === '__default__' ? 'main' : accountId,
-          'X-OpenClaw-Memory-User': Buffer.from(`${sessionContext.channel}:${sessionContext.accountId}:${sessionContext.peerId}`, 'utf-8').toString('base64'),
-        },
+        headers,
         body: JSON.stringify({
           model: 'main',
           messages,
@@ -460,6 +595,7 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
       const decoder = new TextDecoder();
       let buffer = '';
 
+      let streamDone = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -471,7 +607,10 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
-          if (data === '[DONE]') return;
+          if (data === '[DONE]') {
+            streamDone = true;
+            break;
+          }
 
           try {
             const chunk = JSON.parse(data);
@@ -497,6 +636,8 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
             }
           } catch {}
         }
+        
+        if (streamDone) break;
       }
 
       log?.info?.(`[DingTalk] Gateway 流完成，共 ${chunkCount} chunks, ${accumulated.length} 字符`);
@@ -554,13 +695,29 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
 
       messages.push({ role: 'user', content: finalContent });
 
+      // 解析 agentId（通过 bindings 配置）
+      const resolvedAgentId = resolveAgentIdByBindings(
+        accountId,
+        isDirect ? 'direct' : 'group',
+        isDirect ? senderId : data.conversationId,
+        log
+      );
+      log?.info?.(`[DingTalk][Bindings] (降级模式) 解析结果: accountId=${accountId} -> agentId=${resolvedAgentId}`);
+
+      // Gateway 认证：优先使用 token，其次 password
+      const gatewayAuth = config.gatewayToken || config.gatewayPassword || '';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-OpenClaw-Agent-Id': resolvedAgentId,
+        'X-OpenClaw-Memory-User': Buffer.from(`${sessionContext.channel}:${sessionContext.accountId}:${sessionContext.peerId}`, 'utf-8').toString('base64'),
+      };
+      if (gatewayAuth) {
+        headers['Authorization'] = `Bearer ${gatewayAuth}`;
+      }
+
       const response = await fetch(gatewayUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-OpenClaw-Agent-Id': accountId === '__default__' ? 'main' : accountId,
-          'X-OpenClaw-Memory-User': Buffer.from(`${sessionContext.channel}:${sessionContext.accountId}:${sessionContext.peerId}`, 'utf-8').toString('base64'),
-        },
+        headers,
         body: JSON.stringify({
           model: 'main',
           messages,
@@ -577,6 +734,7 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
       const decoder = new TextDecoder();
       let buffer = '';
 
+      let streamDone = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -588,7 +746,10 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
-          if (data === '[DONE]') return;
+          if (data === '[DONE]') {
+            streamDone = true;
+            break;
+          }
 
           try {
             const chunk = JSON.parse(data);
@@ -598,6 +759,8 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
             }
           } catch {}
         }
+        
+        if (streamDone) break;
       }
 
       // 后处理
@@ -653,11 +816,5 @@ async function handleDingTalkMessage(params: HandleMessageParams): Promise<void>
   }
 }
 
-// 注册消息处理器到 monitor-single.ts
-console.log('='.repeat(60));
-console.log('[monitor.account.ts] 模块加载完成，准备设置消息处理器');
-console.log('[monitor.account.ts] handleDingTalkMessage 类型:', typeof handleDingTalkMessage);
-console.log('[monitor.account.ts] 调用 setMessageHandler...');
-setMessageHandler(handleDingTalkMessage);
-console.log('[monitor.account.ts] setMessageHandler 调用完成');
-console.log('='.repeat(60));
+// 导出消息处理函数，供 monitor.ts 使用
+export { handleDingTalkMessage };

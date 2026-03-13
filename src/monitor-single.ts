@@ -11,10 +11,40 @@ console.log('='.repeat(60));
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import type { ResolvedDingtalkAccount } from "./types";
 import { TOPIC_ROBOT, GATEWAY_URL } from 'dingtalk-stream';
-import { 
-  isMessageProcessed, 
-  markMessageProcessed, 
-} from "./utils";
+
+// ============ 消息去重（内置，避免循环依赖） ============
+
+/** 消息去重缓存 Map<messageId, timestamp> */
+const processedMessages = new Map<string, number>();
+
+/** 消息去重缓存过期时间（5 分钟） */
+const MESSAGE_DEDUP_TTL = 5 * 60 * 1000;
+
+/** 清理过期的消息去重缓存 */
+function cleanupProcessedMessages(): void {
+  const now = Date.now();
+  for (const [msgId, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > MESSAGE_DEDUP_TTL) {
+      processedMessages.delete(msgId);
+    }
+  }
+}
+
+/** 检查消息是否已处理过（去重） */
+function isMessageProcessed(messageId: string): boolean {
+  if (!messageId) return false;
+  return processedMessages.has(messageId);
+}
+
+/** 标记消息为已处理 */
+function markMessageProcessed(messageId: string): void {
+  if (!messageId) return;
+  processedMessages.set(messageId, Date.now());
+  // 定期清理（每处理 100 条消息清理一次）
+  if (processedMessages.size >= 100) {
+    cleanupProcessedMessages();
+  }
+}
 
 // ============ 类型定义 ============
 
@@ -31,6 +61,7 @@ export type MonitorDingtalkAccountOpts = {
   account: ResolvedDingtalkAccount;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
+  messageHandler: MessageHandler; // 直接传入消息处理器
 };
 
 // 消息处理器函数类型
@@ -43,29 +74,10 @@ export type MessageHandler = (params: {
   log?: any;
 }) => Promise<void>;
 
-// 全局消息处理器（由 monitor.account.ts 设置）
-let globalMessageHandler: MessageHandler | null = null;
-
-export function setMessageHandler(handler: MessageHandler): void {
-  console.log('='.repeat(60));
-  console.log('[monitor-single.ts] setMessageHandler 被调用');
-  console.log('[monitor-single.ts] handler 类型:', typeof handler);
-  console.log('[monitor-single.ts] handler 是否为函数:', typeof handler === 'function');
-  globalMessageHandler = handler;
-  console.log('[monitor-single.ts] globalMessageHandler 已设置:', globalMessageHandler !== null);
-  console.log('='.repeat(60));
-}
-
-export function getMessageHandler(): MessageHandler | null {
-  const handler = globalMessageHandler;
-  console.log('[monitor-single.ts] getMessageHandler 被调用，返回值:', handler !== null ? '有处理器' : 'null');
-  return handler;
-}
-
 // ============ 监控账号 ============
 
 export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Promise<void> {
-  const { cfg, account, runtime, abortSignal } = opts;
+  const { cfg, account, runtime, abortSignal, messageHandler } = opts;
   const { accountId } = account;
   const log = runtime?.log ?? console.log;
 
@@ -74,10 +86,7 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
   }
 
   log(`[DingTalk][${accountId}] Starting DingTalk Stream client...`);
-
-  // 检查消息处理器是否已设置
-  const currentHandler = getMessageHandler();
-  log(`[DingTalk][${accountId}] 消息处理器状态：${currentHandler ? '已设置 ✓' : '未设置 ✗'}`);
+  log(`[DingTalk][${accountId}] 消息处理器：${typeof messageHandler === 'function' ? '已传入 ✓' : '未传入 ✗'}`);
 
   // 动态导入 dingtalk-stream 模块，避免动态导入场景下的导出问题
   log(`[DingTalk][${accountId}] 开始动态导入 dingtalk-stream 模块...`);
@@ -97,12 +106,12 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
     clientId: account.clientId,
     clientSecret: account.clientSecret,
     debug: true, // 启用调试模式，查看详细连接日志
-  });
-  // 显式设置网关地址，避免使用钉钉后台配置的错误地址
-  (client as any).dw_url = GATEWAY_URL;
-  log(`[DingTalk][${accountId}] DWClient 实例创建完成，dw_url=${(client as any).dw_url}`);
+    autoReconnect: true, // 启用自动重连
+    keepAlive: true, // 启用心跳机制
+  } as any);
+  log(`[DingTalk][${accountId}] DWClient 实例创建完成`);
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<void>(async (resolve, reject) => {
     // Handle abort signal
     if (abortSignal) {
       const onAbort = () => {
@@ -126,13 +135,13 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
       }
 
       // 消息去重
-      if (messageId && isMessageProcessed(accountId, messageId)) {
+      if (messageId && isMessageProcessed(messageId)) {
         console.warn(`[DingTalk][${accountId}] 检测到重复消息，跳过处理：messageId=${messageId}`);
         return;
       }
 
       if (messageId) {
-        markMessageProcessed(accountId, messageId);
+        markMessageProcessed(messageId);
       }
 
       // 异步处理消息
@@ -140,19 +149,14 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
         const data = JSON.parse(res.data);
         console.log(`[DingTalk][${accountId}] 开始处理消息：accountId=${accountId}, hasConfig=${!!account.config}, dataKeys=${Object.keys(data).join(',')}`);
         
-        const handler = getMessageHandler();
-        if (handler) {
-          await handler({
-            accountId,
-            config: account.config,
-            data,
-            sessionWebhook: data.sessionWebhook,
-            runtime,
-            log,
-          });
-        } else {
-          console.error(`[DingTalk][${accountId}] 消息处理器未设置`);
-        }
+        await messageHandler({
+          accountId,
+          config: account.config,
+          data,
+          sessionWebhook: data.sessionWebhook,
+          runtime,
+          log,
+        });
         
         console.log(`[DingTalk][${accountId}] 消息处理完成`);
       } catch (error: any) {
@@ -161,15 +165,9 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
     });
     console.log(`[DingTalk][${accountId}] 消息监听器注册完成`);
 
-    // Connect to DingTalk Stream
-    client.connect()
-      .then(() => {
-        log(`[DingTalk][${accountId}] Connected to DingTalk Stream`);
-      })
-      .catch((err) => {
-        log(`[DingTalk][${accountId}] Failed to connect: ${err.message}`);
-        reject(err);
-      });
+    // Connect to DingTalk Stream (同步等待，和老版本一致)
+    await client.connect();
+    log(`[DingTalk][${accountId}] 钉钉 Stream 客户端已连接`);
 
     // Handle disconnection
     client.on('close', () => {

@@ -24,12 +24,7 @@ export {
   isWebhookRateLimitedForTest,
 } from "./monitor.state";
 
-// 重新导出 monitor-single 的内容（使用 re-export 避免循环依赖）
-export {
-  monitorSingleAccount,
-  resolveReactionSyntheticEvent,
-} from "./monitor-single";
-
+// 只导出类型，不 re-export 函数（避免循环依赖）
 export type { DingtalkReactionCreatedEvent } from "./monitor-single";
 
 export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): Promise<void> {
@@ -42,15 +37,15 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
 
   log?.info?.(`[monitorDingtalkProvider] 开始执行，accountId=${opts.accountId}`);
 
-  // 在函数内部动态导入模块，避免循环依赖导致的初始化问题
-  // 顺序导入：先导入 monitor.account.ts 设置消息处理器，再导入 monitor-single.ts 注册监听器
-  // 不能使用 Promise.all 并行导入，因为 monitor-single.ts 的顶层代码会立即执行，
-  // 而 monitor.account.ts 的顶层代码需要先生设置消息处理器
-  const accountsModule = await import("./accounts");
-  await import("./monitor.account"); // 先执行，设置消息处理器
-  const monitorSingleModule = await import("./monitor-single"); // 后执行，注册监听器
+  // 并行导入所有模块（无循环依赖，可以并行）
+  const [accountsModule, monitorAccountModule, monitorSingleModule] = await Promise.all([
+    import("./accounts"),
+    import("./monitor.account"),
+    import("./monitor-single"),
+  ]);
   
   const { resolveDingtalkAccount, listEnabledDingtalkAccounts } = accountsModule;
+  const { handleDingTalkMessage } = monitorAccountModule;
   const { monitorSingleAccount, resolveReactionSyntheticEvent } = monitorSingleModule;
 
   if (opts.accountId) {
@@ -70,6 +65,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
       account,
       runtime: opts.runtime,
       abortSignal: opts.abortSignal,
+      messageHandler: handleDingTalkMessage,
     });
   }
 
@@ -97,6 +93,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
         account,
         runtime: opts.runtime,
         abortSignal: opts.abortSignal,
+        messageHandler: handleDingTalkMessage,
       }),
     );
   }
