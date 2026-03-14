@@ -54,15 +54,17 @@ function cleanupProcessedMessages(): void {
 }
 
 /** 检查消息是否已处理过（去重） */
-function isMessageProcessed(messageId: string): boolean {
-  if (!messageId) return false;
-  return processedMessages.has(messageId);
+function isMessageProcessed(accountIdOrMessageId: string, messageId?: string): boolean {
+  const key = messageId ? `${accountIdOrMessageId}:${messageId}` : accountIdOrMessageId;
+  if (!key) return false;
+  return processedMessages.has(key);
 }
 
 /** 标记消息为已处理 */
-function markMessageProcessed(messageId: string): void {
-  if (!messageId) return;
-  processedMessages.set(messageId, Date.now());
+function markMessageProcessed(accountIdOrMessageId: string, messageId?: string): void {
+  const key = messageId ? `${accountIdOrMessageId}:${messageId}` : accountIdOrMessageId;
+  if (!key) return;
+  processedMessages.set(key, Date.now());
   // 定期清理（每处理100条消息清理一次）
   if (processedMessages.size >= 100) {
     cleanupProcessedMessages();
@@ -1412,7 +1414,8 @@ function resolveAgentIdByBindings(
 interface GatewayOptions {
   userContent: string;
   systemPrompts: string[];
-  sessionContext: SessionContext;
+  sessionContext?: SessionContext;
+  sessionKey?: string;
   gatewayAuth?: string;  // token 或 password，都用 Bearer 格式
   /** 记忆归属用户标识，用于 Gateway 区分记忆；sharedMemoryAcrossConversations=true 时传 accountId，false 时传 sessionContext JSON */
   memoryUser?: string;
@@ -2597,6 +2600,64 @@ async function recallEmotionReply(config: any, data: any, log?: any): Promise<vo
   }
 }
 
+// ============ 会话重置 (dispatchReplyFromConfig) ============
+
+async function resetSessionViaDispatch(params: {
+  cfg: ClawdbotConfig;
+  accountId: string;
+  sessionContextJson: string;
+  peerKind: 'direct' | 'group';
+  peerId: string;
+  senderName: string;
+  log?: any;
+}): Promise<string> {
+  const { cfg, accountId, sessionContextJson, peerKind, peerId, senderName, log } = params;
+  const rt = getRuntime();
+  const agentId = resolveAgentIdByBindings(accountId, peerKind, peerId, log);
+  const sessionKey = `agent:${agentId}:openai-user:${sessionContextJson.toLowerCase()}`;
+
+  const ctxPayload = rt.channel.reply.finalizeInboundContext({
+    Body: '/new',
+    CommandBody: '/new',
+    CommandAuthorized: true,
+    SessionKey: sessionKey,
+    AccountId: accountId,
+    ChatType: peerKind,
+    From: peerId,
+    SenderName: senderName,
+    SenderId: peerId,
+    Provider: id,
+    Surface: id,
+    OriginatingChannel: id,
+    OriginatingTo: peerId,
+    Timestamp: Date.now(),
+  });
+
+  const replyParts: string[] = [];
+  const { dispatcher, replyOptions, markDispatchIdle } = rt.channel.reply.createReplyDispatcherWithTyping({
+    deliver: async (payload) => {
+      if (payload.text) replyParts.push(payload.text);
+    },
+  });
+
+  try {
+    await rt.channel.reply.withReplyDispatcher({
+      dispatcher,
+      onSettled: () => markDispatchIdle(),
+      run: () => rt.channel.reply.dispatchReplyFromConfig({
+        ctx: ctxPayload,
+        cfg,
+        dispatcher,
+        replyOptions,
+      }),
+    });
+    return replyParts.join('').trim() || '✨ 已开启新会话';
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][/new] dispatchReplyFromConfig 失败: ${err?.message || err}`);
+    return '⚠️ 新会话重置失败，请稍后重试。';
+  }
+}
+
 // ============ 核心消息处理 (AI Card Streaming) ============
 
 async function handleDingTalkMessage(params: {
@@ -2656,6 +2717,23 @@ async function handleDingTalkMessage(params: {
 
   // Gateway 认证：优先使用 token，其次 password
   const gatewayAuth = dingtalkConfig.gatewayToken || dingtalkConfig.gatewayPassword || '';
+  const normalizedCommand = normalizeSlashCommand(content.text || '');
+  if (normalizedCommand === '/new') {
+    const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
+    const replyText = await resetSessionViaDispatch({
+      cfg,
+      accountId,
+      sessionContextJson,
+      peerKind,
+      peerId: senderId,
+      senderName,
+      log,
+    });
+    await sendMessage(dingtalkConfig, sessionWebhook, replyText, {
+      atUserId: !isDirect ? senderId : null,
+    });
+    return;
+  }
 
   // 构建 system prompts & 获取 oapi token（用于图片和文件后处理）
   const systemPrompts: string[] = [];
