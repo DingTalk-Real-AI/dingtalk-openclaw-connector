@@ -3603,6 +3603,30 @@ const dingtalkPlugin = {
         }
       });
 
+      // Workaround for dingtalk-stream SDK bug (v2.1.4):
+      // DWClient._connect() starts a heartbeat setInterval on every 'open' event but never
+      // clears it on 'close', so each autoReconnect cycle leaks one interval.
+      // After a few hours the accumulated timers fire against a dead socket and produce
+      // "TERMINATE SOCKET: Ping Pong does not transfer heartbeat within heartbeat intervall"
+      // errors, causing a restart storm.  Patch connect() to clear the stale interval
+      // whenever the socket closes.
+      // TODO: Remove once https://github.com/open-dingtalk/dingtalk-stream-sdk-nodejs/issues/13
+      //       is fixed in a released version of dingtalk-stream.
+      const _origConnect = (client as any).connect.bind(client);
+      (client as any).connect = async function (this: any) {
+        await _origConnect();
+        const sock = this.socket;
+        if (sock && !(sock as any).__heartbeatPatched) {
+          (sock as any).__heartbeatPatched = true;
+          sock.on('close', () => {
+            if (this.heartbeatIntervallId !== undefined) {
+              clearInterval(this.heartbeatIntervallId);
+              this.heartbeatIntervallId = undefined;
+            }
+          });
+        }
+      };
+
       await client.connect();
       ctx.log?.info(`[${account.accountId}] 钉钉 Stream 客户端已连接`);
 
