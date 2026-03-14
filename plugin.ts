@@ -2934,17 +2934,20 @@ async function handleDingTalkMessage(params: {
         ? { type: 'user', userId: data.senderStaffId || data.senderId }
         : { type: 'group', openConversationId: data.conversationId };
 
-      // 后处理02：提取视频标记并发送视频消息（使用主动消息 API）
-      log?.info?.(`[DingTalk][Video] 开始视频后处理 (使用主动API)`);
-      accumulated = await processVideoMarkers(accumulated, '', dingtalkConfig, oapiToken, log, true, proactiveTarget);
+      // 根据配置决定是否使用主动消息 API
+      const useProactiveMediaApi = !dingtalkConfig.useSessionWebhookOnly;
 
-      // 后处理03：提取音频标记并发送音频消息（使用主动消息 API）
-      log?.info?.(`[DingTalk][Audio] 开始音频后处理 (使用主动API)`);
-      accumulated = await processAudioMarkers(accumulated, '', dingtalkConfig, oapiToken, log, true, proactiveTarget);
+      // 后处理02：提取视频标记并发送视频消息
+      log?.info?.(`[DingTalk][Video] 开始视频后处理 (useProactiveApi=${useProactiveMediaApi})`);
+      accumulated = await processVideoMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, useProactiveMediaApi, useProactiveMediaApi ? proactiveTarget : undefined);
 
-      // 后处理04：提取文件标记并发送独立文件消息（使用主动消息 API）
-      log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
-      accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
+      // 后处理03：提取音频标记并发送音频消息
+      log?.info?.(`[DingTalk][Audio] 开始音频后处理 (useProactiveApi=${useProactiveMediaApi})`);
+      accumulated = await processAudioMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, useProactiveMediaApi, useProactiveMediaApi ? proactiveTarget : undefined);
+
+      // 后处理04：提取文件标记并发送独立文件消息
+      log?.info?.(`[DingTalk][File] 开始文件后处理 (useProactiveApi=${useProactiveMediaApi}，目标=${useProactiveMediaApi ? JSON.stringify(proactiveTarget) : 'sessionWebhook'})`);
+      accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, useProactiveMediaApi, useProactiveMediaApi ? proactiveTarget : undefined);
 
       // 完成 AI Card（如果内容为空，说明是纯媒体消息，使用默认提示）
       const finalContent = accumulated.trim();
@@ -3372,6 +3375,7 @@ const dingtalkPlugin = {
         sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
+        useSessionWebhookOnly: { type: 'boolean', default: false, description: 'AI Card 场景仅使用 sessionWebhook 发送媒体，避免主动消息 API 的 IP 白名单要求' },
         debug: { type: 'boolean', default: false },
       },
       required: ['clientId', 'clientSecret'],
@@ -3382,6 +3386,7 @@ const dingtalkPlugin = {
       clientSecret: { label: 'App Secret', sensitive: true },
       dmPolicy: { label: 'DM Policy' },
       groupPolicy: { label: 'Group Policy' },
+      useSessionWebhookOnly: { label: 'Use Session Webhook Only' },
     },
   },
   config: {
