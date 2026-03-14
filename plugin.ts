@@ -3574,14 +3574,15 @@ const dingtalkPlugin = {
         }
 
         // 【消息去重】检查是否已处理过该消息
-        if (messageId && isMessageProcessed(messageId)) {
+        const dedupeKey = account.accountId + ":" + messageId;
+        if (messageId && isMessageProcessed(dedupeKey)) {
           ctx.log?.warn?.(`[DingTalk][${account.accountId}] 检测到重复消息，跳过处理: messageId=${messageId}`);
           return;
         }
 
         // 标记消息为已处理
         if (messageId) {
-          markMessageProcessed(messageId);
+          markMessageProcessed(dedupeKey);
         }
 
         // 异步处理消息（不阻塞回调确认）
