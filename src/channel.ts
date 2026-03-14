@@ -455,11 +455,6 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
         hasCardInstanceId: !!result.cardInstanceId,
       }));
       
-      // 如果发送失败，抛出异常
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to send media to DingTalk');
-      }
-      
       return {
         channel: "dingtalk-connector",
         messageId: result.processQueryKey ?? result.cardInstanceId ?? "unknown",
