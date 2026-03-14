@@ -82,11 +82,35 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
   const clawdbotConfig = cfg;
   const log = runtime?.log ?? console.log;
 
+  // 验证凭据是否存在
   if (!account.clientId || !account.clientSecret) {
-    throw new Error(`DingTalk account "${accountId}" missing credentials`);
+    throw new Error(
+      `[DingTalk][${accountId}] Missing credentials: ` +
+      `clientId=${!!account.clientId ? 'present' : 'MISSING'}, ` +
+      `clientSecret=${!!account.clientSecret ? 'present' : 'MISSING'}. ` +
+      `Please check your configuration in channels.dingtalk-connector.`
+    );
+  }
+
+  // 验证凭据格式
+  const clientIdStr = String(account.clientId);
+  const clientSecretStr = String(account.clientSecret);
+  
+  if (clientIdStr.length < 10 || clientSecretStr.length < 10) {
+    throw new Error(
+      `[DingTalk][${accountId}] Invalid credentials format: ` +
+      `clientId length=${clientIdStr.length}, clientSecret length=${clientSecretStr.length}. ` +
+      `Credentials appear to be too short or invalid.`
+    );
   }
 
   log(`[DingTalk][${accountId}] Starting DingTalk Stream client...`);
+  log?.info?.(
+    `[DingTalk][${accountId}] Initializing with clientId: ${clientIdStr.substring(0, 8)}...`
+  );
+  log?.info?.(
+    `[DingTalk][${accountId}] WebSocket keepAlive: interval=30s, timeout=15s`
+  );
 
   // 动态导入 dingtalk-stream 模块
   const dingtalkStreamModule = await import('dingtalk-stream');
@@ -95,12 +119,15 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
   if (!DWClient) {
     throw new Error('Failed to import DWClient from dingtalk-stream module');
   }
+  
   const client = new DWClient({
     clientId: account.clientId,
     clientSecret: account.clientSecret,
     debug: false,
     autoReconnect: true,
     keepAlive: true,
+    keepAliveInterval: 30000,  // 心跳间隔 30 秒
+    keepAliveTimeout: 15000,   // 心跳超时 15 秒（增加到 15 秒，更宽容）
   } as any);
 
   return new Promise<void>(async (resolve, reject) => {
@@ -152,8 +179,26 @@ export async function monitorSingleAccount(opts: MonitorDingtalkAccountOpts): Pr
     });
 
     // Connect to DingTalk Stream
-    await client.connect();
-    log(`[DingTalk][${accountId}] Connected to DingTalk Stream`);
+    try {
+      await client.connect();
+      log(`[DingTalk][${accountId}] Connected to DingTalk Stream successfully`);
+    } catch (error: any) {
+      // 处理 401 认证错误
+      if (error.response?.status === 401 || error.message?.includes('401')) {
+        throw new Error(
+          `[DingTalk][${accountId}] Authentication failed (401 Unauthorized):\n` +
+          `  - Your clientId or clientSecret is invalid, expired, or revoked\n` +
+          `  - clientId: ${clientIdStr.substring(0, 8)}...\n` +
+          `  - Please verify your credentials at DingTalk Developer Console\n` +
+          `  - Error details: ${error.message}`
+        );
+      }
+      
+      // 处理其他连接错误
+      throw new Error(
+        `[DingTalk][${accountId}] Failed to connect to DingTalk Stream: ${error.message}`
+      );
+    }
 
     // 连接状态追踪
     let connectionStartTime = Date.now();
