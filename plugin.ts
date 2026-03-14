@@ -2882,8 +2882,6 @@ async function handleDingTalkMessage(params: {
     log?.info?.(`[DingTalk] AI Card 创建成功: ${card.cardInstanceId}`);
 
     let accumulated = '';
-    let lastUpdateTime = 0;
-    const updateInterval = 300; // 最小更新间隔 ms
     let chunkCount = 0;
 
     try {
@@ -2906,19 +2904,6 @@ async function handleDingTalkMessage(params: {
 
         if (chunkCount <= 3) {
           log?.info?.(`[DingTalk] Gateway chunk #${chunkCount}: "${chunk.slice(0, 50)}..." (accumulated=${accumulated.length})`);
-        }
-
-        // 节流更新，避免过于频繁
-        const now = Date.now();
-        if (now - lastUpdateTime >= updateInterval) {
-          // 实时清理文件、视频、音频标记（避免用户在流式过程中看到标记）
-          const displayContent = accumulated
-            .replace(FILE_MARKER_PATTERN, '')
-            .replace(VIDEO_MARKER_PATTERN, '')
-            .replace(AUDIO_MARKER_PATTERN, '')
-            .trim();
-          await streamAICard(card, displayContent, false, log);
-          lastUpdateTime = now;
         }
       }
 
