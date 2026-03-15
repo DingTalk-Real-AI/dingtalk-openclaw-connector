@@ -3551,15 +3551,15 @@ const dingtalkPlugin = {
 
       ctx.log?.info(`[${account.accountId}] 启动钉钉 Stream 客户端...`);
 
-      // 启用 DWClient 内置的 autoReconnect 和 keepAlive
+      // 配置 DWClient：关闭 SDK 内置的 keepAlive，使用应用层自定义心跳
       // - autoReconnect: 连接断开时自动重连
-      // - keepAlive: 启用心跳机制，防止服务端因长时间无活动而断开连接
+      // - keepAlive: false（关闭 SDK 的激进心跳检测，避免 8 秒超时强制终止连接）
       const client = new DWClient({
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         debug: config.debug || false,
         autoReconnect: true,
-        keepAlive: true,
+        keepAlive: false,
       } as any);
 
       client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
@@ -3611,16 +3611,110 @@ const dingtalkPlugin = {
 
       let stopped = false;
       
+      // 【应用层心跳机制】基于 WebSocket ping/pong 的主动心跳检测
+      // - 心跳间隔：30 秒
+      // - 超时时间：90 秒（允许 3 次 ping 无响应）
+      // - 检测方式：主动发送 ping，等待 pong 响应
+      let lastPongTime = Date.now();
+      let pendingPingId: string | null = null;
+      const HEARTBEAT_INTERVAL = 30 * 1000; // 30 秒
+      const HEARTBEAT_TIMEOUT = 90 * 1000;  // 90 秒
+      
+      // 监听 pong 响应（SDK 的 keepAlive=false 时仍然会收到服务端的 pong）
+      client.socket?.on('pong', () => {
+        lastPongTime = Date.now();
+        pendingPingId = null;
+        ctx.log?.debug?.(`[${account.accountId}] 收到 PONG 响应`);
+      });
+      
+      // 启动心跳检测定时器
+      const heartbeatTimer = setInterval(async () => {
+        if (stopped) {
+          clearInterval(heartbeatTimer);
+          return;
+        }
+        
+        const elapsed = Date.now() - lastPongTime;
+        
+        // 如果超过 90 秒没有收到 pong，认为连接已断开
+        if (elapsed > HEARTBEAT_TIMEOUT) {
+          ctx.log?.warn?.(`[${account.accountId}] ⚠️ 心跳超时：已 ${Math.round(elapsed / 1000)} 秒未收到 PONG，触发重连...`);
+          
+          // 【关键修复】主动重连：先断开再重新建立连接
+          try {
+            // 1. 先断开旧连接
+            await client.disconnect();
+            ctx.log?.info?.(`[${account.accountId}] 已断开旧连接`);
+            
+            // 2. 重新建立连接
+            ctx.log?.info?.(`[${account.accountId}] 正在重新建立连接...`);
+            await client.connect();
+            
+            // 3. 重置最后 pong 时间，避免立即再次触发重连
+            lastPongTime = Date.now();
+            pendingPingId = null;
+            
+            ctx.log?.info?.(`[${account.accountId}] ✅ 重连成功`);
+          } catch (err: any) {
+            ctx.log?.error?.(`[${account.accountId}] ❌ 重连失败：${err.message}`);
+            // 重连失败后，等待 5 秒后再次尝试
+            ctx.log?.info?.(`[${account.accountId}] 5 秒后再次尝试重连...`);
+            setTimeout(async () => {
+              try {
+                await client.connect();
+                lastPongTime = Date.now();
+                pendingPingId = null;
+                ctx.log?.info?.(`[${account.accountId}] ✅ 重试重连成功`);
+              } catch (retryErr: any) {
+                ctx.log?.error?.(`[${account.accountId}] ❌ 重试重连失败：${retryErr.message}`);
+              }
+            }, 5000);
+          }
+          return;
+        }
+        
+        // 如果还有 ping 在等待响应，检查是否超时
+        if (pendingPingId) {
+          ctx.log?.debug?.(`[${account.accountId}] 心跳检测：等待 PONG 响应中...`);
+          return;
+        }
+        
+        // 主动发送 ping 消息
+        try {
+          const pingId = `ping_${Date.now()}`;
+          pendingPingId = pingId;
+          
+          // 通过 WebSocket 直接发送 ping（使用 SDK 的 socket）
+          client.socket?.ping(JSON.stringify({
+            type: 'PING',
+            id: pingId,
+            timestamp: Date.now()
+          }));
+          
+          ctx.log?.debug?.(`[${account.accountId}] 发送 PING 请求：${pingId}`);
+        } catch (err: any) {
+          ctx.log?.error?.(`[${account.accountId}] 发送 PING 失败：${err.message}`);
+          // 发送失败也计入超时
+        }
+      }, HEARTBEAT_INTERVAL);
+      
       // 统一的停止逻辑
       const doStop = (reason: string) => {
         if (stopped) return;
         stopped = true;
         ctx.log?.info(`[${account.accountId}] 停止钉钉 Stream 客户端 (${reason})...`);
+        
+        // 清理心跳定时器
+        if (typeof heartbeatTimer !== 'undefined') {
+          clearInterval(heartbeatTimer);
+          ctx.log?.debug?.(`[${account.accountId}] 心跳定时器已清理`);
+        }
+        
         try {
           // 【关键】调用 disconnect() 正确关闭 WebSocket 连接
           client.disconnect();
         } catch (err: any) {
-          ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错: ${err.message}`);
+          ctx.log?.warn?.(`[${account.accountId}] 断开连接时出错：${err.message}`);
         }
         rt.channel.activity.record('dingtalk-connector', account.accountId, 'stop');
       };
