@@ -1180,6 +1180,57 @@ function ensureTableBlankLines(text: string): string {
   return result.join('\n');
 }
 
+/**
+ * 自动将裸 URL 转成 markdown 链接 [url](url)
+ *
+ * 钉钉 AI Card 的 markdown 渲染器不会将纯文本 URL 自动变成可点击链接，
+ * 必须使用 [text](url) 格式。此函数检测内容中尚未被 markdown 链接包裹的 URL，
+ * 自动转成可点击格式。
+ *
+ * 跳过的情况：
+ *   1. 已在 markdown 链接中：[text](url)
+ *   2. 已在 markdown 图片中：![alt](url)
+ *   3. 在代码块中（```...```）
+ *   4. 在行内代码中（`...`）
+ */
+function autoLinkUrls(text: string): string {
+  // 先拆出代码块，避免误处理
+  const codeBlockPlaceholders: string[] = [];
+  let processed = text.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlockPlaceholders.push(match);
+    return `\x00CODEBLOCK${codeBlockPlaceholders.length - 1}\x00`;
+  });
+
+  // 拆出行内代码
+  const inlineCodePlaceholders: string[] = [];
+  processed = processed.replace(/`[^`]+`/g, (match) => {
+    inlineCodePlaceholders.push(match);
+    return `\x00INLINECODE${inlineCodePlaceholders.length - 1}\x00`;
+  });
+
+  // 匹配裸 URL（排除已在 markdown 链接/图片中的）
+  processed = processed.replace(
+    /(?<!\]\()(?<!\()(?<!\!?\[.*?\]\()(?:https?:\/\/[^\s\)<>\[\]"'，。、；：！？]+)/g,
+    (url, offset) => {
+      // 检查此 URL 前面是否紧跟 ]( — 说明已在 [text](url) 内
+      const before = processed.slice(Math.max(0, offset - 2), offset);
+      if (before.endsWith('](')) return url;
+
+      // 移除尾部标点
+      const cleaned = url.replace(/[.,;:!?）)]+$/, '');
+      return `[${cleaned}](${cleaned})`;
+    },
+  );
+
+  // 还原行内代码
+  processed = processed.replace(/\x00INLINECODE(\d+)\x00/g, (_, i) => inlineCodePlaceholders[Number(i)]);
+
+  // 还原代码块
+  processed = processed.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => codeBlockPlaceholders[Number(i)]);
+
+  return processed;
+}
+
 // 流式更新 AI Card 内容
 async function streamAICard(
   card: AICardInstance,
@@ -1215,8 +1266,8 @@ async function streamAICard(
     card.inputingStarted = true;
   }
 
-  // 调用 streaming API 更新内容
-  const fixedContent = ensureTableBlankLines(content);
+  // 调用 streaming API 更新内容（autoLinkUrls 确保裸 URL 在钉钉卡片中可点击）
+  const fixedContent = autoLinkUrls(ensureTableBlankLines(content));
   const body = {
     outTrackId: card.cardInstanceId,
     guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -1245,10 +1296,12 @@ async function finishAICard(
   content: string,
   log?: any,
 ): Promise<void> {
-  const fixedContent = ensureTableBlankLines(content);
+  // autoLinkUrls 在此统一处理，避免与 streamAICard 内部重复
+  const fixedContent = autoLinkUrls(ensureTableBlankLines(content));
   log?.info?.(`[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`);
 
   // 1. 先用最终内容关闭流式通道（isFinalize=true），确保卡片显示替换后的内容
+  // 传入已处理的内容，streamAICard 内会再次调用 autoLinkUrls（幂等，不影响结果）
   await streamAICard(card, fixedContent, true, log);
 
   // 2. 更新卡片状态为 FINISHED
