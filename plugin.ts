@@ -203,16 +203,132 @@ function isConfigured(cfg: ClawdbotConfig): boolean {
 
 // ============ 钉钉图片上传 ============
 
+let _oapiTokenCache: { token: string; expiresAt: number } | null = null;
+
 async function getOapiAccessToken(config: any): Promise<string | null> {
+  if (_oapiTokenCache && Date.now() < _oapiTokenCache.expiresAt) {
+    return _oapiTokenCache.token;
+  }
   try {
     const resp = await axios.get('https://oapi.dingtalk.com/gettoken', {
       params: { appkey: config.clientId, appsecret: config.clientSecret },
+      timeout: 10_000,
     });
-    if (resp.data?.errcode === 0) return resp.data.access_token;
+    if (resp.data?.errcode === 0) {
+      _oapiTokenCache = {
+        token: resp.data.access_token,
+        expiresAt: Date.now() + 6600_000,  // cache for 110 min (token valid for 2h)
+      };
+      return resp.data.access_token;
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+
+
+// ============ Group Webhook + @ Mention Support ============
+
+/**
+ * Parse <<AT:name1,name2>> clues from AI response text.
+ * Returns cleaned text and list of mobile numbers to @.
+ */
+function parseAtClue(text: string, memberMap: Record<string, string>): { cleanText: string; mobiles: string[] } {
+  const mobiles = new Set<string>();
+  const cluePattern = /<<AT:([^>]+)>>/g;
+  let cleanText = text;
+  let match;
+  while ((match = cluePattern.exec(text)) !== null) {
+    const names = match[1].split(',').map(n => n.trim()).filter(Boolean);
+    for (const name of names) {
+      const mobile = memberMap[name];
+      if (mobile) { mobiles.add(mobile); continue; }
+      // Case-insensitive fallback
+      for (const [key, val] of Object.entries(memberMap)) {
+        if (key.toLowerCase() === name.toLowerCase()) { mobiles.add(val); break; }
+      }
+    }
+  }
+  cleanText = cleanText.replace(/\s*<<AT:[^>]+>>\s*/g, '').trim();
+  return { cleanText, mobiles: Array.from(mobiles) };
+}
+
+/**
+ * Scan text for explicit @Name patterns (e.g. AI writes "@Chris" in the response).
+ * Fallback for when the AI doesn't use <<AT:>> clue format.
+ */
+function scanExplicitAtMentions(text: string, memberMap: Record<string, string>): string[] {
+  const mobiles = new Set<string>();
+  const atPattern = /@([\u4e00-\u9fa5a-zA-Z\s]{1,20})/g;
+  let match;
+  while ((match = atPattern.exec(text)) !== null) {
+    const mentioned = match[1].trim();
+    for (const [name, mobile] of Object.entries(memberMap)) {
+      if (mentioned.toLowerCase().startsWith(name.toLowerCase())) {
+        mobiles.add(mobile);
+      }
+    }
+  }
+  return Array.from(mobiles);
+}
+
+/**
+ * Send a message via DingTalk custom robot webhook.
+ * This is the only way to trigger real @ notifications in group chats,
+ * since Stream Bot and AI Card APIs do not support atMobiles.
+ */
+async function sendViaGroupWebhook(
+  webhookUrl: string,
+  text: string,
+  options: { atMobiles?: string[]; isAtAll?: boolean; useMarkdown?: boolean; title?: string; log?: any } = {},
+): Promise<boolean> {
+  const { atMobiles, isAtAll, useMarkdown, title, log } = options;
+  try {
+    const at: any = isAtAll
+      ? { isAtAll: true }
+      : (atMobiles && atMobiles.length > 0 ? { atMobiles, isAtAll: false } : {});
+    let fullText = text;
+    if (atMobiles && atMobiles.length > 0) {
+      fullText = `${text}\n\n${atMobiles.map(m => '@' + m).join(' ')}`;
+    }
+    let body: any;
+    if (useMarkdown) {
+      const t = title || fullText.split('\n')[0].replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message';
+      body = { msgtype: 'markdown', markdown: { title: t, text: fullText }, at };
+    } else {
+      body = { msgtype: 'text', text: { content: fullText }, at };
+    }
+    log?.info?.(`[DingTalk][GroupWebhook] Sending: type=${body.msgtype} len=${text.length} at=${JSON.stringify(at)}`);
+    const resp = await axios.post(webhookUrl, body, { headers: { 'Content-Type': 'application/json' }, timeout: 10_000 });
+    if (resp.data?.errcode === 0) { log?.info?.('[DingTalk][GroupWebhook] OK'); return true; }
+    log?.warn?.(`[DingTalk][GroupWebhook] Failed: ${JSON.stringify(resp.data)}`);
+    return false;
+  } catch (err: any) {
+    log?.error?.(`[DingTalk][GroupWebhook] Error: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Build dynamic group AT system prompt based on configured member map.
+ */
+function buildGroupAtSystemPrompt(memberMap: Record<string, string>): string {
+  const nameList = Object.keys(memberMap).join('、');
+  return (
+    '【Group Chat Rules / 群聊规则】\n' +
+    '1. Reply naturally; match response length to question complexity.\n' +
+    '2. This is a shared group conversation. Remember what everyone said.\n' +
+    '3. If context is too long, prioritize recent messages and important decisions.\n' +
+    '4. 【@ Mention Mechanism】Only when you need to notify a specific person, ' +
+    'append <<AT:nickname>> at the very end of your reply. Rules:\n' +
+    '   (a) Only @ someone when asked to relay a message to them.\n' +
+    '   (b) Do NOT @ the person who asked the question (they can already see your reply).\n' +
+    '   (c) To @ multiple people: <<AT:Alice,Bob>>.\n' +
+    '   (d) Default: do NOT @ anyone unless there is a clear reason.\n' +
+    (nameList ? `   Available nicknames: ${nameList}.` : '')
+  );
 }
 
 /** staffId → unionId 缓存 */
@@ -2676,6 +2792,14 @@ async function handleDingTalkMessage(params: {
     systemPrompts.push(dingtalkConfig.systemPrompt);
   }
 
+  // Group webhook mode: inject AT clue instructions into system prompt
+  const groupWebhookUrl = dingtalkConfig.groupWebhookUrl as string | undefined;
+  const groupAtMemberMap = (dingtalkConfig.groupAtMemberMap || {}) as Record<string, string>;
+  const groupWebhookEnabled = !isDirect && !!groupWebhookUrl;
+  if (groupWebhookEnabled && dingtalkConfig.groupAtSystemPrompt !== false) {
+    systemPrompts.push(buildGroupAtSystemPrompt(groupAtMemberMap));
+  }
+
   // ===== 图片下载到本地文件（用于 OpenClaw AgentMediaPayload） =====
   const imageLocalPaths: string[] = [];
 
@@ -2774,6 +2898,11 @@ async function handleDingTalkMessage(params: {
   // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new，再交由 Gateway 解析
   const rawText = content.text || '';
   let userContent = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+
+  // Group chats: prepend sender name so the shared session knows who's talking
+  if (!isDirect && senderName && userContent) {
+    userContent = `[${senderName}]: ${userContent}`;
+  }
   // 追加文件内容
   if (fileContentParts.length > 0) {
     const fileText = fileContentParts.join('\n\n');
@@ -2875,11 +3004,14 @@ async function handleDingTalkMessage(params: {
   const peerId = senderId;
 
   // 尝试创建 AI Card
-  const card = await createAICard(dingtalkConfig, data, log);
+  // Group webhook mode: AI Card is used as a progress indicator only
+  const card = groupWebhookEnabled ? null : await createAICard(dingtalkConfig, data, log);
+  const progressCard = groupWebhookEnabled ? await createAICard(dingtalkConfig, data, log) : null;
 
-  if (card) {
+  if (card || progressCard) {
     // ===== AI Card 流式模式 =====
-    log?.info?.(`[DingTalk] AI Card 创建成功: ${card.cardInstanceId}`);
+    const activeCard = card || progressCard!;
+    log?.info?.(`[DingTalk] AI Card 创建成功: ${activeCard.cardInstanceId}${progressCard ? ' (progress mode)' : ''}`);
 
     let accumulated = '';
     let lastUpdateTime = 0;
@@ -2917,7 +3049,7 @@ async function handleDingTalkMessage(params: {
             .replace(VIDEO_MARKER_PATTERN, '')
             .replace(AUDIO_MARKER_PATTERN, '')
             .trim();
-          await streamAICard(card, displayContent, false, log);
+          await streamAICard(activeCard, displayContent, false, log);
           lastUpdateTime = now;
         }
       }
@@ -2950,9 +3082,29 @@ async function handleDingTalkMessage(params: {
       const finalContent = accumulated.trim();
       if (finalContent.length === 0) {
         log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
-        await finishAICard(card, '✅ 媒体已发送', log);
+        await finishAICard(activeCard, '✅ 媒体已发送', log);
       } else {
-        await finishAICard(card, finalContent, log);
+        if (groupWebhookEnabled) {
+          // Group webhook mode: send final reply via webhook with @ support, overwrite AI Card with summary
+          const { cleanText, mobiles: clueMobiles } = parseAtClue(finalContent, groupAtMemberMap);
+          const textAtMobiles = scanExplicitAtMentions(cleanText || '', groupAtMemberMap);
+          const finalMobiles = [...new Set([...clueMobiles, ...textAtMobiles])];
+          log?.info?.(`[DingTalk][AT] clue=${JSON.stringify(clueMobiles)} textAt=${JSON.stringify(textAtMobiles)} final=${JSON.stringify(finalMobiles)}`);
+          await sendViaGroupWebhook(groupWebhookUrl!, cleanText || '(no response)', {
+            atMobiles: finalMobiles,
+            useMarkdown: true,
+            log,
+          });
+          const totalTime = Math.round((Date.now() - (lastUpdateTime - updateInterval * chunkCount)) / 1000);
+          const summary = `✅ ${cleanText.length} 字 · ${totalTime}s`;
+          try {
+            await finishAICard(activeCard, summary, log);
+          } catch (e: any) {
+            log?.warn?.(`[DingTalk][GroupWebhook] Summary overwrite failed: ${e.message}`);
+          }
+        } else {
+          await finishAICard(activeCard, finalContent, log);
+        }
       }
       log?.info?.(`[DingTalk] 流式响应完成，共 ${finalContent.length} 字符`);
 
@@ -2961,7 +3113,7 @@ async function handleDingTalkMessage(params: {
       log?.error?.(`[DingTalk] 错误详情: ${err.stack}`);
       accumulated += `\n\n⚠️ 响应中断: ${err.message}`;
       try {
-        await finishAICard(card, accumulated, log);
+        await finishAICard(activeCard, accumulated, log);
       } catch (finishErr: any) {
         log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
       }
@@ -3005,17 +3157,38 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] (降级模式) 开始文件后处理`);
       fullResponse = await processFileMarkers(fullResponse, sessionWebhook, dingtalkConfig, oapiToken, log);
 
-      await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
-        atUserId: !isDirect ? senderId : null,
-        useMarkdown: true,
-      });
-      log?.info?.(`[DingTalk] 普通消息回复完成，共 ${fullResponse.length} 字符`);
+      if (groupWebhookEnabled) {
+        // Group webhook mode: send via webhook with @ support
+        const { cleanText, mobiles: clueMobiles } = parseAtClue(fullResponse || '', groupAtMemberMap);
+        const textAtMobiles = scanExplicitAtMentions(cleanText || '', groupAtMemberMap);
+        const finalMobiles = [...new Set([...clueMobiles, ...textAtMobiles])];
+        log?.info?.(`[DingTalk][AT] clue=${JSON.stringify(clueMobiles)} textAt=${JSON.stringify(textAtMobiles)} final=${JSON.stringify(finalMobiles)}`);
+        await sendViaGroupWebhook(groupWebhookUrl!, cleanText || '(no response)', {
+          atMobiles: finalMobiles,
+          useMarkdown: true,
+          log,
+        });
+      } else {
+        await sendMessage(dingtalkConfig, sessionWebhook, fullResponse || '（无响应）', {
+          atUserId: !isDirect ? senderId : null,
+          useMarkdown: true,
+        });
+      }
+      log?.info?.(`[DingTalk] 回复完成，共 ${fullResponse.length} 字符`);
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
-      await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
-        atUserId: !isDirect ? senderId : null,
-      });
+      if (groupWebhookEnabled) {
+        const defaultMobile = dingtalkConfig.groupAtDefaultMobile as string | undefined;
+        await sendViaGroupWebhook(groupWebhookUrl!, `Error: ${err.message}`, {
+          atMobiles: defaultMobile ? [defaultMobile] : [],
+          log,
+        });
+      } else {
+        await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
+          atUserId: !isDirect ? senderId : null,
+        });
+      }
     }
   }
   } finally {
@@ -3372,6 +3545,11 @@ const dingtalkPlugin = {
         sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
+        groupWebhookUrl: { type: 'string', default: '', description: 'Custom robot webhook URL for group messages. When set, group replies use this webhook (supports @ mentions via atMobiles). Get this URL from DingTalk group settings > Smart Group Assistant > Add Robot > Custom Robot.' },
+        groupAtMemberMap: { type: 'object', default: {}, description: 'Map of member name/nickname to mobile number for @ mentions. Example: {"Alice": "13800138000", "Bob": "13900139000"}. The AI uses <<AT:Alice>> clue in its response, which is then converted to a real @ notification.' },
+        groupAtDefaultMobile: { type: 'string', default: '', description: 'Default mobile number to @ when error occurs and sender cannot be identified' },
+        groupAtSystemPrompt: { type: 'boolean', default: true, description: 'Auto-inject group chat AT clue instructions into system prompt. Set to false if you want to handle @ logic in your own system prompt.' },
+        groupSessionScope: { type: 'string', enum: ['group', 'group_sender'], default: 'group', description: 'Group session isolation: "group" = shared session for entire group (recommended), "group_sender" = separate session per user in group' },
         debug: { type: 'boolean', default: false },
       },
       required: ['clientId', 'clientSecret'],
@@ -4061,6 +4239,10 @@ export {
   dingtalkPlugin,
   // 回复消息（需要 sessionWebhook）
   sendMessage,
+  sendViaGroupWebhook,
+  parseAtClue,
+  scanExplicitAtMentions,
+  buildGroupAtSystemPrompt,
   sendTextMessage,
   sendMarkdownMessage,
   // 主动发送消息（无需 sessionWebhook）

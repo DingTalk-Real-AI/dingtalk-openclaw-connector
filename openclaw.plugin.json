@@ -1,15 +1,20 @@
 {
   "id": "dingtalk-connector",
   "name": "DingTalk Channel",
-  "version": "0.7.9",
+  "version": "0.8.0",
   "description": "DingTalk (钉钉) messaging channel via Stream mode with AI Card streaming",
   "author": "DingTalk Real Team",
-  "channels": ["dingtalk-connector"],
+  "channels": [
+    "dingtalk-connector"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean", "default": true }
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      }
     }
   }
 }

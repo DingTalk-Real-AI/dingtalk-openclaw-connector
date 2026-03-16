@@ -6,6 +6,30 @@
 This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and version numbers follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-03-14
+
+### 新增功能 / Added Features
+- ✅ **群聊 Webhook 消息模式** - 群聊回复通过自定义机器人 Webhook 发送，支持真正的 @ 提醒通知。AI Card 仅作为实时进度指示器，完成后自动替换为摘要（字数 + 耗时）  
+  **Group Webhook Message Mode** - Group replies sent via Custom Robot Webhook with real @ mention notifications. AI Card serves as a real-time progress indicator and is replaced with a summary (word count + time) after completion
+- ✅ **@ 提醒功能** - 通过 `<<AT:name>>` 线索机制让 AI 自主决定 @ 谁，结合文本中 `@Name` 模式的保底扫描，自动转换为钉钉 `atMobiles` 通知  
+  **@ Mention Support** - AI autonomously decides who to @ using `<<AT:name>>` clue mechanism, with fallback scanning for `@Name` patterns in text, automatically converted to DingTalk `atMobiles` notifications
+- ✅ **群聊发送者标识** - 群聊消息自动附加发送者昵称 `[sender]: message`，让共享会话中的 AI 知道谁在说话  
+  **Group Chat Sender Identification** - Group messages automatically prepend sender nickname `[sender]: message` so the AI knows who is speaking in shared sessions
+- ✅ **群聊 @ 系统提示词** - 可配置的系统提示词自动注入，教会 AI 使用 `<<AT:>>` 线索格式并遵循群聊交互规范  
+  **Group AT System Prompt** - Configurable system prompt injection that teaches the AI to use `<<AT:>>` clue format and follow group chat interaction conventions
+- ✅ **oapi Access Token 缓存** - 钉钉 oapi 的 access_token 增加 110 分钟内存缓存，避免每次请求重复获取（原先每次 ~8s 延迟）  
+  **oapi Access Token Caching** - In-memory cache for DingTalk oapi access_token with 110-minute TTL, eliminating redundant token fetches (~8s latency per request)
+
+### 配置 / Configuration
+- 新增 `groupWebhookUrl` — 自定义机器人 Webhook URL，启用后群聊回复通过 Webhook 发送（支持 @ 提醒）  
+  Added `groupWebhookUrl` — Custom robot webhook URL; when set, group replies are sent via webhook (enables @ mentions)
+- 新增 `groupAtMemberMap` — 成员昵称到手机号的映射表，用于 @ 提醒转换  
+  Added `groupAtMemberMap` — Map of member nicknames to mobile numbers for @ mention conversion
+- 新增 `groupAtDefaultMobile` — 错误时默认 @ 的手机号  
+  Added `groupAtDefaultMobile` — Default mobile to @ when errors occur
+- 新增 `groupAtSystemPrompt`（默认：`true`）— 是否自动注入群聊 @ 线索使用说明到系统提示词  
+  Added `groupAtSystemPrompt` (default: `true`) — Whether to auto-inject group AT clue instructions into system prompt
+
 ## [0.7.9] - 2026-03-13
 
 ### 新增 / Added

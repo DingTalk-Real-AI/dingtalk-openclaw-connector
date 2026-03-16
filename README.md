@@ -20,6 +20,8 @@
 - ✅ **AI Card 流式响应** - 打字机效果，实时显示 AI 回复
 - ✅ **会话持久化** - 同一用户的多轮对话共享上下文
 - ✅ **会话与记忆隔离** - 按单聊/群聊/群区分 session，不同场景下的对话上下文互不干扰，可配置跨会话记忆共享
+- ✅ **群聊 @ 提醒** - 通过自定义机器人 Webhook 发送群聊回复，支持真正的 @ 通知（AI Card 模式下 @ 不生效的解决方案）
+- ✅ **AI Card 进度流** - 群聊 Webhook 模式下，AI Card 作为实时进度指示器，完成后自动替换为摘要
 - ✅ **超时自动新会话** - 默认 30 分钟无活动自动开启新对话
 - ✅ **手动新会话** - 发送 `/new` 或 `新会话` 清空对话历史
 - ✅ **图片自动上传** - 本地图片路径自动上传到钉钉
@@ -96,6 +98,13 @@ openclaw plugins install -l .
       "separateSessionByConversation": true,  // 可选：是否按单聊/群聊/群区分 session（默认：true）
       "groupSessionScope": "group",       // 可选：群聊会话隔离策略，group=群共享，group_sender=群内用户独立（默认：group）
       "sharedMemoryAcrossConversations": false, // 可选：是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false）
+      "groupWebhookUrl": "",               // 可选：自定义机器人 Webhook URL，启用群聊 @ 提醒功能
+      "groupAtMemberMap": {                // 可选：群成员昵称 -> 手机号映射，用于 @ 提醒
+        "张三": "13800138000",
+        "李四": "13900139000"
+      },
+      "groupAtDefaultMobile": "",          // 可选：出错时默认 @ 的手机号
+      "groupAtSystemPrompt": true,         // 可选：是否自动注入群聊 @ 提示词（默认：true）
       "asyncMode": false,                 // 可选：异步模式，立即回执用户消息，后台处理并推送结果（默认：false）
       "ackText": "🫡 任务已接收"      // 可选：异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'）
     }
@@ -149,6 +158,10 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 | `separateSessionByConversation` | — | 是否按单聊/群聊/群区分 session（默认：true） |
 | `groupSessionScope` | — | 群聊会话隔离策略（仅当 separateSessionByConversation=true 时生效）：`group`=群共享，`group_sender`=群内用户独立（默认：group） |
 | `sharedMemoryAcrossConversations` | — | 是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false） |
+| `groupWebhookUrl` | — | 自定义机器人 Webhook URL，启用后群聊回复通过 Webhook 发送，支持 @ 提醒 |
+| `groupAtMemberMap` | — | 群成员昵称到手机号的映射（JSON 对象），用于 @ 提醒转换。示例：`{"张三": "13800138000"}` |
+| `groupAtDefaultMobile` | — | 出错时默认 @ 的手机号 |
+| `groupAtSystemPrompt` | — | 是否自动注入群聊 @ 线索使用说明到系统提示词（默认：true） |
 | `asyncMode` | — | 异步模式，立即回执用户消息，后台处理并推送结果（默认：false） |
 | `ackText` | — | 异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'） |
 
@@ -167,6 +180,44 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 
 - **`group`**（默认）：整个群共享一个会话，群内所有用户共用同一个对话上下文
 - **`group_sender`**：群内每个用户独立会话，不同用户的对话上下文互不干扰
+
+## 群聊 @ 提醒（Group Webhook + @ Mentions）
+
+钉钉 Stream Bot 和 AI Card API 不支持 `atMobiles`，导致群聊中无法触发 @ 通知。本功能通过**自定义机器人 Webhook** 解决此问题。
+
+### 工作原理
+
+1. **AI Card 进度流** — 群聊中创建 AI Card 作为实时进度指示器，流式显示 AI 回复内容
+2. **Webhook 最终投递** — AI 回复完成后，通过自定义机器人 Webhook 发送最终消息（支持 `atMobiles`）
+3. **AI Card 摘要覆盖** — Webhook 发送成功后，AI Card 被替换为摘要（如 `✅ 128 字 · 5s`）
+4. **AI 自主 @ 决策** — AI 在回复末尾输出 `<<AT:昵称>>` 线索，系统解析后转换为 `atMobiles`
+
+### 配置步骤
+
+1. 在钉钉群设置中，添加"自定义机器人"，获取 Webhook URL
+2. 在 `openclaw.json` 中配置 `groupWebhookUrl` 和 `groupAtMemberMap`：
+
+```json5
+{
+  "channels": {
+    "dingtalk-connector": {
+      "groupWebhookUrl": "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN",
+      "groupAtMemberMap": {
+        "张三": "13800138000",
+        "李四": "13900139000"
+      }
+    }
+  }
+}
+```
+
+3. 重启 OpenClaw，群聊中 AI 会自动使用 `<<AT:>>` 格式指定 @ 对象
+
+### 注意事项
+
+- 自定义机器人有频率限制：每分钟最多 20 条消息
+- `groupWebhookUrl` 为空时，行为与原版完全一致（AI Card 直接回复）
+- `groupAtSystemPrompt` 设为 `false` 可禁用自动注入的 @ 提示词（适合自定义 system prompt 的用户）
 
 ### 记忆隔离（sharedMemoryAcrossConversations）
 
