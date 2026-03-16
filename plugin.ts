@@ -2615,6 +2615,7 @@ async function handleDingTalkMessage(params: {
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const senderName = data.senderNick || 'Unknown';
+  const conversationId = data.conversationId || '';
 
   log?.info?.(`[DingTalk] 收到消息: from=${senderName} type=${content.messageType} text="${content.text.slice(0, 50)}..." images=${content.imageUrls.length} downloadCodes=${content.downloadCodes.length}`);
 
@@ -2773,7 +2774,14 @@ async function handleDingTalkMessage(params: {
   // 对于纯图片消息（无文本），添加默认提示
   // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new，再交由 Gateway 解析
   const rawText = content.text || '';
-  let userContent = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  const normalizedText = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  // 在消息前注入 META 前缀，供 skill 提取 senderId/conversationId
+  // 格式: [META:senderId=xxx,conversationId=xxx] 原始消息
+  const META_PREFIX = '[META:';
+  const userContent_base = normalizedText.startsWith(META_PREFIX)
+    ? normalizedText
+    : (normalizedText ? `${META_PREFIX}senderId=${senderId},conversationId=${conversationId}] ${normalizedText}` : '');
+  let userContent = userContent_base;
   // 追加文件内容
   if (fileContentParts.length > 0) {
     const fileText = fileContentParts.join('\n\n');
