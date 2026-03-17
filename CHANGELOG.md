@@ -1,10 +1,44 @@
 # Changelog
 
-本文档记录所有重要的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
-版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+All notable changes to this project will be documented in this file.
 
-This document records all significant changes. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and version numbers follow [Semantic Versioning](https://semver.org/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.7.10] - 2026-03-16
+
+### 新增 / Added
+- ✨ **WebSocket 心跳重连机制优化** - 关闭 DWClient 的 `autoConnect`，采用应用层自动重连机制（修复 DWClient 重连 bug）；添加指数退避重连策略，避免雪崩效应；使用 WebSocket 原生 Ping 进行心跳检测  
+  **WebSocket heartbeat & reconnect optimization** - Disabled DWClient's `autoConnect`, implemented app-layer auto-reconnect (fixing DWClient bug); added exponential backoff to avoid avalanche; using WebSocket native Ping for heartbeat
+- ✨ **socket-manager 模块** - 新增模块统一管理 WebSocket 连接生命周期，包括心跳检测、自动重连、指数退避、事件监听等  
+  **socket-manager module** - New module for unified WebSocket connection lifecycle management, including heartbeat, auto-reconnect, exponential backoff, event listening
+- ✨ **debug 参数** - 添加 `debug` 配置项控制详细日志输出，便于问题排查  
+  **debug parameter** - Added `debug` config to control detailed log output for easier troubleshooting
+- ✨ **WebSocket 无限重连机制** - 移除最大重连次数限制，实现无限重连，确保长连接服务的高可用性  
+  **WebSocket infinite reconnection** - Removed maximum reconnection attempt limit, implemented infinite reconnection to ensure high availability for long-lived connection services
+
+### 修复 / Fixes
+- 🐛 **修复 DWClient 重连 bug** - DWClient 内置重连机制存在缺陷，通过应用层重连机制替代，确保连接稳定可靠  
+  **Fixed DWClient reconnect bug** - DWClient's built-in reconnect has defects; replaced with app-layer reconnect for stable connection
+- 🐛 **长连接静默断开** - 通过应用层心跳检测连接活性，超时后主动重连，减少因长时间无数据导致的静默断连且无法恢复  
+  **Long-lived connection silent disconnect** - App-layer heartbeat detects liveness and triggers reconnect on timeout, reducing silent disconnects when idle
+### 改进 / Improvements
+- ✅ **DWClient 配置** - 设置 `autoReconnect: false`、`keepAlive: false`，由应用层接管重连和心跳，避免与钉钉服务端策略冲突  
+  **DWClient config** - Set `autoReconnect: false`, `keepAlive: false`; app-layer takes over reconnect and heartbeat to avoid server conflicts
+- ✅ **指数退避策略** - 公式 `baseBackoffDelay * Math.pow(2, attempt) + jitter(0-1s)`，最大退避 30 秒，避免雪崩效应  
+  **Exponential backoff strategy** - Formula `baseBackoffDelay * Math.pow(2, attempt) + jitter(0-1s)`, max 30s backoff to avoid avalanche effect
+- ✅ **统一事件监听** - `pong`、`message`、`close`、`open` 四个事件统一管理和清理，提升代码可维护性  
+  **Unified event listening** - `pong`, `message`, `close`, `open` events managed and cleaned up uniformly, improving maintainability
+- ✅ **配置简化** - 从 `SocketManagerConfig` 中移除 `maxReconnectAttempts` 配置项，简化配置复杂度  
+  **Configuration simplification** - Removed `maxReconnectAttempts` from `SocketManagerConfig`, simplifying configuration
+- ✅ **日志输出优化** - 更新重连日志格式，移除最大次数显示（从 "尝试 X/5" 改为 "尝试 X"）  
+  **Log output optimization** - Updated reconnection log format, removed maximum attempt display (from "attempt X/5" to "attempt X")
+
+### 技术细节 / Technical Details
+- **退避策略**：指数退避 + 随机抖动，公式 `baseBackoffDelay * Math.pow(2, attempt) + jitter(0-1s)`  
+- **最大退避**：30 秒（由 `maxBackoffDelay` 限制）  
+- **重置条件**：重连成功后 `reconnectAttempts` 归零  
+- **立即重连**：心跳检测失败、WebSocket close、disconnect 消息触发时立即重连，不退避  
 
 ## [0.8.0] - 2026-03-14
 
@@ -268,4 +302,3 @@ and version numbers follow [Semantic Versioning](https://semver.org/).
   Added "Multi-Agent Configuration" section with detailed configuration examples and instructions
 - 补充常见问题解答  
   Added FAQ section
-
