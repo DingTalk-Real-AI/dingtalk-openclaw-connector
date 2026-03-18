@@ -2969,9 +2969,12 @@ async function handleDingTalkMessage(params: {
       log?.info?.(`[DingTalk][File] 开始文件后处理 (使用主动API，目标=${JSON.stringify(proactiveTarget)})`);
       accumulated = await processFileMarkers(accumulated, sessionWebhook, dingtalkConfig, oapiToken, log, true, proactiveTarget);
 
-      // 完成 AI Card（如果内容为空，说明是纯媒体消息，使用默认提示）
+      // 完成 AI Card（如果内容为空，区分纯媒体消息和 LLM 无响应）
       const finalContent = accumulated.trim();
-      if (finalContent.length === 0) {
+      if (finalContent.length === 0 && chunkCount === 0) {
+        log?.warn?.(`[DingTalk][AICard] LLM 无响应（0 chunks），显示友好提示`);
+        await finishAICard(card, '⚠️ AI 服务暂时无响应，请稍后再试', log);
+      } else if (finalContent.length === 0) {
         log?.info?.(`[DingTalk][AICard] 内容为空（纯媒体消息），使用默认提示`);
         await finishAICard(card, '当前没有可展示的回复内容', log);
       } else {
@@ -2982,9 +2985,20 @@ async function handleDingTalkMessage(params: {
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
       log?.error?.(`[DingTalk] 错误详情: ${err.stack}`);
-      accumulated += `\n\n⚠️ 响应中断: ${err.message}`;
+      const errMsg = (err.message || '').toLowerCase();
+      let friendlyMsg: string;
+      if (errMsg.includes('terminated') || errMsg.includes('timed out') || errMsg.includes('timeout') || errMsg.includes('econnreset')) {
+        friendlyMsg = '⚠️ AI 服务响应超时，请稍后再试';
+      } else if (errMsg.includes('rate limit') || /^429\b/.test(err.message)) {
+        friendlyMsg = '⚠️ AI 服务繁忙，请稍后再试';
+      } else if (/^[45]\d{2}\b/.test(err.message) || errMsg.includes('bad gateway') || errMsg.includes('service unavailable')) {
+        friendlyMsg = '⚠️ AI 服务暂时不可用，请稍后再试';
+      } else {
+        friendlyMsg = '⚠️ 处理消息时出现问题，请稍后再试';
+      }
+      const displayContent = accumulated.trim() ? `${accumulated.trim()}\n\n${friendlyMsg}` : friendlyMsg;
       try {
-        await finishAICard(card, accumulated, log);
+        await finishAICard(card, displayContent, log);
       } catch (finishErr: any) {
         log?.error?.(`[DingTalk] 错误恢复 finish 也失败: ${finishErr.message}`);
       }
@@ -3036,7 +3050,18 @@ async function handleDingTalkMessage(params: {
 
     } catch (err: any) {
       log?.error?.(`[DingTalk] Gateway 调用失败: ${err.message}`);
-      await sendMessage(dingtalkConfig, sessionWebhook, `抱歉，处理请求时出错: ${err.message}`, {
+      const errMsg2 = (err.message || '').toLowerCase();
+      let friendlyMsg2: string;
+      if (errMsg2.includes('terminated') || errMsg2.includes('timed out') || errMsg2.includes('timeout') || errMsg2.includes('econnreset')) {
+        friendlyMsg2 = '⚠️ AI 服务响应超时，请稍后再试';
+      } else if (errMsg2.includes('rate limit') || /^429\b/.test(err.message)) {
+        friendlyMsg2 = '⚠️ AI 服务繁忙，请稍后再试';
+      } else if (/^[45]\d{2}\b/.test(err.message) || errMsg2.includes('bad gateway') || errMsg2.includes('service unavailable')) {
+        friendlyMsg2 = '⚠️ AI 服务暂时不可用，请稍后再试';
+      } else {
+        friendlyMsg2 = '⚠️ 处理消息时出现问题，请稍后再试';
+      }
+      await sendMessage(dingtalkConfig, sessionWebhook, friendlyMsg2, {
         atUserId: !isDirect ? senderId : null,
       });
     }
