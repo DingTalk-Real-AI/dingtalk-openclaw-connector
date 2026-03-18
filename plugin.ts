@@ -2826,16 +2826,21 @@ async function handleDingTalkMessage(params: {
     : { openConversationId: data.conversationId };
 
   if (asyncMode) {
-    const ackText = dingtalkConfig.ackText || '🫡 任务已接收，处理中...';
-    try {
-      await sendProactive(dingtalkConfig, proactiveTarget, ackText, {
-        msgType: 'text',
-        useAICard: false,
-        fallbackToNormal: true,
-        log,
-      });
-    } catch (ackErr: any) {
-      log?.warn?.(`[DingTalk][Async] 回执发送失败: ${ackErr?.message || ackErr}`);
+    // 允许通过 ackText: '' 显式关闭异步回执；仅在未配置（null/undefined）时回退到默认文案
+    const ackText = dingtalkConfig.ackText ?? '🫡 任务已接收，处理中...';
+    if (typeof ackText === 'string' && ackText.trim().length > 0) {
+      try {
+        await sendProactive(dingtalkConfig, proactiveTarget, ackText, {
+          msgType: 'text',
+          useAICard: false,
+          fallbackToNormal: true,
+          log,
+        });
+      } catch (ackErr: any) {
+        log?.warn?.(`[DingTalk][Async] 回执发送失败: ${ackErr?.message || ackErr}`);
+      }
+    } else {
+      log?.info?.('[DingTalk][Async] ackText 为空，跳过异步回执发送');
     }
 
     // 计算 peerKind 和 peerId 用于 bindings 匹配
