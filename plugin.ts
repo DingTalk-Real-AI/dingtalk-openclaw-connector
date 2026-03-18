@@ -1200,6 +1200,7 @@ async function streamAICard(
           sys_full_json_obj: JSON.stringify({
             order: ['msgContent'],  // 只声明实际使用的字段，避免部分客户端显示空占位
           }),
+          config: JSON.stringify({ autoLayout: true }),
         },
       },
     };
@@ -1263,6 +1264,7 @@ async function finishAICard(
         sys_full_json_obj: JSON.stringify({
           order: ['msgContent'],  // 只声明实际使用的字段，避免部分客户端显示空占位
         }),
+        config: JSON.stringify({ autoLayout: true }),
       },
     },
     cardUpdateOptions: { updateCardDataByKey: true },
