@@ -937,16 +937,20 @@ export async function sendMediaToDingTalk(params: {
     log.info("媒体类型判断完成:", mediaType);
 
     // 上传文件到钉钉
+    const debugEnabled = config.debug === true || config.debug === 'true';
+    log.info("准备调用 uploadMediaToDingTalk，参数:", { mediaUrl, mediaType, debug: debugEnabled });
     const uploadResult = await uploadMediaToDingTalk(
       mediaUrl,
       mediaType,
       oapiToken,
       20 * 1024 * 1024,
-      config.debug ?? false,
+      debugEnabled,
     );
+    log.info("uploadMediaToDingTalk 返回结果:", uploadResult);
 
     if (!uploadResult) {
       // 上传失败，发送文本消息提示
+      log.error("上传失败，返回错误提示");
       return sendProactive(config, targetParam, "⚠️ 媒体文件上传失败", {
         msgType: "text",
         replyToId,
@@ -1194,8 +1198,10 @@ async function sendProactiveInternal(
     const targetId = isUser ? target.userId : target.openConversationId;
     console.log("[sendProactiveInternal] targetId:", targetId);
 
-    // 构建 webhook URL
-    const webhookUrl = `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`;
+    // ✅ 根据目标类型选择不同的 API
+    const webhookUrl = isUser
+      ? `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`
+      : `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
 
     // 构建消息体
     const body: any = {
@@ -1212,11 +1218,16 @@ async function sendProactiveInternal(
       body.msgParam = JSON.stringify({ content });
     }
 
+    // ✅ 根据目标类型设置不同的参数
     if (isUser) {
       body.userIds = [targetId];
     } else {
       body.openConversationId = targetId;
     }
+
+    log?.info?.(
+      `[DingTalk] 发送${isUser ? '单聊' : '群聊'}消息：${isUser ? 'userIds=' : 'openConversationId='}${targetId}`,
+    );
 
     const resp = await axios.post(webhookUrl, body, {
       headers: {
@@ -1225,13 +1236,17 @@ async function sendProactiveInternal(
       },
     });
 
+    log?.info?.(
+      `[DingTalk] 发送${isUser ? '单聊' : '群聊'}消息成功：processQueryKey=${resp.data?.processQueryKey}`,
+    );
+
     return {
       ok: true,
       processQueryKey: resp.data?.processQueryKey,
       usedAICard: false,
     };
   } catch (err: any) {
-    log?.error?.(`[DingTalk] 发送消息失败: ${err.message}`);
+    log?.error?.(`[DingTalk] 发送${target.type === 'user' ? '单聊' : '群聊'}消息失败：${err.message}`);
     return { ok: false, error: err.message, usedAICard: false };
   }
 }

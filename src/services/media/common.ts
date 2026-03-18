@@ -64,14 +64,20 @@ export async function uploadMediaToDingTalk(
   maxSize: number = 20 * 1024 * 1024,
   debug: boolean = false,
 ): Promise<string | null> {
-  const log = createLogger(debug, `DingTalk][${mediaType}`);
+  // 确保 debug 是布尔值
+  const debugEnabled = debug === true || debug === 'true';
+  const log = createLogger(debugEnabled, `DingTalk][${mediaType}`);
+  
+  log.info(`[uploadMediaToDingTalk] 开始上传，filePath: ${filePath}, mediaType: ${mediaType}, debug: ${debugEnabled}`);
   
   try {
     const FormData = (await import('form-data')).default;
 
     const absPath = toLocalPath(filePath);
+    log.info(`[uploadMediaToDingTalk] 检查文件是否存在：${absPath}`);
     if (!fs.existsSync(absPath)) {
       log.warn(`文件不存在：${absPath}`);
+      console.error(`[uploadMediaToDingTalk] 文件不存在：${absPath}`);
       return null;
     }
 

@@ -62,14 +62,19 @@ export async function enableUploadTransaction(
   try {
     log.info(`开启上传事务：${fileName}, 大小：${(fileSize / 1024 / 1024).toFixed(2)}MB`);
 
-    const resp = await axios.get<UploadTransactionResponse>(
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    form.append('file_name', fileName);
+    form.append('file_size', fileSize.toString());
+
+    const resp = await axios.post<UploadTransactionResponse>(
       `${DINGTALK_OAPI}/file/upload/transaction/enabled`,
+      form,
       {
         params: {
           access_token: oapiToken,
-          file_name: fileName,
-          file_size: fileSize,
         },
+        headers: form.getHeaders(),
         timeout: 30_000,
       }
     );
@@ -83,6 +88,7 @@ export async function enableUploadTransaction(
     }
   } catch (err: any) {
     log.error(`开启事务异常：${err.message}`);
+    console.error(`开启事务异常详情:`, err.response?.data || err);
     return null;
   }
 }

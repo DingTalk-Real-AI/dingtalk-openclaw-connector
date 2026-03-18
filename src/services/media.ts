@@ -6,7 +6,7 @@
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { DingtalkConfig } from './types.ts';
+import type { DingtalkConfig } from '../types/index.ts';
 import { DINGTALK_OAPI, getOapiAccessToken } from '../utils/index.ts';
 
 // ============ 常量 ============
@@ -87,19 +87,32 @@ export async function uploadMediaToDingTalk(
     const FormData = (await import('form-data')).default;
 
     const absPath = toLocalPath(filePath);
+    log?.info?.(`[DingTalk][${mediaType}] 开始上传，文件路径：${absPath}`);
+    
     if (!fs.existsSync(absPath)) {
-      log?.warn?.(`[DingTalk][${mediaType}] 文件不存在: ${absPath}`);
+      log?.warn?.(`[DingTalk][${mediaType}] 文件不存在：${absPath}`);
+      console.error(`[DingTalk][${mediaType}] 文件不存在：${absPath}`);
       return null;
     }
 
     // 检查文件大小
     const stats = fs.statSync(absPath);
     const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+    const fileSize = stats.size;
+
+    log?.info?.(`[DingTalk][${mediaType}] 文件大小：${fileSizeMB}MB`);
+
+    // ✅ 对于视频和文件类型，如果超过 20MB，提示用户
+    if ((mediaType === 'video' || mediaType === 'file') && fileSize > 20 * 1024 * 1024) {
+      log?.warn?.(`[DingTalk][${mediaType}] 文件超过 20MB 限制，当前大小：${fileSizeMB}MB`);
+      console.error(`[DingTalk][${mediaType}] 文件过大：${fileSizeMB}MB，超过 20MB 限制`);
+      return null;
+    }
 
     if (stats.size > maxSize) {
       const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
       log?.warn?.(
-        `[DingTalk][${mediaType}] 文件过大: ${absPath}, 大小: ${fileSizeMB}MB, 超过限制 ${maxSizeMB}MB`,
+        `[DingTalk][${mediaType}] 文件过大：${absPath}, 大小：${fileSizeMB}MB, 超过限制 ${maxSizeMB}MB`,
       );
       return null;
     }
@@ -678,7 +691,7 @@ async function sendVideoMessage(
   metadata?: { duration: number; width: number; height: number },
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
     
     // 钉钉视频消息格式（sessionWebhook 模式）
     const videoMessage = {
@@ -721,8 +734,8 @@ export async function sendVideoProactive(
   log?: any,
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
-    const { DINGTALK_API } = await import('./utils.js');
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
+    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的视频消息格式
     const msgParam = {
@@ -782,7 +795,7 @@ async function sendAudioMessage(
   durationMs?: number,
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
 
     // 钉钉语音消息格式
     const actualDuration = (durationMs && durationMs > 0) ? durationMs.toString() : '60000';
@@ -825,8 +838,8 @@ export async function sendAudioProactive(
   durationMs?: number,
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
-    const { DINGTALK_API } = await import('./utils.js');
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
+    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的音频消息格式
     const actualDuration = (durationMs && durationMs > 0) ? durationMs.toString() : '60000';
@@ -879,7 +892,7 @@ async function sendFileMessage(
   log?: any,
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
 
     const fileMessage = {
       msgtype: 'file',
@@ -920,8 +933,8 @@ export async function sendFileProactive(
   log?: any,
 ): Promise<void> {
   try {
-    const token = await (await import('./utils.js')).getAccessToken(config);
-    const { DINGTALK_API } = await import('./utils.js');
+    const token = await (await import('../utils/index.ts')).getAccessToken(config);
+    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的文件消息格式
     const msgParam = {

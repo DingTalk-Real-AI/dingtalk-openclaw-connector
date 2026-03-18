@@ -116,6 +116,64 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   let lastUpdateTime = 0;
   const updateInterval = 1000; // 最小更新间隔 1000ms（钉钉 QPS 限制：40 次/秒，安全起见设为 1 秒）
 
+  // ✅ 错误兜底：防止重复发送错误消息
+  const deliveredErrorTypes = new Set<string>();
+  let lastErrorTime = 0;
+  const ERROR_COOLDOWN = 60000; // 错误消息冷却时间 1 分钟
+
+  // ============ 错误兜底函数 ============
+
+  /**
+   * 发送兜底错误消息，确保用户始终能收到反馈
+   */
+  const sendFallbackErrorMessage = async (
+    errorType: 'aiCardCreate' | 'mediaProcess' | 'sendMessage' | 'unknown',
+    originalError?: string,
+    forceSend: boolean = false
+  ) => {
+    const now = Date.now();
+    const errorKey = `${errorType}:${conversationId}:${senderId}`;
+    
+    // 防止重复发送相同类型的错误消息
+    if (!forceSend && deliveredErrorTypes.has(errorKey)) {
+      log.debug(`[DingTalk][Fallback] 跳过重复错误消息：${errorType}`);
+      return;
+    }
+    
+    // 冷却时间控制
+    if (!forceSend && now - lastErrorTime < ERROR_COOLDOWN) {
+      log.debug(`[DingTalk][Fallback] 冷却时间内，跳过错误消息`);
+      return;
+    }
+
+    const errorMessages = {
+      aiCardCreate: '⚠️ 消息处理延迟，正在尝试其他方式...',
+      mediaProcess: '⚠️ 媒体文件处理失败，已发送文字回复',
+      sendMessage: '⚠️ 消息发送失败，请稍后重试',
+      unknown: '⚠️ 抱歉，处理您的请求时出错，请稍后重试',
+    };
+    
+    const errorMessage = errorMessages[errorType];
+    log.warn(`[DingTalk][Fallback] ${errorMessage}, error: ${originalError}`);
+    
+    try {
+      await sendMessage(
+        account.config as DingtalkConfig,
+        sessionWebhook,
+        errorMessage,
+        {
+          useMarkdown: false,
+          log: params.runtime.log,
+        }
+      );
+      deliveredErrorTypes.add(errorKey);
+      lastErrorTime = now;
+      log.info(`[DingTalk][Fallback] ✅ 错误消息发送成功`);
+    } catch (fallbackErr: any) {
+      log.error(`[DingTalk][Fallback] ❌ 错误消息发送失败：${fallbackErr.message}`);
+    }
+  };
+
   // 打字指示器回调（钉钉暂不支持，预留接口）
   const typingCallbacks = createTypingCallbacks({
     start: async () => {
@@ -194,9 +252,17 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       currentCardTarget = card;
       accumulatedText = "";
       log.info(`[DingTalk][startStreaming] ✅ AI Card 创建成功`);
+      
+      // ✅ 创建失败时发送兜底消息
+      if (!card) {
+        log.warn(`[DingTalk][startStreaming] AI Card 创建返回 null，发送兜底消息`);
+        await sendFallbackErrorMessage('aiCardCreate', 'Card creation returned null');
+      }
     } catch (error: any) {
       log.error(`[DingTalk][startStreaming] ❌ AI Card 创建失败：${error?.message || String(error)}`);
       currentCardTarget = null;
+      // ✅ 发送兜底错误消息
+      await sendFallbackErrorMessage('aiCardCreate', error?.message || String(error));
     } finally {
       isCreatingCard = false;
     }
@@ -286,6 +352,27 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {
       log.error(`[DingTalk][closeStreaming] ❌ AI Card 关闭失败：${error?.message || String(error)}`);
+      // ✅ 媒体处理或关闭失败时，降级发送普通消息
+      await sendFallbackErrorMessage('mediaProcess', error?.message || String(error));
+      
+      // 尝试用普通消息发送累积的文本
+      if (accumulatedText.trim()) {
+        try {
+          log.info(`[DingTalk][closeStreaming] 降级发送普通消息`);
+          await sendMessage(
+            account.config as DingtalkConfig,
+            sessionWebhook,
+            accumulatedText,
+            {
+              useMarkdown: true,
+              log: params.runtime.log,
+            }
+          );
+          log.info(`[DingTalk][closeStreaming] ✅ 降级发送成功`);
+        } catch (sendErr: any) {
+          log.error(`[DingTalk][closeStreaming] ❌ 降级发送失败：${sendErr.message}`);
+        }
+      }
     } finally {
       currentCardTarget = null;
       accumulatedText = "";
@@ -360,12 +447,18 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           if (currentCardTarget) {
             accumulatedText += text;
             log.info(`[DingTalk][deliver] 流式更新 AI Card，累积文本长度=${accumulatedText.length}`);
-            await streamAICard(
-              currentCardTarget as AICardInstance,
-              accumulatedText,
-              false,
-              params.runtime.log
-            );
+            try {
+              await streamAICard(
+                currentCardTarget as AICardInstance,
+                accumulatedText,
+                false,
+                params.runtime.log
+              );
+            } catch (streamErr: any) {
+              log.error(`[DingTalk][deliver] ❌ streamAICard 失败：${streamErr.message}`);
+              // ✅ 流式更新失败，发送兜底消息并降级
+              await sendFallbackErrorMessage('sendMessage', streamErr.message);
+            }
           } else {
             log.warn(`[DingTalk][deliver] ⚠️ AI Card 创建失败，降级到非流式发送`);
             // 降级逻辑：如果 AI Card 创建失败，直接发送普通消息
@@ -388,6 +481,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               log.info(`[DingTalk][deliver] ✅ 降级发送成功`);
             } catch (error: any) {
               log.error(`[DingTalk][deliver] ❌ 降级发送失败：${error.message}`);
+              await sendFallbackErrorMessage('sendMessage', error.message);
             }
           }
           return;
@@ -450,6 +544,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
             params.runtime.error?.(
               `dingtalk[${account.accountId}]: non-streaming delivery failed: ${String(error)}`
             );
+            // ✅ 发送兜底错误消息
+            await sendFallbackErrorMessage('sendMessage', error.message);
           }
           return;
         }
@@ -544,7 +640,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 log.warn(`[DingTalk][AICard] QPS 限流，跳过本次更新`);
               } else {
                 log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-                throw err;
+                // ✅ 发送兜底错误消息，但不抛出异常，避免中断后续处理
+                await sendFallbackErrorMessage('sendMessage', err.message);
               }
             }
           } else {

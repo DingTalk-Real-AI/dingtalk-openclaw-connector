@@ -439,8 +439,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       }
       
       const account = resolveDingtalkAccount({ cfg, accountId });
-      console.log('[channel.ts][sendMedia] account 解析完成，准备调用 sendMediaToDingTalk');
-      
+
       const result = await sendMediaToDingTalk({
         config: account.config,
         target: to,
