@@ -97,7 +97,9 @@ openclaw plugins install -l .
       "groupSessionScope": "group",       // 可选：群聊会话隔离策略，group=群共享，group_sender=群内用户独立（默认：group）
       "sharedMemoryAcrossConversations": false, // 可选：是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false）
       "asyncMode": false,                 // 可选：异步模式，立即回执用户消息，后台处理并推送结果（默认：false）
-      "ackText": "🫡 任务已接收"      // 可选：异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'）
+      "ackText": "🫡 任务已接收",      // 可选：异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'）
+      "dmPolicy": "allowlist",            // 可选：私信策略，'open', 'pairing', 'allowlist'（默认 open）
+      "allowFrom": ["userId"]             // 可选：当 dmPolicy为'allowlist'时生效，配置允许的用户ID列表
     }
   }
 }
@@ -151,6 +153,8 @@ openclaw plugins list  # 确认 dingtalk-connector 已加载
 | `sharedMemoryAcrossConversations` | — | 是否在不同会话间共享记忆；false 时群聊与私聊、不同群记忆隔离（默认：false） |
 | `asyncMode` | — | 异步模式，立即回执用户消息，后台处理并推送结果（默认：false） |
 | `ackText` | — | 异步模式下的回执消息文本（默认：'🫡 任务已接收，处理中...'） |
+| `dmPolicy`                        | —                       | 私信策略，'open', 'pairing', 'allowlist'（默认 open）                                                                    |
+| `allowFrom`                       | —                       | 当 dmPolicy为'allowlist'时生效，配置允许的用户ID列表                                                                       |
 
 ## 会话与记忆隔离
 
