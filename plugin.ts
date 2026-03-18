@@ -170,15 +170,16 @@ function buildSessionContext(params: {
   };
 }
 
-// ============ Access Token 缓存 ============
+// ============ Access Token 缓存（按 clientId 隔离） ============
 
-let accessToken: string | null = null;
-let accessTokenExpiry = 0;
+const accessTokenCache = new Map<string, { token: string; expiry: number }>();
 
 async function getAccessToken(config: any): Promise<string> {
   const now = Date.now();
-  if (accessToken && accessTokenExpiry > now + 60_000) {
-    return accessToken;
+  const key = config.clientId;
+  const cached = accessTokenCache.get(key);
+  if (cached && cached.expiry > now + 60_000) {
+    return cached.token;
   }
 
   const response = await axios.post('https://api.dingtalk.com/v1.0/oauth2/accessToken', {
@@ -186,9 +187,10 @@ async function getAccessToken(config: any): Promise<string> {
     appSecret: config.clientSecret,
   });
 
-  accessToken = response.data.accessToken;
-  accessTokenExpiry = now + (response.data.expireIn * 1000);
-  return accessToken!;
+  const token = response.data.accessToken;
+  const expiry = now + (response.data.expireIn * 1000);
+  accessTokenCache.set(key, { token, expiry });
+  return token;
 }
 
 // ============ 配置工具 ============
@@ -199,7 +201,14 @@ function getConfig(cfg: ClawdbotConfig) {
 
 function isConfigured(cfg: ClawdbotConfig): boolean {
   const config = getConfig(cfg);
-  return Boolean(config.clientId && config.clientSecret);
+  if (config.clientId && config.clientSecret) return true;
+  // 多账号模式：检查 accounts 中是否有任何已配置的账号
+  if (config.accounts) {
+    return Object.values(config.accounts).some(
+      (acc: any) => acc.clientId && acc.clientSecret,
+    );
+  }
+  return false;
 }
 
 // ============ 钉钉图片上传 ============
@@ -3388,27 +3397,57 @@ const dingtalkPlugin = {
   configSchema: {
     schema: {
       type: 'object',
-      additionalProperties: false,
+      additionalProperties: true,
       properties: {
         enabled: { type: 'boolean', default: true },
-        clientId: { type: 'string', description: 'DingTalk App Key (Client ID)' },
-        clientSecret: { type: 'string', description: 'DingTalk App Secret (Client Secret)' },
+        clientId: { type: 'string', description: 'DingTalk App Key (Client ID). 单账号模式使用' },
+        clientSecret: { type: 'string', description: 'DingTalk App Secret (Client Secret). 单账号模式使用' },
+        accounts: {
+          type: 'object',
+          description: '多账号模式：每个 key 是 accountId，值包含 clientId/clientSecret 等配置。与顶层 clientId/clientSecret 二选一',
+          additionalProperties: {
+            type: 'object',
+            properties: {
+              enabled: { type: 'boolean', default: true },
+              name: { type: 'string', description: '账号显示名称' },
+              clientId: { type: 'string', description: 'DingTalk App Key (Client ID)' },
+              clientSecret: { type: 'string', description: 'DingTalk App Secret (Client Secret)' },
+              endpoint: { type: 'string', description: 'Custom DingTalk API gateway endpoint' },
+              enableMediaUpload: { type: 'boolean', default: true },
+              systemPrompt: { type: 'string', default: '' },
+              dmPolicy: { type: 'string', enum: ['open', 'pairing', 'allowlist'], default: 'open' },
+              allowFrom: { type: 'array', items: { type: 'string' } },
+              groupPolicy: { type: 'string', enum: ['open', 'allowlist'], default: 'open' },
+              groupSessionScope: { type: 'string', enum: ['group', 'group_sender'], default: 'group' },
+              separateSessionByConversation: { type: 'boolean', default: true },
+              sharedMemoryAcrossConversations: { type: 'boolean', default: false },
+              asyncMode: { type: 'boolean', default: false },
+              ackText: { type: 'string', default: '🫡 任务已接收，处理中...' },
+              gatewayToken: { type: 'string', default: '' },
+              gatewayPassword: { type: 'string', default: '' },
+              debug: { type: 'boolean', default: false },
+            },
+            required: ['clientId', 'clientSecret'],
+          },
+        },
+        name: { type: 'string', description: '账号显示名称' },
+        endpoint: { type: 'string', description: 'Custom DingTalk API gateway endpoint' },
         enableMediaUpload: { type: 'boolean', default: true, description: 'Enable media upload prompt injection' },
         systemPrompt: { type: 'string', default: '', description: 'Custom system prompt' },
         dmPolicy: { type: 'string', enum: ['open', 'pairing', 'allowlist'], default: 'open' },
         allowFrom: { type: 'array', items: { type: 'string' }, description: 'Allowed sender IDs' },
         groupPolicy: { type: 'string', enum: ['open', 'allowlist'], default: 'open' },
+        groupSessionScope: { type: 'string', enum: ['group', 'group_sender'], default: 'group', description: '群聊会话隔离策略' },
         gatewayToken: { type: 'string', default: '', description: 'Gateway auth token (Bearer)' },
         gatewayPassword: { type: 'string', default: '', description: 'Gateway auth password (alternative to token)' },
         gatewayBaseUrl: { type: 'string', default: '', description: 'Custom Gateway URL (e.g., http://127.0.0.1:18788 for Nginx proxy to TLS Gateway)' },
-        sessionTimeout: { type: 'number', default: 1800000, description: 'Session timeout in ms (default 30min)' },
+        sessionTimeout: { type: 'number', default: 1800000, description: 'Session timeout in ms (default 30min) [deprecated]' },
         separateSessionByConversation: { type: 'boolean', default: true, description: '是否按单聊/群聊/群区分 session' },
         sharedMemoryAcrossConversations: { type: 'boolean', default: false, description: '单 agent 场景下是否共享记忆；false 时不同群聊、群聊与私聊记忆隔离' },
         asyncMode: { type: 'boolean', default: false, description: 'Send immediate ack and push final result as a second message' },
         ackText: { type: 'string', default: '🫡 任务已接收，处理中...', description: 'Ack text when asyncMode is enabled' },
         debug: { type: 'boolean', default: false },
       },
-      required: ['clientId', 'clientSecret'],
     },
     uiHints: {
       enabled: { label: 'Enable DingTalk' },
@@ -3602,6 +3641,9 @@ const dingtalkPlugin = {
 
       ctx.log?.info(`[${account.accountId}] DWClient 初始化完成，endpoint=${client.getConfig()?.endpoint || '默认'}`);
 
+      // 待确认消息队列：重连期间暂存需要确认的消息 ID（必须在 registerCallbackListener 之前声明）
+      const pendingAckQueue = new Set<string>();
+
       client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
         const messageId = res.headers?.messageId;
         ctx.log?.info?.(`[DingTalk] 收到 Stream 回调, messageId=${messageId}, headers=${JSON.stringify(res.headers)}`);
@@ -3680,9 +3722,6 @@ const dingtalkPlugin = {
 
       let stopped = false;
       
-      // 【关键修复】待确认消息队列：重连期间暂存需要确认的消息 ID
-      const pendingAckQueue = new Set<string>();
-      
       // 【使用 SocketManager 统一管理 WebSocket 连接、心跳、重连】
       const debugMode = config.debug || false;
       const socketManager = createSocketManager(client, {
@@ -3745,6 +3784,25 @@ const dingtalkPlugin = {
       if (!isConfigured(cfg)) return { ok: false, error: 'Not configured' };
       try {
         const config = getConfig(cfg);
+        // 多账号模式：逐个探测，汇总结果
+        if (config.accounts) {
+          const results: Record<string, { ok: boolean; error?: string }> = {};
+          for (const [accId, accCfg] of Object.entries(config.accounts) as [string, any][]) {
+            if (!accCfg.clientId || !accCfg.clientSecret) {
+              results[accId] = { ok: false, error: 'Missing clientId or clientSecret' };
+              continue;
+            }
+            try {
+              await getAccessToken(accCfg);
+              results[accId] = { ok: true };
+            } catch (err: any) {
+              results[accId] = { ok: false, error: err.message };
+            }
+          }
+          const allOk = Object.values(results).every(r => r.ok);
+          return { ok: allOk, details: { accounts: results } };
+        }
+        // 单账号模式
         await getAccessToken(config);
         return { ok: true, details: { clientId: config.clientId } };
       } catch (error: any) {
