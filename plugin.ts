@@ -2840,7 +2840,7 @@ async function handleDingTalkMessage(params: {
 
     // 计算 peerKind 和 peerId 用于 bindings 匹配
     const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
-    const peerId = senderId;
+    const peerId = isDirect ? senderId : (data.conversationId || senderId);
 
     let fullResponse = '';
     try {
@@ -2906,7 +2906,7 @@ async function handleDingTalkMessage(params: {
 
   // 计算 peerKind 和 peerId 用于 bindings 匹配（在 asyncMode 外部定义，供所有分支使用）
   const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
-  const peerId = senderId;
+  const peerId = isDirect ? senderId : (data.conversationId || senderId);
 
   // 尝试创建 AI Card
   const card = await createAICard(dingtalkConfig, data, log);
@@ -4140,6 +4140,8 @@ export const __testables = {
   sendToUser,
   sendToGroup,
   sendProactive,
+  // 入站消息主流程
+  handleDingTalkMessage,
   // Bindings 解析（测试时需 mock getRuntime/fs/path/os）
   resolveAgentIdByBindings,
   /** 仅测试用：注入 runtime 使 resolveAgentIdByBindings 不抛错 */
