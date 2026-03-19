@@ -1,4 +1,58 @@
 .git/
 .claude/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
 .env
+*.egg
+
+# Node
+node_modules/
+package-lock.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+coverage/
+.nyc_output/
+*.test.ts
+tests/
+
+# Development
+.aone_copilot/
+AGENTS.md
+.github/
+.git/
+.gitignore
+
+# Documentation (keep only essential docs)
+docs/RELEASE_NOTES_*.md
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test.ts
+vitest.config.ts
 .gitignore
