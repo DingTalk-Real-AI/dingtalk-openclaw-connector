@@ -2762,7 +2762,7 @@ async function handleDingTalkMessage(params: {
         const fileContent = fs.readFileSync(localPath, 'utf-8');
         const maxLen = 50_000; // 限制最大读取长度
         const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
-        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        fileContentParts.push(`[文件: ${fileName}]\n[本地路径: ${localPath}]\n\`\`\`\n${truncated}\n\`\`\``);
         log?.info?.(`[DingTalk][File] 文本文件已读取: ${fileName}, size=${fileContent.length}, localPath=${localPath}`);
       } catch (err: any) {
         log?.error?.(`[DingTalk][File] 读取文本文件失败: ${err.message}`);
@@ -2776,7 +2776,7 @@ async function handleDingTalkMessage(params: {
         const fileContent = result.value;
         const maxLen = 50_000;
         const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
-        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        fileContentParts.push(`[文件: ${fileName}]\n[本地路径: ${localPath}]\n\`\`\`\n${truncated}\n\`\`\``);
         log?.info?.(`[DingTalk][File] Word 文档已提取文本: ${fileName}, size=${fileContent.length}, localPath=${localPath}`);
       } catch (err: any) {
         log?.error?.(`[DingTalk][File] Word 文档文本提取失败: ${err.message}`);
@@ -2791,7 +2791,7 @@ async function handleDingTalkMessage(params: {
         const fileContent = pdfData.text;
         const maxLen = 50_000;
         const truncated = fileContent.length > maxLen ? fileContent.slice(0, maxLen) + '\n...(内容过长，已截断)' : fileContent;
-        fileContentParts.push(`[文件: ${fileName}]\n\`\`\`\n${truncated}\n\`\`\``);
+        fileContentParts.push(`[文件: ${fileName}]\n[本地路径: ${localPath}]\n\`\`\`\n${truncated}\n\`\`\``);
         log?.info?.(`[DingTalk][File] PDF 文档已提取文本: ${fileName}, size=${fileContent.length}, localPath=${localPath}`);
       } catch (err: any) {
         log?.error?.(`[DingTalk][File] PDF 文档文本提取失败: ${err.message}`);
