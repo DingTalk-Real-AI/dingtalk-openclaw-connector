@@ -2840,7 +2840,8 @@ async function handleDingTalkMessage(params: {
 
     // 计算 peerKind 和 peerId 用于 bindings 匹配
     const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
-    const peerId = senderId;
+    const peerId = peerKind === 'group' ? data.conversationId : senderId;
+    log?.info?.(`[DingTalk][Bindings] peerKind=${peerKind}, peerId=${peerId}, senderId=${senderId}, conversationId=${data.conversationId}`);
 
     let fullResponse = '';
     try {
@@ -2906,7 +2907,8 @@ async function handleDingTalkMessage(params: {
 
   // 计算 peerKind 和 peerId 用于 bindings 匹配（在 asyncMode 外部定义，供所有分支使用）
   const peerKind: 'direct' | 'group' = isDirect ? 'direct' : 'group';
-  const peerId = senderId;
+  const peerId = peerKind === 'group' ? data.conversationId : senderId;
+  log?.info?.(`[DingTalk][Bindings] peerKind=${peerKind}, peerId=${peerId}, senderId=${senderId}, conversationId=${data.conversationId}`);
 
   // 尝试创建 AI Card
   const card = await createAICard(dingtalkConfig, data, log);
