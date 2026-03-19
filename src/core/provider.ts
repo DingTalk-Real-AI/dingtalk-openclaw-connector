@@ -36,7 +36,7 @@ export {
 } from "./state";
 
 // 只导出类型，不 re-export 函数（避免循环依赖）
-export type { DingtalkReactionCreatedEvent } from "./core/connection.ts";
+export type { DingtalkReactionCreatedEvent } from "./connection";
 
 export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): Promise<void> {
   const cfg = opts.config;
@@ -44,7 +44,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
     throw new Error("Config is required for DingTalk monitor");
   }
 
-  const log = opts.runtime?.log ?? console.log;
+  const log = opts.runtime?.log;
 
   // 并行导入所有模块（无循环依赖，可以并行）
   const [accountsModule, monitorAccountModule, monitorSingleModule] = await Promise.all([

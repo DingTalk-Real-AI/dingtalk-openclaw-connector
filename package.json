@@ -8,8 +8,13 @@
     "build": "echo 'No build needed - jiti loads TS at runtime'",
     "lint": "echo 'Lint check skipped'",
     "lint:fix": "echo 'Lint fix skipped'",
-    "test": "echo 'Tests skipped'",
-    "test:watch": "echo 'Tests skipped'",
+    "test": "vitest run tests/gateway-methods.unit.test.ts",
+    "test:unit": "vitest run tests/gateway-methods.unit.test.ts",
+    "test:integration": "vitest run tests/gateway-methods.test.ts",
+    "test:all": "vitest run",
+    "test:watch": "vitest watch",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run tests/gateway-methods.unit.test.ts --coverage",
     "type-check": "npx tsc --noEmit",
     "version:check": "echo 'Version check skipped'",
     "release:prepare": "echo 'Release prepare skipped'",
@@ -49,6 +54,11 @@
     "openclaw": "^2026.3.0",
     "pdf-parse": "^1.1.1",
     "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/ui": "^2.1.9",
+    "vitest": "^2.1.9"
   },
   "openclaw": {
     "extensions": [

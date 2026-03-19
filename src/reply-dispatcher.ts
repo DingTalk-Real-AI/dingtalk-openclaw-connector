@@ -569,11 +569,16 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       },
     });
 
-  // 构建完整的 replyOptions
-  const finalReplyOptions = {
-    onModelSelected,
-    ...(streamingEnabled && {
-      onPartialReply: async (payload: ReplyPayload) => {
+  // 构建完整的 replyOptions：replyOptions 只包含 onReplyStart、onTypingController、onTypingCleanup
+  // deliver、onError、onIdle、onCleanup 等回调已经在 createReplyDispatcherWithTyping 的参数中定义
+  return {
+    dispatcher,
+    replyOptions: {
+      ...replyOptions,  // ✅ 包含 onReplyStart、onTypingController、onTypingCleanup
+      onModelSelected,
+      ...(streamingEnabled && {
+        onPartialReply: async (payload: ReplyPayload) => {
+        log.info(`[DingTalk][onPartialReply] 被调用，payload.text=${payload.text ? payload.text.length : 'null'}`);
         if (!payload.text) {
           log.debug(`[DingTalk][onPartialReply] 空文本，跳过`);
           return;
@@ -651,13 +656,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           log.warn(`[DingTalk][onPartialReply] ⚠️ AI Card 不存在，跳过更新`);
         }
       },
-    }),
-  };
-
-  return {
-    dispatcher,
-    replyOptions: {
-      ...finalReplyOptions,
+      }),
       disableBlockStreaming: true,  // ✅ 强制使用 onPartialReply 而不是 block
     },
     markDispatchIdle,

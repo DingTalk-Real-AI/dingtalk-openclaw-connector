@@ -10,6 +10,7 @@ import {
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
 } from "./sdk/helpers.ts";
+import { createLogger } from "./utils/logger.ts";
 import {
   resolveDingtalkAccount,
   resolveDingtalkCredentials,
@@ -67,7 +68,8 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     normalizeAllowEntry: (entry) => entry.replace(/^(dingtalk|user|dd):/i, ""),
     notifyApproval: async ({ cfg, id }) => {
       // TODO: Implement notification when pairing is approved
-      console.log(`[DingTalk] Pairing approved for user: ${id}`);
+      const logger = createLogger(false, 'DingTalk:Pairing');
+      logger.info(`Pairing approved for user: ${id}`);
     },
   },
   capabilities: {
@@ -416,7 +418,10 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       };
     },
     sendMedia: async ({ cfg, to, text, mediaUrl, accountId, mediaLocalRoots, replyToId, threadId }) => {
-      console.log('[channel.ts][sendMedia] 开始处理，参数:', JSON.stringify({
+      const account = resolveDingtalkAccount({ cfg, accountId });
+      const logger = createLogger(account.config?.debug ?? false, 'DingTalk:SendMedia');
+      
+      logger.info('开始处理，参数:', JSON.stringify({
         to,
         text,
         mediaUrl,
@@ -429,16 +434,12 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       
       // 参数校验
       if (!to || typeof to !== 'string') {
-        console.error('[channel.ts][sendMedia] to 参数无效:', to);
         throw new Error(`Invalid 'to' parameter: ${to}`);
       }
       
       if (!mediaUrl || typeof mediaUrl !== 'string') {
-        console.error('[channel.ts][sendMedia] mediaUrl 参数无效:', mediaUrl);
         throw new Error(`Invalid 'mediaUrl' parameter: ${mediaUrl}`);
       }
-      
-      const account = resolveDingtalkAccount({ cfg, accountId });
 
       const result = await sendMediaToDingTalk({
         config: account.config,
@@ -448,7 +449,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
         replyToId,
       });
       
-      console.log('[channel.ts][sendMedia] sendMediaToDingTalk 返回结果:', JSON.stringify({
+      logger.info('sendMediaToDingTalk 返回结果:', JSON.stringify({
         ok: result.ok,
         error: result.error,
         hasProcessQueryKey: !!result.processQueryKey,
@@ -491,21 +492,23 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
   },
   gateway: {
     startAccount: async (ctx) => {
-      ctx.log?.info?.(`[channel.ts] startAccount 被调用：accountId=${ctx.accountId}`);
-console.log(`[channel.ts] startAccount 被调用：accountId=${ctx.accountId}`);
+      const account = resolveDingtalkAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      const logger = createLogger(account.config?.debug ?? false, 'DingTalk:Gateway');
+      
+      logger.info(`startAccount 被调用：accountId=${ctx.accountId}`);
       try {
-        console.log('='.repeat(60));
-        console.log('[channel.ts] 开始加载 provider 模块...');
+        logger.info('='.repeat(60));
+        logger.info('开始加载 provider 模块...');
         const monitorModule = await import("./core/provider.ts");
-        ctx.log?.info?.(`[channel.ts] monitor module 加载完成`);
-        ctx.log?.info?.(`[channel.ts] monitor module keys: ${Object.keys(monitorModule).join(', ')}`);
-        ctx.log?.info?.(`[channel.ts] monitorModule 类型: ${typeof monitorModule}`);
-        ctx.log?.info?.(`[channel.ts] monitorModule 是否为 null: ${monitorModule === null}`);
-        ctx.log?.info?.(`[channel.ts] monitorModule 是否为 undefined: ${monitorModule === undefined}`);
+        logger.info(`monitor module 加载完成`);
+        logger.info(`monitor module keys: ${Object.keys(monitorModule).join(', ')}`);
+        logger.info(`monitorModule 类型: ${typeof monitorModule}`);
+        logger.info(`monitorModule 是否为 null: ${monitorModule === null}`);
+        logger.info(`monitorModule 是否为 undefined: ${monitorModule === undefined}`);
         
         // 使用 Object.getOwnPropertyDescriptor 检查属性
         const descriptor = Object.getOwnPropertyDescriptor(monitorModule, 'monitorSingleAccount');
-        ctx.log?.info?.(`[channel.ts] monitorSingleAccount descriptor: ${JSON.stringify(descriptor)}`);
+        logger.info(`monitorSingleAccount descriptor: ${JSON.stringify(descriptor)}`);
         
         // 尝试安全地访问 monitorSingleAccount
         let monitorSingleAccountType = 'unknown';
@@ -514,28 +517,27 @@ console.log(`[channel.ts] startAccount 被调用：accountId=${ctx.accountId}`);
         } catch (e) {
           monitorSingleAccountType = `error: ${e.message}`;
         }
-        ctx.log?.info?.(`[channel.ts] monitorModule.monitorSingleAccount: ${monitorSingleAccountType}`);
+        logger.info(`monitorModule.monitorSingleAccount: ${monitorSingleAccountType}`);
         
-        ctx.log?.info?.(`[channel.ts] monitorModule.monitorDingtalkProvider: ${typeof monitorModule.monitorDingtalkProvider}`);
+        logger.info(`monitorModule.monitorDingtalkProvider: ${typeof monitorModule.monitorDingtalkProvider}`);
         
         // 使用直接属性访问而不是解构
         const monitorDingtalkProvider = monitorModule.monitorDingtalkProvider;
-        ctx.log?.info?.(`[channel.ts] 解构 monitorDingtalkProvider 完成: ${typeof monitorDingtalkProvider}`);
+        logger.info(`解构 monitorDingtalkProvider 完成: ${typeof monitorDingtalkProvider}`);
         
         if (!monitorDingtalkProvider) {
-          ctx.log?.error?.(`[channel.ts] monitorDingtalkProvider 未找到！可用导出: ${Object.keys(monitorModule).join(', ')}`);
+          ctx.log?.error?.(`monitorDingtalkProvider 未找到！可用导出: ${Object.keys(monitorModule).join(', ')}`);
           throw new Error("monitorDingtalkProvider not found in monitor module");
         }
-        ctx.log?.info?.(`[channel.ts] monitorDingtalkProvider 找到`);
+        logger.info(`monitorDingtalkProvider 找到`);
         
-        const account = resolveDingtalkAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
-        ctx.log?.info?.(`[channel.ts] account 解析完成: ${account.accountId}, enabled=${account.enabled}, configured=${account.configured}`);
+        logger.info(`account 解析完成: ${account.accountId}, enabled=${account.enabled}, configured=${account.configured}`);
         
         ctx.setStatus({ accountId: ctx.accountId, port: null });
         ctx.log?.info(
           `starting dingtalk-connector[${ctx.accountId}] (mode: stream)`,
         );
-        ctx.log?.info?.(`[channel.ts] 准备调用 monitorDingtalkProvider`);
+        logger.info(`准备调用 monitorDingtalkProvider`);
         
         const result = await monitorDingtalkProvider({
           config: ctx.cfg,
@@ -543,11 +545,11 @@ console.log(`[channel.ts] startAccount 被调用：accountId=${ctx.accountId}`);
           abortSignal: ctx.abortSignal,
           accountId: ctx.accountId,
         });
-        ctx.log?.info?.(`[channel.ts] monitorDingtalkProvider 调用完成`);
+        logger.info(`monitorDingtalkProvider 调用完成`);
         return result;
       } catch (error) {
-        ctx.log?.error?.(`[channel.ts] startAccount 发生错误: ${error.message}`);
-        ctx.log?.error?.(`[channel.ts] 错误堆栈: ${error.stack}`);
+        ctx.log?.error?.(`startAccount 发生错误: ${error.message}`);
+        ctx.log?.error?.(`错误堆栈: ${error.stack}`);
         throw error;
       }
     },

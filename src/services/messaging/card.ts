@@ -132,7 +132,11 @@ export async function createAICardForTarget(
     const createBody = {
       cardTemplateId: AI_CARD_TEMPLATE_ID,
       outTrackId: cardInstanceId,
-      cardData: { cardParamMap: {} },
+      cardData: {
+          cardParamMap: {
+              config: JSON.stringify({ autoLayout: true }),
+          }
+      },
       callbackType: "STREAM",
       imGroupOpenSpaceModel: { supportForward: true },
       imRobotOpenSpaceModel: { supportForward: true },
@@ -201,10 +205,10 @@ export async function streamAICard(
           sys_full_json_obj: JSON.stringify({
             order: ["msgContent"],
           }),
+          config: JSON.stringify({ autoLayout: true }),
         },
       },
     };
-    log?.info?.(`[DingTalk][AICard] PUT /v1.0/card/instances (INPUTING)`);
     try {
       const statusResp = await axios.put(
         `${DINGTALK_API}/v1.0/card/instances`,
@@ -285,11 +289,12 @@ export async function finishAICard(
         sys_full_json_obj: JSON.stringify({
           order: ["msgContent"],
         }),
+        config: JSON.stringify({ autoLayout: true }),
       },
     },
+    cardUpdateOptions: { updateCardDataByKey: true },
   };
 
-  log?.info?.(`[DingTalk][AICard] PUT /v1.0/card/instances (FINISHED)`);
   try {
     const finishResp = await axios.put(
       `${DINGTALK_API}/v1.0/card/instances`,

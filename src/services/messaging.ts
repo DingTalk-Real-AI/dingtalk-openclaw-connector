@@ -14,31 +14,17 @@ import {
   processFileMarkers,
   uploadMediaToDingTalk,
 } from "./media.ts";
+// ✅ 导入 AI Card 相关函数，避免重复实现
+import {
+  createAICardForTarget,
+  streamAICard,
+  finishAICard,
+  type AICardInstance,
+  type AICardTarget,
+} from "./messaging/card.ts";
 
 // ============ 常量 ============
-
-const AI_CARD_TEMPLATE_ID = "02fcf2f4-5e02-4a85-b672-46d1f715543e.schema";
-
-/** AI Card 状态 */
-const AICardStatus = {
-  PROCESSING: "1",
-  INPUTING: "2",
-  FINISHED: "3",
-  EXECUTING: "4",
-  FAILED: "5",
-} as const;
-
-/** AI Card 实例接口 */
-export interface AICardInstance {
-  cardInstanceId: string;
-  accessToken: string;
-  inputingStarted: boolean;
-}
-
-/** AI Card 投放目标类型 */
-export type AICardTarget =
-  | { type: "user"; userId: string }
-  | { type: "group"; openConversationId: string };
+// 注意：AI Card 相关的类型和函数已移至 ./messaging/card.ts，通过上方 import 引入
 
 /** 消息类型枚举 */
 export type DingTalkMsgType =
@@ -67,319 +53,8 @@ export interface ProactiveSendOptions {
   fallbackToNormal?: boolean;
 }
 
-// ============ Markdown 格式修正 ============
-
-/**
- * 确保 Markdown 表格前有空行，否则钉钉无法正确渲染表格。
- *
- * 逐行向前看：当前行像表头（含 `|`）且下一行是分隔行时，
- * 若前一行非空且非表格行，则在表头前插入空行。
- * 支持缩进表格（行首有空白字符）。
- */
-function ensureTableBlankLines(text: string): string {
-  const lines = text.split("\n");
-  const result: string[] = [];
-
-  // 匹配表格分隔行 (例如 | --- | --- | 或 --- | ---)
-  const tableDividerRegex = /^\s*\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)+\|?\s*$/;
-  // 匹配包含竖线的表格行
-  const tableRowRegex = /^\s*\|?.*\|.*\|?\s*$/;
-
-  const isDivider = (line: string) =>
-    line &&
-    typeof line === "string" &&
-    line.includes("|") &&
-    tableDividerRegex.test(line);
-
-  for (let i = 0; i < lines.length; i++) {
-    const currentLine = lines[i];
-    const nextLine = lines[i + 1] ?? "";
-
-    // 逻辑：
-    // 1. 当前行看起来像表头（包含 |）
-    // 2. 下一行是分隔行（---）
-    // 3. 前一行不是空行且不是表格行
-    if (
-      tableRowRegex.test(currentLine) &&
-      isDivider(nextLine) &&
-      i > 0 &&
-      lines[i - 1].trim() !== "" &&
-      !tableRowRegex.test(lines[i - 1])
-    ) {
-      result.push("");
-    }
-
-    result.push(currentLine);
-  }
-  return result.join("\n");
-}
-
-// ============ AI Card 相关 ============
-
-/**
- * 构建卡片投放请求体
- */
-function buildDeliverBody(
-  cardInstanceId: string,
-  target: AICardTarget,
-  robotCode: string,
-): any {
-  const base = { outTrackId: cardInstanceId, userIdType: 1 };
-
-  if (target.type === "group") {
-    return {
-      ...base,
-      openSpaceId: `dtv1.card//IM_GROUP.${target.openConversationId}`,
-      imGroupOpenDeliverModel: {
-        robotCode,
-        extension: {
-          dynamicSummary: 'true',
-        },
-      },
-    };
-  }
-
-  return {
-    ...base,
-    openSpaceId: `dtv1.card//IM_ROBOT.${target.userId}`,
-    imRobotOpenDeliverModel: {
-      spaceType: 'IM_ROBOT',
-      robotCode,
-      extension: {
-        dynamicSummary: 'true',
-      },
-    },
-  };
-}
-
-/**
- * 通用 AI Card 创建函数
- */
-export async function createAICardForTarget(
-  config: DingtalkConfig,
-  target: AICardTarget,
-  log?: any,
-): Promise<AICardInstance | null> {
-  const targetDesc =
-    target.type === "group"
-      ? `群聊 ${target.openConversationId}`
-      : `用户 ${target.userId}`;
-
-  try {
-    console.log(
-      `[createAICardForTarget] 被调用: targetDesc=${targetDesc}, log=${typeof log}, hasInfo=${typeof log?.info}`,
-    );
-    const token = await getAccessToken(config);
-    const cardInstanceId = `card_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-    log?.info?.(
-      `[DingTalk][AICard] 开始创建卡片: ${targetDesc}, outTrackId=${cardInstanceId}`,
-    );
-
-    // 1. 创建卡片实例
-    const createBody = {
-      cardTemplateId: AI_CARD_TEMPLATE_ID,
-      outTrackId: cardInstanceId,
-      cardData: { cardParamMap: {} },
-      callbackType: "STREAM",
-      imGroupOpenSpaceModel: { supportForward: true },
-      imRobotOpenSpaceModel: { supportForward: true },
-    };
-
-    log?.info?.(`[DingTalk][AICard] POST /v1.0/card/instances`);
-    const createResp = await axios.post(
-      `${DINGTALK_API}/v1.0/card/instances`,
-      createBody,
-      {
-        headers: {
-          "x-acs-dingtalk-access-token": token,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    log?.info?.(`[DingTalk][AICard] 创建卡片响应: status=${createResp.status}`);
-
-    // 2. 投放卡片
-    const deliverBody = buildDeliverBody(
-      cardInstanceId,
-      target,
-      String(config.clientId ?? ""),
-    );
-
-    log?.info?.(
-      `[DingTalk][AICard] POST /v1.0/card/instances/deliver body=${JSON.stringify(deliverBody)}`,
-    );
-    const deliverResp = await axios.post(
-      `${DINGTALK_API}/v1.0/card/instances/deliver`,
-      deliverBody,
-      {
-        headers: {
-          "x-acs-dingtalk-access-token": token,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    log?.info?.(
-      `[DingTalk][AICard] 投放卡片响应: status=${deliverResp.status}`,
-    );
-
-    return { cardInstanceId, accessToken: token, inputingStarted: false };
-  } catch (err: any) {
-    log?.error?.(
-      `[DingTalk][AICard] 创建卡片失败 (${targetDesc}): ${err.message}`,
-    );
-    if (err.response) {
-      log?.error?.(
-        `[DingTalk][AICard] 错误响应: status=${err.response.status} data=${JSON.stringify(err.response.data)}`,
-      );
-    }
-    return null;
-  }
-}
-
-/**
- * 流式更新 AI Card 内容
- */
-export async function streamAICard(
-  card: AICardInstance,
-  content: string,
-  finished: boolean = false,
-  log?: any,
-): Promise<void> {
-  // 首次 streaming 前，先切换到 INPUTING 状态
-  if (!card.inputingStarted) {
-    const statusBody = {
-      outTrackId: card.cardInstanceId,
-      cardData: {
-        cardParamMap: {
-          flowStatus: AICardStatus.INPUTING,
-          msgContent: content,
-          staticMsgContent: "",
-          sys_full_json_obj: JSON.stringify({
-            order: ["msgContent"],
-          }),
-        },
-      },
-    };
-    log?.info?.(
-      `[DingTalk][AICard] PUT /v1.0/card/instances (INPUTING) outTrackId=${card.cardInstanceId}`,
-    );
-    try {
-      const statusResp = await axios.put(
-        `${DINGTALK_API}/v1.0/card/instances`,
-        statusBody,
-        {
-          headers: {
-            "x-acs-dingtalk-access-token": card.accessToken,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      log?.info?.(
-        `[DingTalk][AICard] INPUTING 响应: status=${statusResp.status} data=${JSON.stringify(statusResp.data)}`,
-      );
-    } catch (err: any) {
-      log?.error?.(
-        `[DingTalk][AICard] INPUTING 切换失败: ${err.message}, resp=${JSON.stringify(err.response?.data)}`,
-      );
-      throw err;
-    }
-    card.inputingStarted = true;
-  }
-
-  // 调用 streaming API 更新内容
-  // ✅ 修正 Markdown 表格格式，确保钉钉能正确渲染
-  const fixedContent = ensureTableBlankLines(content);
-  const body = {
-    outTrackId: card.cardInstanceId,
-    guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    key: "msgContent",
-    content: fixedContent,
-    isFull: true,
-    isFinalize: finished,
-    isError: false,
-  };
-
-  log?.info?.(
-    `[DingTalk][AICard] PUT /v1.0/card/streaming contentLen=${content.length} isFinalize=${finished} guid=${body.guid}`,
-  );
-  try {
-    const streamResp = await axios.put(
-      `${DINGTALK_API}/v1.0/card/streaming`,
-      body,
-      {
-        headers: {
-          "x-acs-dingtalk-access-token": card.accessToken,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    log?.info?.(
-      `[DingTalk][AICard] streaming 响应: status=${streamResp.status}`,
-    );
-  } catch (err: any) {
-    log?.error?.(
-      `[DingTalk][AICard] streaming 更新失败: ${err.message}, resp=${JSON.stringify(err.response?.data)}`,
-    );
-    throw err;
-  }
-}
-
-/**
- * 完成 AI Card
- */
-export async function finishAICard(
-  card: AICardInstance,
-  content: string,
-  log?: any,
-): Promise<void> {
-  // ✅ 修正 Markdown 表格格式
-  const fixedContent = ensureTableBlankLines(content);
-  log?.info?.(
-    `[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`,
-  );
-
-  // 1. 先用最终内容关闭流式通道
-  await streamAICard(card, fixedContent, true, log);
-
-  // 2. 更新卡片状态为 FINISHED
-  const body = {
-    outTrackId: card.cardInstanceId,
-    cardData: {
-      cardParamMap: {
-        flowStatus: AICardStatus.FINISHED,
-        msgContent: fixedContent,
-        staticMsgContent: "",
-        sys_full_json_obj: JSON.stringify({
-          order: ["msgContent"],
-        }),
-      },
-    },
-  };
-
-  log?.info?.(
-    `[DingTalk][AICard] PUT /v1.0/card/instances (FINISHED) outTrackId=${card.cardInstanceId}`,
-  );
-  try {
-    const finishResp = await axios.put(
-      `${DINGTALK_API}/v1.0/card/instances`,
-      body,
-      {
-        headers: {
-          "x-acs-dingtalk-access-token": card.accessToken,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    log?.info?.(
-      `[DingTalk][AICard] FINISHED 响应: status=${finishResp.status} data=${JSON.stringify(finishResp.data)}`,
-    );
-  } catch (err: any) {
-    log?.error?.(
-      `[DingTalk][AICard] FINISHED 更新失败: ${err.message}, resp=${JSON.stringify(err.response?.data)}`,
-    );
-  }
-}
+// ============ AI Card 相关函数已移至 ./messaging/card.ts ============
+// createAICardForTarget, streamAICard, finishAICard 现在从 card.ts 导入使用
 
 // ============ 普通消息发送 ============
 
@@ -550,7 +225,7 @@ async function sendNormalToUser(
     };
 
     log?.info?.(
-      `[DingTalk][Normal] 发送单聊消息: userIds=${userIdArray.join(",")}, msgType=${msgType}`,
+      `发送单聊消息: userIds=${userIdArray.join(",")}, msgType=${msgType}`,
     );
 
     const resp = await axios.post(
@@ -567,7 +242,7 @@ async function sendNormalToUser(
 
     if (resp.data?.processQueryKey) {
       log?.info?.(
-        `[DingTalk][Normal] 发送成功: processQueryKey=${resp.data.processQueryKey}`,
+        `发送成功: processQueryKey=${resp.data.processQueryKey}`,
       );
       return {
         ok: true,
@@ -577,7 +252,7 @@ async function sendNormalToUser(
     }
 
     log?.warn?.(
-      `[DingTalk][Normal] 发送响应异常: ${JSON.stringify(resp.data)}`,
+      `发送响应异常: ${JSON.stringify(resp.data)}`,
     );
     return {
       ok: false,
@@ -586,7 +261,7 @@ async function sendNormalToUser(
     };
   } catch (err: any) {
     const errMsg = err.response?.data?.message || err.message;
-    log?.error?.(`[DingTalk][Normal] 发送失败: ${errMsg}`);
+    log?.error?.(`发送失败: ${errMsg}`);
     return { ok: false, error: errMsg, usedAICard: false };
   }
 }
@@ -617,7 +292,7 @@ async function sendNormalToGroup(
     };
 
     log?.info?.(
-      `[DingTalk][Normal] 发送群聊消息: openConversationId=${openConversationId}, msgType=${msgType}`,
+      `发送群聊消息: openConversationId=${openConversationId}, msgType=${msgType}`,
     );
 
     const resp = await axios.post(
@@ -634,7 +309,7 @@ async function sendNormalToGroup(
 
     if (resp.data?.processQueryKey) {
       log?.info?.(
-        `[DingTalk][Normal] 发送成功: processQueryKey=${resp.data.processQueryKey}`,
+        `发送成功: processQueryKey=${resp.data.processQueryKey}`,
       );
       return {
         ok: true,
@@ -644,7 +319,7 @@ async function sendNormalToGroup(
     }
 
     log?.warn?.(
-      `[DingTalk][Normal] 发送响应异常: ${JSON.stringify(resp.data)}`,
+      `发送响应异常: ${JSON.stringify(resp.data)}`,
     );
     return {
       ok: false,
@@ -653,7 +328,7 @@ async function sendNormalToGroup(
     };
   } catch (err: any) {
     const errMsg = err.response?.data?.message || err.message;
-    log?.error?.(`[DingTalk][Normal] 发送失败: ${errMsg}`);
+    log?.error?.(`发送失败: ${errMsg}`);
     return { ok: false, error: errMsg, usedAICard: false };
   }
 }
@@ -679,16 +354,16 @@ async function sendAICardInternal(
     // 1. 后处理01：上传本地图片到钉钉，替换路径为 media_id
     let processedContent = content;
     if (oapiToken) {
-      log?.info?.(`[DingTalk][AICard][Proactive] 开始图片后处理`);
+      log?.info?.(`开始图片后处理`);
       processedContent = await processLocalImages(content, oapiToken, log);
     } else {
       log?.warn?.(
-        `[DingTalk][AICard][Proactive] 无法获取 oapiToken，跳过媒体后处理`,
+        `无法获取 oapiToken，跳过媒体后处理`,
       );
     }
 
     // 2. 后处理02：提取视频标记并发送视频消息
-    log?.info?.(`[DingTalk][Video][Proactive] 开始视频后处理`);
+    log?.info?.(`开始视频后处理`);
     processedContent = await processVideoMarkers(
       processedContent,
       "",
@@ -700,7 +375,7 @@ async function sendAICardInternal(
     );
 
     // 3. 后处理03：提取音频标记并发送音频消息
-    log?.info?.(`[DingTalk][Audio][Proactive] 开始音频后处理`);
+    log?.info?.(`开始音频后处理`);
     processedContent = await processAudioMarkers(
       processedContent,
       "",
@@ -712,7 +387,7 @@ async function sendAICardInternal(
     );
 
     // 4. 后处理04：提取文件标记并发送独立文件消息
-    log?.info?.(`[DingTalk][File][Proactive] 开始文件后处理`);
+    log?.info?.(`开始文件后处理`);
     processedContent = await processFileMarkers(
       processedContent,
       "",
@@ -727,7 +402,7 @@ async function sendAICardInternal(
     const trimmedContent = processedContent.trim();
     if (!trimmedContent) {
       log?.info?.(
-        `[DingTalk][AICard][Proactive] 处理后内容为空（纯文件/视频消息），跳过创建 AI Card`,
+        `处理后内容为空（纯文件/视频消息），跳过创建 AI Card`,
       );
       return { ok: true, usedAICard: false };
     }
@@ -746,16 +421,16 @@ async function sendAICardInternal(
     await finishAICard(card, processedContent, log);
 
     log?.info?.(
-      `[DingTalk][AICard][Proactive] AI Card 发送成功: ${targetDesc}, cardInstanceId=${card.cardInstanceId}`,
+      `AI Card 发送成功: ${targetDesc}, cardInstanceId=${card.cardInstanceId}`,
     );
     return { ok: true, cardInstanceId: card.cardInstanceId, usedAICard: true };
   } catch (err: any) {
     log?.error?.(
-      `[DingTalk][AICard][Proactive] AI Card 发送失败 (${targetDesc}): ${err.message}`,
+      `AI Card 发送失败 (${targetDesc}): ${err.message}`,
     );
     if (err.response) {
       log?.error?.(
-        `[DingTalk][AICard][Proactive] 错误响应: status=${err.response.status} data=${JSON.stringify(err.response.data)}`,
+        `错误响应: status=${err.response.status} data=${JSON.stringify(err.response.data)}`,
       );
     }
     return {
@@ -830,9 +505,11 @@ export async function sendTextToDingTalk(params: {
 }): Promise<SendResult> {
   const { config, target, text, replyToId } = params;
 
+  const log = createLoggerFromConfig(config, 'sendTextToDingTalk');
+
   // 参数校验
   if (!target || typeof target !== "string") {
-    console.error("[sendTextToDingTalk] target 参数无效:", target);
+    log.error("target 参数无效:", target);
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
@@ -858,12 +535,6 @@ export async function sendMediaToDingTalk(params: {
   mediaUrl: string;
   replyToId?: string;
 }): Promise<SendResult> {
-  // 临时调试：打印 config.debug 的值
-  console.log('[sendMediaToDingTalk] config.debug =', params.config?.debug, 'config =', JSON.stringify({
-    debug: params.config?.debug,
-    hasConfig: !!params.config,
-  }));
-  
   const log = createLoggerFromConfig(params.config, 'sendMediaToDingTalk');
   
   log.info(
@@ -1056,7 +727,7 @@ export async function sendMediaToDingTalk(params: {
       processQueryKey: result.processQueryKey || "media-message-sent",
     };
   } catch (err: any) {
-    console.error("[sendMediaToDingTalk] 发送媒体消息失败:", err.message);
+    log.error("发送媒体消息失败:", err.message);
     // 发生错误，发送文本消息提示
     return sendProactive(
       config,
@@ -1076,8 +747,10 @@ export async function sendProactive(
   content: string,
   options: ProactiveSendOptions = {},
 ): Promise<SendResult> {
-  console.log(
-    "[sendProactive] 开始处理，参数:",
+  const log = createLoggerFromConfig(config, 'sendProactive');
+  
+  log.info(
+    "开始处理，参数:",
     JSON.stringify({
       target,
       contentLength: content?.length,
@@ -1098,7 +771,7 @@ export async function sendProactive(
   if (target.userId || target.userIds) {
     const userIds = target.userIds || [target.userId!];
     const userId = userIds[0];
-    console.log("[sendProactive] 发送给用户，userId:", userId);
+    log.info("发送给用户，userId:", userId);
 
     // 构建发送参数
     return sendProactiveInternal(
@@ -1110,8 +783,8 @@ export async function sendProactive(
   }
 
   if (target.openConversationId) {
-    console.log(
-      "[sendProactive] 发送给群聊，openConversationId:",
+    log.info(
+      "发送给群聊，openConversationId:",
       target.openConversationId,
     );
     return sendProactiveInternal(
@@ -1122,7 +795,7 @@ export async function sendProactive(
     );
   }
 
-  console.error("[sendProactive] target 参数缺少必要字段:", target);
+  log.error("target 参数缺少必要字段:", target);
   return {
     ok: false,
     error: "Must specify userId, userIds, or openConversationId",
@@ -1139,8 +812,10 @@ async function sendProactiveInternal(
   content: string,
   options: ProactiveSendOptions,
 ): Promise<SendResult> {
-  console.log(
-    "[sendProactiveInternal] 开始处理，参数:",
+  const log = createLoggerFromConfig(config, 'sendProactiveInternal');
+  
+  log.info(
+    "开始处理，参数:",
     JSON.stringify({
       target,
       contentLength: content?.length,
@@ -1153,7 +828,7 @@ async function sendProactiveInternal(
 
   // 参数校验
   if (!target || typeof target !== "object") {
-    console.error("[sendProactiveInternal] target 参数无效:", target);
+    log.error("target 参数无效:", target);
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
@@ -1161,15 +836,15 @@ async function sendProactiveInternal(
     msgType = "text",
     useAICard = false,
     fallbackToNormal = false,
-    log,
+    log: externalLog,
   } = options;
 
   // 如果启用 AI Card
   if (useAICard) {
     try {
-      const card = await createAICardForTarget(config, target, log);
+      const card = await createAICardForTarget(config, target, externalLog);
       if (card) {
-        await finishAICard(card, content, log);
+        await finishAICard(card, content, externalLog);
         return {
           ok: true,
           cardInstanceId: card.cardInstanceId,
@@ -1184,7 +859,7 @@ async function sendProactiveInternal(
         };
       }
     } catch (err: any) {
-      log?.error?.(`[DingTalk] AI Card 发送失败: ${err.message}`);
+      externalLog?.error?.(`AI Card 发送失败: ${err.message}`);
       if (!fallbackToNormal) {
         return { ok: false, error: err.message, usedAICard: false };
       }
@@ -1193,20 +868,20 @@ async function sendProactiveInternal(
 
   // 发送普通消息
   try {
-    console.log(
-      "[sendProactiveInternal] 准备发送普通消息，target.type:",
+    log.info(
+      "准备发送普通消息，target.type:",
       target.type,
     );
     const token = await getAccessToken(config);
     const isUser = target.type === "user";
-    console.log(
-      "[sendProactiveInternal] isUser:",
+    log.info(
+      "isUser:",
       isUser,
       "target:",
       JSON.stringify(target),
     );
     const targetId = isUser ? target.userId : target.openConversationId;
-    console.log("[sendProactiveInternal] targetId:", targetId);
+    log.info("targetId:", targetId);
 
     // ✅ 根据目标类型选择不同的 API
     const webhookUrl = isUser
@@ -1235,8 +910,8 @@ async function sendProactiveInternal(
       body.openConversationId = targetId;
     }
 
-    log?.info?.(
-      `[DingTalk] 发送${isUser ? '单聊' : '群聊'}消息：${isUser ? 'userIds=' : 'openConversationId='}${targetId}`,
+    externalLog?.info?.(
+      `发送${isUser ? '单聊' : '群聊'}消息：${isUser ? 'userIds=' : 'openConversationId='}${targetId}`,
     );
 
     const resp = await axios.post(webhookUrl, body, {
@@ -1251,14 +926,13 @@ async function sendProactiveInternal(
       const dataPreview = JSON.stringify(resp.data ?? {});
       const truncated =
         dataPreview.length > 2000 ? `${dataPreview.slice(0, 2000)}...(truncated)` : dataPreview;
-      const msg = `[DingTalk] 发送${isUser ? "单聊" : "群聊"}消息响应：status=${resp.status}, processQueryKey=${resp.data?.processQueryKey ?? ""}, data=${truncated}`;
-      // 某些运行环境可能不展示自定义 logger 输出，因此同时打到 console
-      console.log(msg);
-      log?.info?.(msg);
+      const msg = `发送${isUser ? "单聊" : "群聊"}消息响应：status=${resp.status}, processQueryKey=${resp.data?.processQueryKey ?? ""}, data=${truncated}`;
+      log.info(msg);
+      externalLog?.info?.(msg);
     } catch {
-      const msg = `[DingTalk] 发送${isUser ? "单聊" : "群聊"}消息响应：status=${resp.status}, processQueryKey=${resp.data?.processQueryKey ?? ""}`;
-      console.log(msg);
-      log?.info?.(msg);
+      const msg = `发送${isUser ? "单聊" : "群聊"}消息响应：status=${resp.status}, processQueryKey=${resp.data?.processQueryKey ?? ""}`;
+      log.info(msg);
+      externalLog?.info?.(msg);
     }
 
     return {
@@ -1285,9 +959,9 @@ async function sendProactiveInternal(
           ? ` data=${respPreview}`
           : "";
 
-    const msg = `[DingTalk] 发送${target.type === "user" ? "单聊" : "群聊"}消息失败：${baseMsg}${extra}`;
-    console.error(msg);
-    log?.error?.(msg);
+    const msg = `发送${target.type === "user" ? "单聊" : "群聊"}消息失败：${baseMsg}${extra}`;
+log.error(msg);
+externalLog.error(msg);
     return { ok: false, error: baseMsg, usedAICard: false };
   }
 }

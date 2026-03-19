@@ -74,10 +74,9 @@ export async function uploadMediaToDingTalk(
     const FormData = (await import('form-data')).default;
 
     const absPath = toLocalPath(filePath);
-    log.info(`[uploadMediaToDingTalk] 检查文件是否存在：${absPath}`);
+    log.info(`检查文件是否存在：${absPath}`);
     if (!fs.existsSync(absPath)) {
       log.warn(`文件不存在：${absPath}`);
-      console.error(`[uploadMediaToDingTalk] 文件不存在：${absPath}`);
       return null;
     }
 
@@ -120,7 +119,7 @@ export async function uploadMediaToDingTalk(
     // ✅ 钉钉媒体上传 API 不支持 video 类型，视频需要使用 file 类型上传
     const uploadType = mediaType === 'video' ? 'file' : mediaType;
     
-    log?.info?.(`[DingTalk][${mediaType}] 上传文件：${absPath} (${fileSizeMB}MB), uploadType=${uploadType}`);
+    log.info(`上传文件：${absPath} (${fileSizeMB}MB), uploadType=${uploadType}`);
     const resp = await axios.post(
       `${DINGTALK_OAPI}/media/upload?access_token=${oapiToken}&type=${uploadType}`,
       form,
@@ -131,13 +130,13 @@ export async function uploadMediaToDingTalk(
     if (mediaId) {
       const cleanMediaId = mediaId.startsWith('@') ? mediaId.substring(1) : mediaId;
       const downloadUrl = `https://down.dingtalk.com/media/${cleanMediaId}`;
-      log?.info?.(`[DingTalk][${mediaType}] 上传成功：mediaId=${cleanMediaId}`);
+      log.info(`上传成功：mediaId=${cleanMediaId}`);
       return downloadUrl;
     }
-    log?.warn?.(`[DingTalk][${mediaType}] 上传返回无 media_id`);
+    log.warn(`上传返回无 media_id`);
     return null;
   } catch (err: any) {
-    log?.error?.(`[DingTalk][${mediaType}] 上传失败：${err.message}`);
+    log.error(`上传失败：${err.message}`);
     return null;
   }
 }

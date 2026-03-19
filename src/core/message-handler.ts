@@ -203,7 +203,7 @@ async function downloadImageToFile(
   log?: any,
 ): Promise<string | null> {
   try {
-    log?.info?.(`[DingTalk][Image] 开始下载图片: ${downloadUrl.slice(0, 100)}...`);
+    log?.info?.(`开始下载图片: ${downloadUrl.slice(0, 100)}...`);
     const resp = await axios.get(downloadUrl, {
       responseType: 'arraybuffer',
       timeout: 30_000,
@@ -217,10 +217,10 @@ async function downloadImageToFile(
     const tmpFile = path.join(mediaDir, `openclaw-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     fs.writeFileSync(tmpFile, buffer);
 
-    log?.info?.(`[DingTalk][Image] 图片下载成功: size=${buffer.length} bytes, type=${contentType}, path=${tmpFile}`);
+    log?.info?.(`图片下载成功: size=${buffer.length} bytes, type=${contentType}, path=${tmpFile}`);
     return tmpFile;
   } catch (err: any) {
-    log?.error?.(`[DingTalk][Image] 图片下载失败: ${err.message}`);
+    log?.error?.(`图片下载失败: ${err.message}`);
     return null;
   }
 }
@@ -232,7 +232,7 @@ async function downloadMediaByCode(
 ): Promise<string | null> {
   try {
     const token = await getAccessToken(config);
-    log?.info?.(`[DingTalk][Image] 通过 downloadCode 下载媒体: ${downloadCode.slice(0, 30)}...`);
+    log?.info?.(`通过 downloadCode 下载媒体: ${downloadCode.slice(0, 30)}...`);
 
     const resp = await axios.post(
       `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
@@ -245,13 +245,13 @@ async function downloadMediaByCode(
 
     const downloadUrl = resp.data?.downloadUrl;
     if (!downloadUrl) {
-      log?.warn?.(`[DingTalk][Image] downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
+      log?.warn?.(`downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
       return null;
     }
 
     return downloadImageToFile(downloadUrl, log);
   } catch (err: any) {
-    log?.error?.(`[DingTalk][Image] downloadCode 下载失败: ${err.message}`);
+    log?.error?.(`downloadCode 下载失败: ${err.message}`);
     return null;
   }
 }
@@ -264,7 +264,7 @@ async function getFileDownloadUrl(
 ): Promise<string | null> {
   try {
     const token = await getAccessToken(config);
-    log?.info?.(`[DingTalk][File] 获取文件下载链接: ${fileName}`);
+    log?.info?.(`获取文件下载链接: ${fileName}`);
 
     const resp = await axios.post(
       `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
@@ -277,14 +277,14 @@ async function getFileDownloadUrl(
 
     const downloadUrl = resp.data?.downloadUrl;
     if (!downloadUrl) {
-      log?.warn?.(`[DingTalk][File] downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
+      log?.warn?.(`downloadCode 换取 downloadUrl 失败: ${JSON.stringify(resp.data)}`);
       return null;
     }
 
-    log?.info?.(`[DingTalk][File] 获取下载链接成功: ${fileName}`);
+    log?.info?.(`获取下载链接成功: ${fileName}`);
     return downloadUrl;
   } catch (err: any) {
-    log?.error?.(`[DingTalk][File] 获取下载链接失败: ${err.message}`);
+    log?.error?.(`获取下载链接失败: ${err.message}`);
     return null;
   }
 }
@@ -317,10 +317,127 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
   if (isDirect) {
     const dmPolicy = config.dmPolicy || 'open';
     const allowFrom: (string | number)[] = config.allowFrom || [];
-    // 安全检查：确保 senderId 存在且为字符串
-    if (dmPolicy === 'allowlist' && allowFrom.length > 0 && senderId && typeof senderId === 'string' && !allowFrom.includes(senderId)) {
-      log?.warn?.(`[DingTalk] DM 被拦截: senderId=${senderId} 不在 allowFrom 白名单中`);
+    
+    // 处理 pairing 策略（暂不支持，当作 open 处理并记录警告）
+    if (dmPolicy === 'pairing') {
+      log?.warn?.(`dmPolicy="pairing" 暂不支持，将按 "open" 策略处理`);
+      // 继续执行，不拦截
+    }
+    
+    // 处理 allowlist 策略
+    if (dmPolicy === 'allowlist') {
+      if (!senderId) {
+        log?.warn?.(`DM 被拦截: senderId 为空`);
+        return;
+      }
+      
+      // 规范化 senderId 和 allowFrom 进行比较（支持 string 和 number 类型）
+      const normalizedSenderId = String(senderId);
+      const normalizedAllowFrom = allowFrom.map(id => String(id));
+      
+      // 白名单为空时拦截所有（虽然 Schema 验证会阻止这种情况，但代码层面也要防御）
+      if (normalizedAllowFrom.length === 0) {
+        log?.warn?.(`[DingTalk] DM 被拦截: allowFrom 白名单为空，拒绝所有请求`);
+        
+        try {
+          await sendProactive(config, { userId: senderId }, '抱歉，此机器人的访问白名单配置有误。请联系管理员检查配置。', {
+            msgType: 'text',
+            useAICard: false,
+            fallbackToNormal: true,
+            log,
+          });
+        } catch (err: any) {
+          log?.error?.(`[DingTalk] 发送 DM 配置错误提示失败: ${err.message}`);
+        }
+        return;
+      }
+      
+      // 检查是否在白名单中
+      if (!normalizedAllowFrom.includes(normalizedSenderId)) {
+        log?.warn?.(`DM 被拦截: senderId=${senderId} (${senderName}) 不在白名单中`);
+        
+        try {
+          await sendProactive(config, { userId: senderId }, '抱歉，您暂无权限使用此机器人。如需开通权限，请联系管理员。', {
+            msgType: 'text',
+            useAICard: false,
+            fallbackToNormal: true,
+            log,
+          });
+        } catch (err: any) {
+          log?.error?.(`发送 DM 拦截提示失败: ${err.message}`);
+        }
+        return;
+      }
+    }
+  }
+
+  // ===== 群聊 Policy 检查 =====
+  if (!isDirect) {
+    const groupPolicy = config.groupPolicy || 'open';
+    const conversationId = data.conversationId;
+    const groupAllowFrom: (string | number)[] = config.groupAllowFrom || [];
+
+    // 处理 disabled 策略
+    if (groupPolicy === 'disabled') {
+      log?.warn?.(`群聊被拦截: groupPolicy=disabled`);
+      
+      try {
+        await sendProactive(config, { openConversationId: conversationId }, '抱歉，此机器人暂不支持群聊功能。', {
+          msgType: 'text',
+          useAICard: false,
+          fallbackToNormal: true,
+          log,
+        });
+      } catch (err: any) {
+        log?.error?.(`发送群聊 disabled 提示失败: ${err.message}`);
+      }
       return;
+    }
+
+    // 处理 allowlist 策略
+    if (groupPolicy === 'allowlist') {
+      if (!conversationId) {
+        log?.warn?.(`群聊被拦截: conversationId 为空`);
+        return;
+      }
+      
+      // 规范化 conversationId 和 groupAllowFrom 进行比较（支持 string 和 number 类型）
+      const normalizedConversationId = String(conversationId);
+      const normalizedGroupAllowFrom = groupAllowFrom.map(id => String(id));
+      
+      // 白名单为空时拦截所有（虽然 Schema 验证会阻止这种情况，但代码层面也要防御）
+      if (normalizedGroupAllowFrom.length === 0) {
+        log?.warn?.(`群聊被拦截: groupAllowFrom 白名单为空，拒绝所有请求`);
+        
+        try {
+          await sendProactive(config, { openConversationId: conversationId }, '抱歉，此机器人的群组访问白名单配置有误。请联系管理员检查配置。', {
+            msgType: 'text',
+            useAICard: false,
+            fallbackToNormal: true,
+            log,
+          });
+        } catch (err: any) {
+          log?.error?.(`发送群聊配置错误提示失败: ${err.message}`);
+        }
+        return;
+      }
+      
+      // 检查是否在白名单中
+      if (!normalizedGroupAllowFrom.includes(normalizedConversationId)) {
+        log?.warn?.(`群聊被拦截: conversationId=${conversationId} 不在 groupAllowFrom 白名单中`);
+        
+        try {
+          await sendProactive(config, { openConversationId: conversationId }, '抱歉，此群组暂无权限使用此机器人。如需开通权限，请联系管理员。', {
+            msgType: 'text',
+            useAICard: false,
+            fallbackToNormal: true,
+            log,
+          });
+        } catch (err: any) {
+          log?.error?.(`发送群聊 allowlist 提示失败: ${err.message}`);
+        }
+        return;
+      }
     }
   }
 
@@ -348,34 +465,34 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
   // ===== 图片下载到本地文件 =====
   const imageLocalPaths: string[] = [];
   
-  log?.info?.(`[DingTalk][${accountId}] 开始处理图片: imageUrls=${content.imageUrls.length}, downloadCodes=${content.downloadCodes.length}`);
+  log?.info?.(`处理消息: accountId=${accountId}, sender=${senderName}, text=${content.text.slice(0, 50)}...`);
   
   // 处理 imageUrls（来自富文本消息）
   for (let i = 0; i < content.imageUrls.length; i++) {
     const url = content.imageUrls[i];
     try {
-      log?.info?.(`[DingTalk][${accountId}] 处理图片 ${i + 1}/${content.imageUrls.length}: ${url.slice(0, 50)}...`);
+      log?.info?.(`处理图片 ${i + 1}/${content.imageUrls.length}: ${url.slice(0, 50)}...`);
       
       if (url.startsWith('downloadCode:')) {
         const code = url.slice('downloadCode:'.length);
         const localPath = await downloadMediaByCode(code, config, log);
         if (localPath) {
           imageLocalPaths.push(localPath);
-          log?.info?.(`[DingTalk][${accountId}] 图片下载成功 ${i + 1}/${content.imageUrls.length}`);
+          log?.info?.(`图片下载成功 ${i + 1}/${content.imageUrls.length}`);
         } else {
-          log?.warn?.(`[DingTalk][${accountId}] 图片下载失败 ${i + 1}/${content.imageUrls.length}`);
+          log?.warn?.(`图片下载失败 ${i + 1}/${content.imageUrls.length}`);
         }
       } else {
         const localPath = await downloadImageToFile(url, log);
         if (localPath) {
           imageLocalPaths.push(localPath);
-          log?.info?.(`[DingTalk][${accountId}] 图片下载成功 ${i + 1}/${content.imageUrls.length}`);
+          log?.info?.(`图片下载成功 ${i + 1}/${content.imageUrls.length}`);
         } else {
-          log?.warn?.(`[DingTalk][${accountId}] 图片下载失败 ${i + 1}/${content.imageUrls.length}`);
+          log?.warn?.(`图片下载失败 ${i + 1}/${content.imageUrls.length}`);
         }
       }
     } catch (err: any) {
-      log?.error?.(`[DingTalk][${accountId}] 图片下载异常 ${i + 1}/${content.imageUrls.length}: ${err.message}`);
+      log?.error?.(`图片下载异常 ${i + 1}/${content.imageUrls.length}: ${err.message}`);
     }
   }
 
@@ -385,21 +502,21 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     const fileName = content.fileNames[i];
     if (!fileName) {
       try {
-        log?.info?.(`[DingTalk][${accountId}] 处理 downloadCode 图片 ${i + 1}/${content.downloadCodes.length}`);
+        log?.info?.(`处理 downloadCode 图片 ${i + 1}/${content.downloadCodes.length}`);
         const localPath = await downloadMediaByCode(code, config, log);
         if (localPath) {
           imageLocalPaths.push(localPath);
-          log?.info?.(`[DingTalk][${accountId}] downloadCode 图片下载成功 ${i + 1}/${content.downloadCodes.length}`);
+          log?.info?.(`downloadCode 图片下载成功 ${i + 1}/${content.downloadCodes.length}`);
         } else {
-          log?.warn?.(`[DingTalk][${accountId}] downloadCode 图片下载失败 ${i + 1}/${content.downloadCodes.length}`);
+          log?.warn?.(`downloadCode 图片下载失败 ${i + 1}/${content.downloadCodes.length}`);
         }
       } catch (err: any) {
-        log?.error?.(`[DingTalk][${accountId}] downloadCode 图片下载异常 ${i + 1}/${content.downloadCodes.length}: ${err.message}`);
+        log?.error?.(`downloadCode 图片下载异常 ${i + 1}/${content.downloadCodes.length}: ${err.message}`);
       }
     }
   }
   
-  log?.info?.(`[DingTalk][${accountId}] 图片下载完成: 成功=${imageLocalPaths.length}, 总数=${content.imageUrls.length + content.downloadCodes.filter((_, i) => !content.fileNames[i]).length}`);
+  log?.info?.(`图片下载完成: 成功=${imageLocalPaths.length}, 总数=${content.imageUrls.length + content.downloadCodes.filter((_, i) => !content.fileNames[i]).length}`);
 
 
 
@@ -447,7 +564,7 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     }
 
     fileContentParts.push(`📎 **${fileType}**: ${fileName}\n🔗 [点击下载](${downloadUrl})`);
-    log?.info?.(`[DingTalk][File] 文件下载链接已生成: ${fileName}`);
+    log?.info?.(`文件下载链接已生成: ${fileName}`);
   }
 
   if (fileContentParts.length > 0) {
@@ -459,19 +576,19 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
 
   // ===== 贴处理中表情 =====
   addEmotionReply(config, data, log).catch(err => {
-    log?.warn?.(`[DingTalk][Emotion] 贴表情失败: ${err.message}`);
+    log?.warn?.(`贴表情失败: ${err.message}`);
   });
 
   // ===== 异步模式：立即回执 + 后台执行 + 主动推送结果 =====
   const asyncMode = config.asyncMode === true;
-  log?.info?.(`[DingTalk][Async] asyncMode 检测: config.asyncMode=${config.asyncMode}, asyncMode=${asyncMode}`);
+  log?.info?.(`asyncMode 检测: config.asyncMode=${config.asyncMode}, asyncMode=${asyncMode}`);
   
   const proactiveTarget = isDirect
     ? { userId: senderId }
     : { openConversationId: data.conversationId };
 
   if (asyncMode) {
-    log?.info?.(`[DingTalk][Async] 进入异步模式分支`);
+    log?.info?.(`进入异步模式分支`);
     const ackText = config.ackText || '🫡 任务已接收，处理中...';
     try {
       await sendProactive(config, proactiveTarget, ackText, {
@@ -481,7 +598,7 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
         log,
       });
     } catch (ackErr: any) {
-      log?.warn?.(`[DingTalk][Async] Failed to send acknowledgment: ${ackErr?.message || ackErr}`);
+      log?.warn?.(`Failed to send acknowledgment: ${ackErr?.message || ackErr}`);
     }
   }
 
@@ -553,19 +670,28 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     // 如果没有匹配到，使用默认 agent
     if (!matchedAgentId) {
       matchedAgentId = cfg.defaultAgent || 'main';
-      console.log(`[DingTalk][${accountId}] ⚠️ 未匹配到 binding，使用默认 agent: ${matchedAgentId}`);
+      log?.info?.(`未匹配到 binding，使用默认 agent: ${matchedAgentId}`);
     }
     
-    // 构建 sessionKey
-    const sessionKey = `agent:${matchedAgentId}:dingtalk-connector:${chatType}:${peerId}`;
-    console.log(`[DingTalk][${accountId}] 路由解析完成: agentId=${matchedAgentId}, sessionKey=${sessionKey}, matchedBy=${matchedBy}`);
+    // ✅ 使用 SDK 标准方法构建 sessionKey，符合 OpenClaw 规范
+    // 格式：agent:{agentId}:{channel}:{peerKind}:{peerId}
+    const sessionKey = core.channel.routing.buildAgentSessionKey({
+      agentId: matchedAgentId,
+      channel: 'dingtalk',  // ✅ 使用 'dingtalk' 而不是 'dingtalk-connector'
+      accountId: accountId,
+      peer: {
+        kind: isDirect ? 'direct' : 'group',
+        id: peerId,
+      },
+    });
+    log?.info?.(`路由解析完成: agentId=${matchedAgentId}, sessionKey=${sessionKey}, matchedBy=${matchedBy}`);
     
     // 构建 inbound context，使用解析后的 sessionKey
-    console.log(`[DingTalk][${accountId}] 开始构建 inbound context...`);
+    log?.info?.(`开始构建 inbound context...`);
     
     // ✅ 计算正确的 To 字段
     const toField = isDirect ? senderId : data.conversationId;
-    console.log(`[DingTalk][${accountId}] 构建 inbound context: isDirect=${isDirect}, senderId=${senderId}, conversationId=${data.conversationId}, To=${toField}`);
+    log?.info?.(`构建 inbound context: isDirect=${isDirect}, senderId=${senderId}, conversationId=${data.conversationId}, To=${toField}`);
 
     const ctxPayload = core.channel.reply.finalizeInboundContext({
       Body: body,
@@ -604,34 +730,41 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     });
 
     // 使用 SDK 的 dispatchReplyFromConfig
-    log?.info?.(`[DingTalk][${accountId}] 调用 withReplyDispatcher，asyncMode=${asyncMode}`);
-    console.log(`[DingTalk][${accountId}] 准备调用 withReplyDispatcher...`);
+    log?.info?.(`调用 withReplyDispatcher，asyncMode=${asyncMode}`);
+    log?.info?.(`准备调用 withReplyDispatcher...`);
     
     let dispatchResult;
     try {
       dispatchResult = await core.channel.reply.withReplyDispatcher({
         dispatcher,
         onSettled: () => {
-          log?.info?.(`[DingTalk][${accountId}] onSettled 被调用`);
-          console.log(`[DingTalk][${accountId}] onSettled 被调用`);
+          log?.info?.(`onSettled 被调用`);
+          log?.info?.(`onSettled 被调用`);
           markDispatchIdle();
         },
-        run: () => {
-          log?.info?.(`[DingTalk][${accountId}] run 被调用，开始 dispatchReplyFromConfig`);
-          console.log(`[DingTalk][${accountId}] run 被调用`);
-          return core.channel.reply.dispatchReplyFromConfig({
+        run: async () => {
+          log?.info?.(`run 被调用，开始 dispatchReplyFromConfig`);
+          log?.info?.(`run 被调用`);
+          log?.info?.(`ctxPayload.SessionKey=${ctxPayload.SessionKey}`);
+          log?.info?.(`ctxPayload.Body 长度=${ctxPayload.Body?.length || 0}`);
+          log?.info?.(`replyOptions keys=${Object.keys(replyOptions).join(',')}`);
+          
+          const result = await core.channel.reply.dispatchReplyFromConfig({
             ctx: ctxPayload,
             cfg,
             dispatcher,
             replyOptions,
           });
+          
+          log?.info?.(`dispatchReplyFromConfig 返回: queuedFinal=${result.queuedFinal}, counts=${JSON.stringify(result.counts)}`);
+          return result;
         },
       });
-      console.log(`[DingTalk][${accountId}] withReplyDispatcher 返回成功`);
+      log?.info?.(`withReplyDispatcher 返回成功`);
     } catch (dispatchErr: any) {
-      console.error(`[DingTalk][${accountId}] withReplyDispatcher 抛出异常: ${dispatchErr?.message || dispatchErr}`);
-      console.error(`[DingTalk][${accountId}] 异常堆栈: ${dispatchErr?.stack || 'no stack'}`);
-      log?.error?.(`[DingTalk][${accountId}] 消息处理异常，但不阻塞后续消息: ${dispatchErr?.message || dispatchErr}`);
+      log?.error?.(`withReplyDispatcher 抛出异常: ${dispatchErr?.message || dispatchErr}`);
+      log?.error?.(`异常堆栈: ${dispatchErr?.stack || 'no stack'}`);
+      log?.error?.(`消息处理异常，但不阻塞后续消息: ${dispatchErr?.message || dispatchErr}`);
 
       // ⚠️ 不要直接 throw，避免阻塞后续消息处理
       // 记录错误后继续执行，确保后续消息能正常处理
@@ -639,8 +772,8 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     }
     
     const { queuedFinal, counts } = dispatchResult;
-    log?.info?.(`[DingTalk][${accountId}] SDK dispatch 完成: queuedFinal=${queuedFinal}, replies=${counts.final}, asyncMode=${asyncMode}`);
-    console.log(`[DingTalk][${accountId}] SDK dispatch 完成: queuedFinal=${queuedFinal}, replies=${counts.final}`);
+    log?.info?.(`SDK dispatch 完成: queuedFinal=${queuedFinal}, replies=${counts.final}, asyncMode=${asyncMode}`);
+    log?.info?.(`SDK dispatch 完成: queuedFinal=${queuedFinal}, replies=${counts.final}`);
 
     // ===== 异步模式：主动推送最终结果 =====
     if (asyncMode) {
@@ -716,13 +849,13 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
             log,
           });
         } catch (sendErr: any) {
-          log?.error?.(`[DingTalk][Async] 错误通知发送失败: ${sendErr?.message || sendErr}`);
+          log?.error?.(`错误通知发送失败: ${sendErr?.message || sendErr}`);
         }
       }
     }
 
   } catch (err: any) {
-    log?.error?.(`[DingTalk] SDK dispatch 失败: ${err.message}`);
+    log?.error?.(`SDK dispatch 失败: ${err.message}`);
     
     // 降级：发送错误消息
     try {
@@ -737,7 +870,7 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
         headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
       });
     } catch (fallbackErr: any) {
-      log?.error?.(`[DingTalk] 错误消息发送也失败: ${fallbackErr.message}`);
+      log?.error?.(`错误消息发送也失败: ${fallbackErr.message}`);
     }
   }
 
@@ -746,7 +879,7 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
   try {
     await recallEmotionReply(config, data, log);
   } catch (err: any) {
-    log?.warn?.(`[DingTalk][Emotion] 撤回表情异常: ${err.message}`);
+    log?.warn?.(`撤回表情异常: ${err.message}`);
   }
 }
 
