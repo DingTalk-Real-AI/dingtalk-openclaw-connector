@@ -2679,8 +2679,6 @@ async function handleDingTalkMessage(params: {
     separateSessionByConversation,
     groupSessionScope,
   });
-  const sessionContextJson = JSON.stringify(sessionContext);
-  log?.info?.(`[DingTalk][Session] context=${sessionContextJson}`);
 
   // memoryUser 用于 Gateway 区分记忆归属
   // 使用 peerId（不包含中文）作为标识符，避免 HTTP Header 编码问题
@@ -2805,15 +2803,29 @@ async function handleDingTalkMessage(params: {
   }
 
   // 对于纯图片消息（无文本），添加默认提示
-  // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new，再交由 Gateway 解析
+  // 文本部分先经过 normalizeSlashCommand，统一将 /reset /clear 等别名指令转为 /new
   const rawText = content.text || '';
-  let userContent = normalizeSlashCommand(rawText) || (imageLocalPaths.length > 0 ? '请描述这张图片' : '');
+  const normalizedText = normalizeSlashCommand(rawText);
+  const isNewSessionCommand = normalizedText === '/new';
+
+  // 检测新会话命令，在 sessionKey 中注入时间戳强制创建新会话
+  const finalSessionContext = isNewSessionCommand
+    ? { ...sessionContext, timestamp: Date.now() }
+    : sessionContext;
+  const sessionKey = JSON.stringify(finalSessionContext);
+
+  log?.info?.(`[DingTalk][Session] context=${sessionKey}${isNewSessionCommand ? ' (新会话)' : ''}`);
+
+  let userContent = isNewSessionCommand
+    ? '' // 新会话时使用空内容，让 AI 自然开场
+    : (normalizedText || (imageLocalPaths.length > 0 ? '请描述这张图片' : ''));
   // 追加文件内容
   if (fileContentParts.length > 0) {
     const fileText = fileContentParts.join('\n\n');
     userContent = userContent ? `${userContent}\n\n${fileText}` : fileText;
   }
-  if (!userContent && imageLocalPaths.length === 0) return;
+  // 新会话命令必须有内容（即使是空的）才能触发 Gateway 创建新会话
+  if (!userContent && !isNewSessionCommand && imageLocalPaths.length === 0) return;
 
   // ===== 贴处理中表情 =====
   await addEmotionReply(dingtalkConfig, data, log);
@@ -2847,7 +2859,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey: sessionContextJson,
+        sessionKey: sessionKey,
         gatewayAuth,
         gatewayBaseUrl: dingtalkConfig.gatewayBaseUrl,
         memoryUser,
@@ -2925,7 +2937,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey: sessionContextJson,
+        sessionKey: sessionKey,
         gatewayAuth,
         gatewayBaseUrl: dingtalkConfig.gatewayBaseUrl,
         memoryUser,
@@ -3010,7 +3022,7 @@ async function handleDingTalkMessage(params: {
       for await (const chunk of streamFromGateway({
         userContent,
         systemPrompts,
-        sessionKey: sessionContextJson,
+        sessionKey: sessionKey,
         gatewayAuth,
         gatewayBaseUrl: dingtalkConfig.gatewayBaseUrl,
         memoryUser,

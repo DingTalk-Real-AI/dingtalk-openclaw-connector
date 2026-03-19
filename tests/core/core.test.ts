@@ -48,11 +48,17 @@ describe('core functionality', () => {
       const { __testables } = await import('../../plugin');
       const { normalizeSlashCommand } = __testables as any;
 
+      // 覆盖所有新会话命令
       expect(normalizeSlashCommand('/new')).toBe('/new');
       expect(normalizeSlashCommand('/reset')).toBe('/new');
       expect(normalizeSlashCommand('/clear')).toBe('/new');
       expect(normalizeSlashCommand('新会话')).toBe('/new');
       expect(normalizeSlashCommand('重新开始')).toBe('/new');
+      expect(normalizeSlashCommand('清空对话')).toBe('/new');
+
+      // 测试大小写不敏感
+      expect(normalizeSlashCommand('/NEW')).toBe('/new');
+      expect(normalizeSlashCommand('/Reset')).toBe('/new');
     });
 
     it('should return original text for non-command text', async () => {
