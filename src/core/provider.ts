@@ -13,6 +13,7 @@
  */
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import * as monitorState from "./state";
+import { createLogger } from "../utils/logger";
 
 // 只解构 monitorState 的导出
 const {
@@ -44,7 +45,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
     throw new Error("Config is required for DingTalk monitor");
   }
 
-  const log = opts.runtime?.log;
+  const log = createLogger(cfg.channels?.["dingtalk-connector"]?.debug ?? false);
 
   // 并行导入所有模块（无循环依赖，可以并行）
   const [accountsModule, monitorAccountModule, monitorSingleModule] = await Promise.all([

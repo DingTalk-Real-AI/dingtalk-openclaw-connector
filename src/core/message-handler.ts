@@ -44,6 +44,7 @@ import { sendProactive, type AICardTarget } from "../services/messaging/index.ts
 import { createDingtalkReplyDispatcher, normalizeSlashCommand } from "../reply-dispatcher.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
+import { createLoggerFromConfig } from '../utils/logger.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -537,7 +538,10 @@ interface HandleMessageParams {
  * 内部消息处理函数（实际执行消息处理逻辑）
  */
 export async function handleDingTalkMessageInternal(params: HandleMessageParams): Promise<void> {
-  const { accountId, config, data, sessionWebhook, runtime, log, cfg } = params;
+  const { accountId, config, data, sessionWebhook, runtime, log: inputLog, cfg } = params;
+
+  // 如果传入的 log 为空，则使用基于 config 的 logger
+  const log = createLoggerFromConfig(config, `DingTalk:${accountId}`);
 
   const content = extractMessageContent(data);
   if (!content.text && content.imageUrls.length === 0 && content.downloadCodes.length === 0) return;
@@ -991,14 +995,18 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     // ✅ 使用 SDK 标准方法构建 sessionKey，符合 OpenClaw 规范
     // 格式：agent:{agentId}:{channel}:{peerKind}:{peerId}
     // ✅ 修复：使用 sessionContext.peerId，确保会话隔离配置生效
+    // ✅ 关键修复：传递 dmScope 参数，让 SDK 使用配置文件中的 session.dmScope 设置
+    const dmScope = cfg.session?.dmScope || 'per-channel-peer';
+    log?.info?.(`🔍 构建 sessionKey 前的参数: agentId=${matchedAgentId}, channel=dingtalk-connector, accountId=${accountId}, chatType=${sessionContext.chatType}, peerId=${sessionContext.peerId}, dmScope=${dmScope}`);
     const sessionKey = core.channel.routing.buildAgentSessionKey({
       agentId: matchedAgentId,
-      channel: 'dingtalk',  // ✅ 使用 'dingtalk' 而不是 'dingtalk-connector'
+      channel: 'dingtalk-connector',  // ✅ 使用 'dingtalk-connector' 而不是 'dingtalk'
       accountId: accountId,
       peer: {
         kind: sessionContext.chatType,  // ✅ 使用 sessionContext.chatType
         id: sessionContext.peerId,      // ✅ 使用 sessionContext.peerId（包含会话隔离逻辑）
       },
+      dmScope: dmScope,  // ✅ 传递 dmScope 参数，确保生成完整格式的 sessionKey
     });
     log?.info?.(`路由解析完成: agentId=${matchedAgentId}, sessionKey=${sessionKey}, matchedBy=${matchedBy}`);
     
@@ -1022,12 +1030,12 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
       GroupSubject: isDirect ? undefined : data.conversationId,
       SenderName: senderId,
       SenderId: senderId,
-      Provider: "dingtalk" as const,
-      Surface: "dingtalk" as const,
+      Provider: "dingtalk-connector" as const,
+      Surface: "dingtalk-connector" as const,
       MessageSid: data.msgId,
       Timestamp: Date.now(),
       CommandAuthorized: true,
-      OriginatingChannel: "dingtalk" as const,
+      OriginatingChannel: "dingtalk-connector" as const,
       OriginatingTo: toField,  // ✅ 修复：应该使用 toField，而不是 accountId
     });
 

@@ -13,7 +13,7 @@
  * - 连接统计和监控（每分钟输出）
  */
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
-import type { MonitorDingtalkAccountOpts, ResolvedDingtalkAccount } from "../types/index.ts";
+import type { ResolvedDingtalkAccount } from "../types/index.ts";
 import {
   isMessageProcessed,
   markMessageProcessed,
@@ -30,14 +30,6 @@ export type DingtalkReactionCreatedEvent = {
   emoji: string;
 };
 
-export type MonitorDingtalkAccountOpts = {
-  cfg: ClawdbotConfig;
-  account: ResolvedDingtalkAccount;
-  runtime?: RuntimeEnv;
-  abortSignal?: AbortSignal;
-  messageHandler: MessageHandler; // 直接传入消息处理器
-};
-
 // 消息处理器函数类型
 export type MessageHandler = (params: {
   accountId: string;
@@ -48,6 +40,14 @@ export type MessageHandler = (params: {
   log?: any;
   cfg: ClawdbotConfig;
 }) => Promise<void>;
+
+export type MonitorDingtalkAccountOpts = {
+  cfg: ClawdbotConfig;
+  account: ResolvedDingtalkAccount;
+  runtime?: RuntimeEnv;
+  abortSignal?: AbortSignal;
+  messageHandler: MessageHandler;
+};
 
 // ============ 连接配置 ============
 
@@ -272,7 +272,7 @@ export async function monitorSingleAccount(
       logger.info(`✅ 重连成功 (socket 状态=${client.socket?.readyState})`);
     } catch (err: any) {
       reconnectAttempts++;
-      log?.error?.(
+      logger.error(
         `重连失败：${err.message} (尝试 ${reconnectAttempts})`,
       );
       throw err;
@@ -298,7 +298,7 @@ export async function monitorSingleAccount(
           if (!isStopped && !isReconnecting) {
             // 立即重连，不退避
             doReconnect(true).catch((err) => {
-              log?.error?.(`[${accountId}] 重连失败：${err.message}`);
+              logger.error(`[${accountId}] 重连失败：${err.message}`);
             });
           }
         }
@@ -322,7 +322,7 @@ export async function monitorSingleAccount(
       // 立即重连，不退避
       setTimeout(() => {
         doReconnect(true).catch((err) => {
-          log?.error?.(`重连失败：${err.message}`);
+          logger.error(`重连失败：${err.message}`);
         });
       }, 0);
     });
@@ -388,11 +388,11 @@ export async function monitorSingleAccount(
           lastSocketAvailableTime = Date.now();
           logger.debug(`💓 发送 PING 心跳成功`);
         } catch (err: any) {
-          log?.warn?.(`发送 PING 失败：${err.message}`);
+          logger.warn(`发送 PING 失败：${err.message}`);
           // 发送失败也计入超时
         }
       } catch (err: any) {
-        log?.error?.(`keepAlive 检测失败：${err.message}`);
+        logger.error(`keepAlive 检测失败：${err.message}`);
       }
     }, HEARTBEAT_INTERVAL); // 每 10 秒检测一次
 
@@ -445,7 +445,7 @@ export async function monitorSingleAccount(
             await client.disconnect();
           }
         } catch (err: any) {
-          log?.warn?.(`断开连接时出错：${err.message}`);
+          logger.warn(`断开连接时出错：${err.message}`);
         }
         resolve();
       };
@@ -486,12 +486,13 @@ export async function monitorSingleAccount(
         client.socketCallBackResponse(messageId, { success: true });
         logger.info(`✅ 已立即确认回调：messageId=${messageId}`);
       } else {
-        log?.warn?.(`⚠️ 警告：消息没有 messageId`);
+        logger.warn(`⚠️ 警告：消息没有 messageId`);
       }
 
       // 消息去重
       if (messageId && isMessageProcessed(messageId)) {
-        log?.warn?.(`⚠️ 检测到重复消息，跳过处理：messageId=${messageId}`);
+        processedCount++;  // ✅ 修复：重复消息也要计入 processedCount
+        logger.warn(`⚠️ 检测到重复消息，跳过处理：messageId=${messageId} (${processedCount}/${receivedCount})`);
         logger.info(`========== 消息处理结束（重复） ==========\n`);
         return;
       }
@@ -579,13 +580,9 @@ export async function monitorSingleAccount(
         const errorMsg = `❌ 处理消息异常 (${processedCount}/${receivedCount}): ${error?.message || "未知错误"}`;
         const errorStack = error?.stack || "无堆栈信息";
         
-        // 使用 logger 确保错误信息一定会被打印
-        logger.info(errorMsg);
-        logger.info(`错误堆栈:\n${errorStack}`);
-        
-        // 同时使用 log?.error 记录（如果可用）
-        log?.error?.(errorMsg);
-        log?.error?.(`错误堆栈:\n${errorStack}`);
+        // 使用 logger 记录错误信息
+        logger.error(errorMsg);
+        logger.error(`错误堆栈:\n${errorStack}`);
         
         logger.info(`========== 消息处理结束（失败） ==========\n`);
       } finally {
@@ -672,7 +669,7 @@ export async function monitorSingleAccount(
     // client.on('close', ...) - 已移除，使用 setupCloseListener
 
     client.on("error", (err: Error) => {
-      log?.error?.(`Connection error: ${err.message}`);
+      logger.error(`Connection error: ${err.message}`);
     });
 
     // 监听重连事件（仅用于日志，实际重连由自定义逻辑处理）

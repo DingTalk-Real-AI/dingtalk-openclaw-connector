@@ -69,10 +69,10 @@ export function createLogger(debug: boolean = false, prefix: string = '') {
 
 /**
  * 从配置中创建日志记录器
- * @param config - 包含 debug 配置的对象
+ * @param config - 包含 debug 配置的对象（可选）
  * @param prefix - 日志前缀
  * @returns 日志记录器对象
  */
-export function createLoggerFromConfig(config: { debug?: boolean }, prefix: string = '') {
-  return createLogger(!!config.debug, prefix);
+export function createLoggerFromConfig(config: { debug?: boolean } | undefined | null, prefix: string = '') {
+  return createLogger(!!config?.debug, prefix);
 }

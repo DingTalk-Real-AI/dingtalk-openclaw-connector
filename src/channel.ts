@@ -495,64 +495,64 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = resolveDingtalkAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
-      const logger = createLogger(account.config?.debug ?? false, 'DingTalk:Gateway');
+
+      // 检查账号是否启用和配置
+      if (!account.enabled) {
+        ctx.log?.info?.(`dingtalk-connector[${ctx.accountId}] is disabled, skipping startup`);
+        // 返回一个永不 resolve 的 Promise，保持 pending 状态直到 abort
+        return new Promise<void>((resolve) => {
+          if (ctx.abortSignal?.aborted) {
+            resolve();
+            return;
+          }
+          ctx.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }
       
-      logger.info(`startAccount 被调用：accountId=${ctx.accountId}`);
+      if (!account.configured) {
+        throw new Error(`DingTalk account "${ctx.accountId}" is not properly configured`);
+      }
+      
+      // 去重检查：如果列表中排在当前账号之前的账号已使用相同 clientId，则跳过当前账号
+      // 使用静态配置分析（而非运行时状态），避免并发竞态条件
+      // 规则：同一 clientId 只有列表中第一个启用且已配置的账号才会建立连接
+      if (account.clientId) {
+        const clientId = String(account.clientId);
+        const allAccountIds = listDingtalkAccountIds(ctx.cfg);
+        const currentIndex = allAccountIds.indexOf(ctx.accountId);
+        const priorAccountWithSameClientId = allAccountIds.slice(0, currentIndex).find((otherId) => {
+          const other = resolveDingtalkAccount({ cfg: ctx.cfg, accountId: otherId });
+          return other.enabled && other.configured && other.clientId && String(other.clientId) === clientId;
+        });
+        if (priorAccountWithSameClientId) {
+          ctx.log?.info?.(
+            `dingtalk-connector[${ctx.accountId}] skipped: clientId "${clientId.substring(0, 8)}..." is already used by account "${priorAccountWithSameClientId}"`
+          );
+          return new Promise<void>((resolve) => {
+            if (ctx.abortSignal?.aborted) {
+              resolve();
+              return;
+            }
+            ctx.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+        }
+      }
+
+      ctx.setStatus({ accountId: ctx.accountId, port: null });
+      ctx.log?.info(
+        `startAccount------starting dingtalk-connector[${ctx.accountId}] (mode: stream)`,
+      );
       try {
-        logger.info('='.repeat(60));
-        logger.info('开始加载 provider 模块...');
-        const monitorModule = await import("./core/provider.ts");
-        logger.info(`monitor module 加载完成`);
-        logger.info(`monitor module keys: ${Object.keys(monitorModule).join(', ')}`);
-        logger.info(`monitorModule 类型: ${typeof monitorModule}`);
-        logger.info(`monitorModule 是否为 null: ${monitorModule === null}`);
-        logger.info(`monitorModule 是否为 undefined: ${monitorModule === undefined}`);
-        
-        // 使用 Object.getOwnPropertyDescriptor 检查属性
-        const descriptor = Object.getOwnPropertyDescriptor(monitorModule, 'monitorSingleAccount');
-        logger.info(`monitorSingleAccount descriptor: ${JSON.stringify(descriptor)}`);
-        
-        // 尝试安全地访问 monitorSingleAccount
-        let monitorSingleAccountType = 'unknown';
-        try {
-          monitorSingleAccountType = typeof monitorModule.monitorSingleAccount;
-        } catch (e) {
-          monitorSingleAccountType = `error: ${e.message}`;
-        }
-        logger.info(`monitorModule.monitorSingleAccount: ${monitorSingleAccountType}`);
-        
-        logger.info(`monitorModule.monitorDingtalkProvider: ${typeof monitorModule.monitorDingtalkProvider}`);
-        
-        // 使用直接属性访问而不是解构
-        const monitorDingtalkProvider = monitorModule.monitorDingtalkProvider;
-        logger.info(`解构 monitorDingtalkProvider 完成: ${typeof monitorDingtalkProvider}`);
-        
-        if (!monitorDingtalkProvider) {
-          ctx.log?.error?.(`monitorDingtalkProvider 未找到！可用导出: ${Object.keys(monitorModule).join(', ')}`);
-          throw new Error("monitorDingtalkProvider not found in monitor module");
-        }
-        logger.info(`monitorDingtalkProvider 找到`);
-        
-        logger.info(`account 解析完成: ${account.accountId}, enabled=${account.enabled}, configured=${account.configured}`);
-        
-        ctx.setStatus({ accountId: ctx.accountId, port: null });
-        ctx.log?.info(
-          `starting dingtalk-connector[${ctx.accountId}] (mode: stream)`,
-        );
-        logger.info(`准备调用 monitorDingtalkProvider`);
-        
-        const result = await monitorDingtalkProvider({
+        return await monitorDingtalkProvider({
           config: ctx.cfg,
           runtime: ctx.runtime,
           abortSignal: ctx.abortSignal,
           accountId: ctx.accountId,
         });
-        logger.info(`monitorDingtalkProvider 调用完成`);
-        return result;
-      } catch (error) {
-        ctx.log?.error?.(`startAccount 发生错误: ${error.message}`);
-        ctx.log?.error?.(`错误堆栈: ${error.stack}`);
-        throw error;
+      } catch (err: any) {
+        // 打印真实错误到 stderr，绕过框架 log 系统（框架的 runtime.log 可能未初始化）
+        console.error(`[dingtalk-connector][${ctx.accountId}] startAccount error:`, err?.message ?? err, err?.stack);
+        throw err;
       }
     },
   },

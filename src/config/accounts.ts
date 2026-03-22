@@ -222,9 +222,21 @@ export function resolveDingtalkAccount(params: {
 
 /**
  * List all enabled and configured accounts.
+ * Deduplicates by clientId to avoid creating multiple connections with the same credentials.
  */
 export function listEnabledDingtalkAccounts(cfg: ClawdbotConfig): ResolvedDingtalkAccount[] {
-  return listDingtalkAccountIds(cfg)
+  const accounts = listDingtalkAccountIds(cfg)
     .map((accountId) => resolveDingtalkAccount({ cfg, accountId }))
     .filter((account) => account.enabled && account.configured);
+  
+  // Deduplicate by clientId to avoid multiple connections with same credentials
+  const seen = new Set<string>();
+  return accounts.filter((account) => {
+    if (!account.clientId) return true;
+    if (seen.has(account.clientId)) {
+      return false;
+    }
+    seen.add(account.clientId);
+    return true;
+  });
 }

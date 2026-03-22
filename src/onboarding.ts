@@ -112,7 +112,7 @@ async function noteDingtalkCredentialHelp(prompter: WizardPrompter): Promise<voi
     [
       "1) Go to DingTalk Open Platform (open-dev.dingtalk.com)",
       "2) Create an enterprise internal app",
-      "3) Get App Key (Client ID) and App Secret (Client Secret) from Credentials page",
+      "3) Get Client ID and Client Secret from Credentials page",
       "4) Enable required permissions: im:message, im:chat",
       "5) Publish the app or add it to a test group",
       "Tip: you can also set DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET env vars.",
@@ -128,7 +128,7 @@ async function promptDingtalkClientId(params: {
 }): Promise<string> {
   const clientId = String(
     await params.prompter.text({
-      message: "Enter DingTalk App Key (Client ID)",
+      message: "Enter DingTalk Client ID",
       initialValue: params.initialValue,
       validate: (value) => (value?.trim() ? undefined : "Required"),
     }),
@@ -274,36 +274,96 @@ export const dingtalkOnboardingAdapter: ChannelOnboardingAdapter = {
       await noteDingtalkCredentialHelp(prompter);
     }
 
-    const clientSecretResult = await promptSingleChannelSecretInput({
-      cfg: next,
-      prompter,
-      providerHint: "dingtalk",
-      credentialLabel: "App Secret (Client Secret)",
-      accountConfigured: Boolean(resolved),
-      canUseEnv,
-      hasConfigToken: hasConfigSecret,
-      envPrompt: "DINGTALK_CLIENT_ID + DINGTALK_CLIENT_SECRET detected. Use env vars?",
-      keepPrompt: "DingTalk App Secret already configured. Keep it?",
-      inputPrompt: "Enter DingTalk App Secret (Client Secret)",
-      preferredEnvVar: "DINGTALK_CLIENT_SECRET",
-    });
-
-    if (clientSecretResult.action === "use-env") {
-      next = {
-        ...next,
-        channels: {
-          ...next.channels,
-          "dingtalk-connector": { ...next.channels?.["dingtalk-connector"], enabled: true },
-        },
-      };
-    } else if (clientSecretResult.action === "set") {
-      clientSecret = clientSecretResult.value;
-      clientSecretProbeValue = clientSecretResult.resolvedValue;
-      clientId = await promptDingtalkClientId({
-        prompter,
-        initialValue:
-          normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
+    // Check if we can use environment variables
+    if (canUseEnv) {
+      const useEnv = await prompter.confirm({
+        message: "DINGTALK_CLIENT_ID + DINGTALK_CLIENT_SECRET detected. Use env vars?",
+        initialValue: true,
       });
+
+      if (useEnv) {
+        next = {
+          ...next,
+          channels: {
+            ...next.channels,
+            "dingtalk-connector": { ...next.channels?.["dingtalk-connector"], enabled: true },
+          },
+        };
+        // Environment variables will be used, skip manual input
+      } else {
+        // User chose not to use env vars, proceed to manual input
+        canUseEnv = false;
+      }
+    }
+
+    // If not using env vars, prompt for credentials
+    if (!canUseEnv) {
+      // Check if we should keep existing configuration
+      if (resolved && hasConfigSecret) {
+        const keepExisting = await prompter.confirm({
+          message: "DingTalk credentials already configured. Keep them?",
+          initialValue: true,
+        });
+
+        if (!keepExisting) {
+          // User wants to reconfigure, proceed to input
+          // Step 1: Prompt for Client ID first
+          clientId = await promptDingtalkClientId({
+            prompter,
+            initialValue:
+              normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
+          });
+
+          // Step 2: Then prompt for Client Secret
+          const clientSecretResult = await promptSingleChannelSecretInput({
+            cfg: next,
+            prompter,
+            providerHint: "dingtalk",
+            credentialLabel: "Client Secret",
+            accountConfigured: false, // Force new input
+            canUseEnv: false, // Already handled above
+            hasConfigToken: false, // Force new input
+            envPrompt: "", // Not used
+            keepPrompt: "", // Not used
+            inputPrompt: "Enter DingTalk Client Secret",
+            preferredEnvVar: "DINGTALK_CLIENT_SECRET",
+          });
+
+          if (clientSecretResult.action === "set") {
+            clientSecret = clientSecretResult.value;
+            clientSecretProbeValue = clientSecretResult.resolvedValue;
+          }
+        }
+        // If keepExisting is true, we don't modify anything
+      } else {
+        // No existing config, prompt for new credentials
+        // Step 1: Prompt for Client ID first
+        clientId = await promptDingtalkClientId({
+          prompter,
+          initialValue:
+            normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
+        });
+
+        // Step 2: Then prompt for Client Secret
+        const clientSecretResult = await promptSingleChannelSecretInput({
+          cfg: next,
+          prompter,
+          providerHint: "dingtalk",
+          credentialLabel: "Client Secret",
+          accountConfigured: false,
+          canUseEnv: false,
+          hasConfigToken: false,
+          envPrompt: "",
+          keepPrompt: "",
+          inputPrompt: "Enter DingTalk Client Secret",
+          preferredEnvVar: "DINGTALK_CLIENT_SECRET",
+        });
+
+        if (clientSecretResult.action === "set") {
+          clientSecret = clientSecretResult.value;
+          clientSecretProbeValue = clientSecretResult.resolvedValue;
+        }
+      }
     }
 
     if (clientId && clientSecret) {
