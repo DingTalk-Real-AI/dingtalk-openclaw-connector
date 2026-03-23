@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🐛 **发送人昵称与群名称未正确传递给 AI** - 修复会话上下文中 `SenderName` 字段错误传入用户 ID（而非昵称）、`GroupSubject` 字段错误传入群 ID（而非群名称）的问题，AI 现在能正确获取发送人的钉钉昵称和所在群的名称  
   **Sender nickname and group name not passed to AI** - Fixed `SenderName` being set to user ID instead of display name, and `GroupSubject` being set to group ID instead of group title; AI now correctly receives the sender's nickname and group name
 
+### 改进 / Improvements
+- ✨ **消息队列繁忙时的即时排队反馈** - 当用户快速连续发送消息、上一条仍在处理中时，新消息现在会立即弹出一条 AI Card 气泡显示排队提示文案，同时贴上"思考中"表情。等轮到该消息处理时，气泡**原地更新**为最终回复内容，不会额外多发一条消息  
+  **Instant queue acknowledgement when busy** - When a user sends messages in quick succession while the previous one is still processing, the new message now immediately shows an AI Card bubble with a queuing acknowledgement and a "thinking" emoji. When it's the message's turn, the same bubble is **updated in place** with the final reply — no extra message is sent
+
 ## [0.8.2] - 2026-03-22
 
 ### 修复 / Fixes

@@ -39,6 +39,8 @@ import {
   AUDIO_MARKER_PATTERN
 } from "../services/media/index.ts";
 import { sendProactive, type AICardTarget } from "../services/messaging/index.ts";
+import { createAICardForTarget, streamAICard, type AICardInstance } from "../services/messaging/card.ts";
+import { QUEUE_BUSY_ACK_PHRASES } from "../utils/constants.ts";
 import { createDingtalkReplyDispatcher, normalizeSlashCommand } from "../reply-dispatcher.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
@@ -529,6 +531,10 @@ interface HandleMessageParams {
   runtime?: RuntimeEnv;
   log?: any;
   cfg: ClawdbotConfig;
+  /** 队列繁忙时预先创建的 AI Card，处理时直接复用而非新建，实现"占位→更新"效果 */
+  preCreatedCard?: AICardInstance;
+  /** 队列繁忙时已在入队阶段提前贴上了思考中表情，内部处理时跳过重复贴表情 */
+  emotionAlreadyAdded?: boolean;
 }
 
 /**
@@ -890,9 +896,12 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
   if (!userContent && imageLocalPaths.length === 0) return;
 
   // ===== 贴处理中表情 =====
-  addEmotionReply(config, data, log).catch(err => {
-    log?.warn?.(`贴表情失败: ${err.message}`);
-  });
+  // 若队列繁忙时已在入队阶段提前贴过表情，此处跳过，避免重复贴
+  if (!params.emotionAlreadyAdded) {
+    addEmotionReply(config, data, log).catch(err => {
+      log?.warn?.(`贴表情失败: ${err.message}`);
+    });
+  }
 
   // ===== 异步模式：立即回执 + 后台执行 + 主动推送结果 =====
   const asyncMode = config.asyncMode === true;
@@ -1002,6 +1011,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
       messageCreateTimeMs: Date.now(),
       sessionWebhook: data.sessionWebhook,
       asyncMode,
+      preCreatedCard: params.preCreatedCard,
     });
 
     // 使用 SDK 的 dispatchReplyFromConfig
@@ -1218,14 +1228,46 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     // 更新会话活跃时间
     sessionLastActivity.set(queueKey, Date.now());
 
+    // 检测队列是否繁忙（入队前检查，此时 previousTask 尚未被当前消息覆盖）
+    const isQueueBusy = sessionQueues.has(queueKey);
+
     // 获取该会话+agent的上一个处理任务
     const previousTask = sessionQueues.get(queueKey) || Promise.resolve();
+
+    // 队列繁忙时：立即创建一个 AI Card 显示排队 ACK 文案，并将 Card 实例传入处理任务
+    // 处理完成后 reply-dispatcher 会复用此 Card 更新为最终结果，用户看到的是同一条消息的内容变化
+    let preCreatedCard: AICardInstance | undefined;
+    if (isQueueBusy) {
+      const ackPhrases = QUEUE_BUSY_ACK_PHRASES;
+      const ackText = ackPhrases[Math.floor(Math.random() * ackPhrases.length)];
+      const cardTarget: AICardTarget = isDirect
+        ? { type: 'user', userId: senderId }
+        : { type: 'group', openConversationId: data.conversationId };
+
+      try {
+        const card = await createAICardForTarget(config, cardTarget, log);
+        if (card) {
+          // 用 streamAICard 把 ACK 文案写入 Card（INPUTING 状态，表示正在处理中）
+          await streamAICard(card, ackText, false, config, log);
+          preCreatedCard = card;
+          log?.info?.(`[队列] 队列繁忙，已创建排队 ACK Card，cardInstanceId=${card.cardInstanceId}`);
+        } else {
+          log?.warn?.(`[队列] 创建排队 ACK Card 失败（返回 null），跳过 ACK`);
+        }
+        // 在发送 ACK 的同时立即贴上思考中表情，让用户知道消息已被接收
+        addEmotionReply(config, data, log).catch(err => {
+          log?.warn?.(`[队列] 贴排队表情失败: ${err.message}`);
+        });
+      } catch (ackErr: any) {
+        log?.warn?.(`[队列] 创建排队 ACK Card 异常: ${ackErr?.message || ackErr}`);
+      }
+    }
 
     // 创建当前消息的处理任务
     const currentTask = previousTask
       .then(async () => {
         log?.info?.(`[队列] 开始处理消息，queueKey=${queueKey}`);
-        await handleDingTalkMessageInternal(params);
+        await handleDingTalkMessageInternal({ ...params, preCreatedCard, emotionAlreadyAdded: isQueueBusy });
         log?.info?.(`[队列] 消息处理完成，queueKey=${queueKey}`);
       })
       .catch((err: any) => {

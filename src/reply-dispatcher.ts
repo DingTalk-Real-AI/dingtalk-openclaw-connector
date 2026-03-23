@@ -56,6 +56,8 @@ export type CreateDingtalkReplyDispatcherParams = {
   messageCreateTimeMs?: number;
   sessionWebhook: string;
   asyncMode?: boolean;
+  /** 队列繁忙时预先创建的 AI Card，startStreaming 时直接复用而非新建 */
+  preCreatedCard?: AICardInstance;
 };
 
 export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatcherParams) {
@@ -69,6 +71,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     accountId,
     sessionWebhook,
     asyncMode = false,
+    preCreatedCard,
   } = params;
 
   const account = resolveDingtalkAccount({ cfg, accountId });
@@ -225,6 +228,15 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     }
     if (isCreatingCard) {
       log.info(`[DingTalk][startStreaming] AI Card 正在创建中，跳过`);
+      return;
+    }
+
+    // 若队列繁忙时已预先创建了 Card（显示排队 ACK 文案），直接复用，无需新建
+    // 这样用户看到的是同一条消息从 ACK 文案更新为最终结果，而不是多出一条消息
+    if (preCreatedCard) {
+      log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
+      currentCardTarget = preCreatedCard;
+      accumulatedText = "";
       return;
     }
     

@@ -2,9 +2,9 @@
 
 ## 🎉 新版本亮点 / Highlights
 
-本次更新修复了五个问题：与 OpenClaw Gateway 新版本（2026.3.22+）的兼容性问题、多 Agent 路由在 `sharedMemoryAcrossConversations` 配置下的路由错误、发送图片时的异常问题、发送人昵称和群名称未正确传递给 AI 的问题，以及 AI 卡片流式更新（progressive updates）失效的问题。
+本次更新修复了五个问题并带来一项体验改进：与 OpenClaw Gateway 新版本（2026.3.22+）的兼容性问题、多 Agent 路由在 `sharedMemoryAcrossConversations` 配置下的路由错误、发送图片时的异常问题、发送人昵称和群名称未正确传递给 AI 的问题，以及 AI 卡片流式更新（progressive updates）失效的问题；同时优化了消息队列繁忙时的用户体验。
 
-This release fixes five issues: a compatibility issue with newer OpenClaw Gateway versions (2026.3.22+), incorrect multi-Agent routing when `sharedMemoryAcrossConversations` is enabled, an image sending failure, sender nickname and group name not being correctly passed to the AI, and AI card progressive updates not working.
+This release fixes five issues and brings one UX improvement: a compatibility issue with newer OpenClaw Gateway versions (2026.3.22+), incorrect multi-Agent routing when `sharedMemoryAcrossConversations` is enabled, an image sending failure, sender nickname and group name not being correctly passed to the AI, and AI card progressive updates not working; plus an improved experience when the message queue is busy.
 
 ## 🐛 修复 / Fixes
 
@@ -31,6 +31,12 @@ This release fixes five issues: a compatibility issue with newer OpenClaw Gatewa
 - **发送人昵称与群名称未正确传递给 AI / Sender Nickname and Group Name Not Passed to AI**  
   修复了会话上下文中 `SenderName` 字段错误传入用户 ID（而非昵称）、`GroupSubject` 字段错误传入群 ID（而非群名称）的问题。修复后，AI 能正确获取发送人的钉钉昵称和所在群的名称，有助于 AI 更好地理解对话场景。  
   Fixed an issue where the `SenderName` field in the session context was incorrectly set to the user ID instead of the display name, and `GroupSubject` was set to the group ID instead of the group title. After the fix, the AI correctly receives the sender's DingTalk nickname and the group name, enabling better contextual understanding.
+
+## ✨ 功能与体验改进 / Features & Improvements
+
+- **消息队列繁忙时的即时排队反馈 / Instant Queue Acknowledgement When Busy**  
+  当用户快速连续发送消息、上一条仍在处理中时，新消息现在会立即弹出一条 AI Card 气泡，显示"上一条还没结束，这条我已经记下，稍后按顺序继续处理"等提示文案，同时贴上"思考中"表情，让用户第一时间知道消息已被接收并排队。等轮到该消息处理时，这条气泡会**原地更新**为最终回复内容，不会额外多发一条消息。  
+  When a user sends messages in quick succession while the previous one is still being processed, the new message now immediately shows an AI Card bubble with a queuing acknowledgement (e.g. "Still working on the last one, I've noted this down and will continue in order"), along with a "thinking" emoji reaction. When it's the message's turn to be processed, the same bubble is **updated in place** with the final reply — no extra message is sent.
 
 ## 📥 安装升级 / Installation & Upgrade
 
