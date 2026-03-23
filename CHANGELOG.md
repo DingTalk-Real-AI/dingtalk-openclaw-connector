@@ -5,9 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.3] - 2026-03-23
+## [0.8.3] - 2026-03-24
 
 ### 修复 / Fixes
+- 🐛 **兼容 OpenClaw Gateway 新版本** - 修复在 OpenClaw Gateway 2026.3.22+ 版本下安装插件时报错 `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './plugin-sdk/compat' is not defined by "exports"` 的问题。根因是 `src/runtime.ts` 使用了已被新版 SDK 移除的 `openclaw/plugin-sdk/compat` 子路径，现已改为从 `openclaw/plugin-sdk` 主入口导入，对所有版本（2026.3.1+）均兼容  
+  **Compatible with newer OpenClaw Gateway versions** - Fixed `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './plugin-sdk/compat' is not defined by "exports"` when installing under OpenClaw Gateway 2026.3.22+. Root cause: `src/runtime.ts` imported from the removed `openclaw/plugin-sdk/compat` sub-path; now imports from the `openclaw/plugin-sdk` main entry, compatible with all versions (2026.3.1+)
+
 - ✅ **AI 卡片流式更新延迟优化** - 改动前 `onReplyStart` 串行等待 AI Card 创建（约 500ms~1s），期间 partial reply 全部丢弃，节流间隔 1000ms 也过于保守。改动后 AI Card 创建改为 fire-and-forget 与 AI 生成并行，节流间隔调整为 500ms，流式内容能更早更频繁地呈现  
   **AI card progressive update latency improvement** - Previously `onReplyStart` awaited AI Card creation serially (~500ms–1s), discarding all partial replies during that window, with a 1000ms throttle too conservative for short replies. AI Card creation now runs fire-and-forget in parallel with AI generation; throttle reduced to 500ms for earlier and more frequent streaming updates
 

@@ -2,11 +2,15 @@
 
 ## 🎉 新版本亮点 / Highlights
 
-本次更新修复了四个问题：多 Agent 路由在 `sharedMemoryAcrossConversations` 配置下的路由错误、发送图片时的异常问题、发送人昵称和群名称未正确传递给 AI 的问题，以及 AI 卡片流式更新（progressive updates）失效的问题。
+本次更新修复了五个问题：与 OpenClaw Gateway 新版本（2026.3.22+）的兼容性问题、多 Agent 路由在 `sharedMemoryAcrossConversations` 配置下的路由错误、发送图片时的异常问题、发送人昵称和群名称未正确传递给 AI 的问题，以及 AI 卡片流式更新（progressive updates）失效的问题。
 
-This release fixes four issues: incorrect multi-Agent routing when `sharedMemoryAcrossConversations` is enabled, an image sending failure, sender nickname and group name not being correctly passed to the AI, and AI card progressive updates not working.
+This release fixes five issues: a compatibility issue with newer OpenClaw Gateway versions (2026.3.22+), incorrect multi-Agent routing when `sharedMemoryAcrossConversations` is enabled, an image sending failure, sender nickname and group name not being correctly passed to the AI, and AI card progressive updates not working.
 
 ## 🐛 修复 / Fixes
+
+- **兼容 OpenClaw Gateway 新版本 / Compatible with Newer OpenClaw Gateway Versions**  
+  修复在 OpenClaw Gateway 2026.3.22+ 版本下安装插件时报错 `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './plugin-sdk/compat' is not defined by "exports"` 的问题。根因是 `src/runtime.ts` 使用了已被新版 SDK 移除的 `openclaw/plugin-sdk/compat` 子路径，现已改为从 `openclaw/plugin-sdk` 主入口导入，对所有版本（2026.3.1+）均兼容。  
+  Fixed an error `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './plugin-sdk/compat' is not defined by "exports"` when installing the plugin under OpenClaw Gateway 2026.3.22+. The root cause was `src/runtime.ts` importing from the `openclaw/plugin-sdk/compat` sub-path which was removed in newer SDK versions. Now imports from the `openclaw/plugin-sdk` main entry, compatible with all versions (2026.3.1+).
 
 - **AI 卡片流式更新延迟 / AI Card Progressive Updates Delayed**  
   优化了 AI 卡片流式更新的响应速度。改动前，`onReplyStart` 中 `await startStreaming()` 串行等待 AI Card 创建完成（约 500ms~1s），期间收到的 partial reply 全部被丢弃，Card 创建好之后才开始流式更新；同时节流间隔 1000ms 过于保守，对于 2 秒内完成的短回复几乎跳过所有中间更新。改动后，AI Card 创建改为 fire-and-forget 模式与 AI 生成并行，`onPartialReply` 到来时等待 Card 就绪后立即更新，节流间隔调整为 500ms，流式内容能更早、更频繁地呈现给用户。  
