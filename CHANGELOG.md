@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-03-24
+
+### 修复 / Fixes
+- 🐛 **兼容旧版 OpenClaw Gateway（createPluginRuntimeStore 缺失）** - 修复在旧版 OpenClaw Gateway 上加载插件时报错 `TypeError: (0 , _pluginSdk.createPluginRuntimeStore) is not a function` 的问题。根因是 `src/runtime.ts` 直接从 `openclaw/plugin-sdk` 导入 `createPluginRuntimeStore`，而该函数在旧版 SDK 中并不存在。现已替换为内联实现的 `createRuntimeStore`，功能完全等价，兼容所有版本的 OpenClaw  
+  **Compatible with older OpenClaw Gateway (missing createPluginRuntimeStore)** - Fixed `TypeError: (0 , _pluginSdk.createPluginRuntimeStore) is not a function` when loading the plugin on older OpenClaw Gateway versions. Root cause: `src/runtime.ts` imported `createPluginRuntimeStore` from `openclaw/plugin-sdk`, which doesn't exist in older SDK versions. Replaced with an inline `createRuntimeStore` implementation that is fully equivalent and compatible with all OpenClaw versions
+
+- 🐛 **openclaw 依赖版本约束放宽** - 将 `package.json` 中的 `"openclaw": "^2026.3.0"` 改为 `"openclaw": "*"`，避免版本约束导致安装失败或与用户已安装版本冲突  
+  **Relaxed openclaw dependency version constraint** - Changed `"openclaw": "^2026.3.0"` to `"openclaw": "*"` in `package.json` to avoid installation failures or conflicts with the user's installed version
+
 ## [0.8.3] - 2026-03-24
 
 ### 修复 / Fixes
