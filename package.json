@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.3-beta",
+  "version": "0.8.4",
   "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
   "main": "index.ts",
   "type": "module",
