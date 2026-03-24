@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.4] - 2026-03-24
+## [0.8.5] - 2026-03-24
 
 ### 修复 / Fixes
 - 🐛 **群聊消息处理崩溃** - 修复群聊时报错 `TypeError: Cannot read properties of undefined (reading 'config')` 导致 Agent 无法回复的问题。根因是 `src/policy.ts` 中 `resolveDingtalkGroupToolPolicy` 函数的参数签名与 OpenClaw SDK 的 `ChannelGroupContext` 接口不匹配，函数期望接收 `account: ResolvedDingtalkAccount`，但框架实际传入 `{ cfg, groupId, accountId, ... }`，导致 `account` 为 `undefined`。现已修正参数签名，内部通过 `resolveDingtalkAccount()` 正确获取账号信息。单聊不受影响。  
