@@ -17,10 +17,15 @@ export const DEFAULT_ACCOUNT_ID = "__default__" as const;
 
 /**
  * 规范化账号 ID
+ *
+ * 注意：账号 ID 保留原始大小写，仅做 trim 处理。
+ * 不做 toLowerCase，因为配置文件中的 accounts key 是大小写敏感的，
+ * 如 "zhizaoDashuIP" 与 "zhizaodashuip" 是不同的账号。
+ * 特殊值 "default"（不区分大小写）和空字符串映射到 DEFAULT_ACCOUNT_ID。
  */
 export function normalizeAccountId(accountId: string): string {
-  const trimmed = accountId.trim().toLowerCase();
-  if (trimmed === "default" || trimmed === "") {
+  const trimmed = accountId.trim();
+  if (trimmed.toLowerCase() === "default" || trimmed === "") {
     return DEFAULT_ACCOUNT_ID;
   }
   return trimmed;

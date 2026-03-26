@@ -256,26 +256,37 @@ export function markMessageProcessed(messageId: string): void {
  *   1. 协议层去重（headers.messageId）：拦截同一次投递的重复回调
  *   2. 业务层去重（data.msgId）：拦截 ~60 秒后服务端因未收到业务回复而触发的重发
  *
+ * 重要：key 必须带 accountId 前缀，避免多账号（多机器人）场景下，
+ * 同一条群消息 @多个机器人时，不同机器人收到相同 msgId 导致误判为重复消息。
+ *
+ * @param accountId         - 当前账号 ID（用于命名空间隔离，防止多账号误判）
  * @param protocolMessageId - res.headers.messageId（WebSocket 协议层投递 ID）
  * @param businessMsgId     - data.msgId（钉钉业务层消息 ID，来自 JSON.parse(res.data).msgId）
  * @returns true 表示消息已处理过（应跳过），false 表示首次处理（已标记为已处理）
  */
 export function checkAndMarkDingtalkMessage(
+  accountId: string,
   protocolMessageId: string | undefined,
   businessMsgId: string | undefined,
 ): boolean {
+  // 加 accountId 前缀，确保不同机器人账号的去重缓存互相隔离
+  // 场景：群聊 @多个机器人时，钉钉推送给每个机器人的消息 msgId 相同，
+  // 若不隔离，第二个机器人会被误判为重复消息而跳过处理。
+  const scopedProtocolId = protocolMessageId ? `${accountId}:${protocolMessageId}` : undefined;
+  const scopedBusinessId = businessMsgId ? `${accountId}:${businessMsgId}` : undefined;
+
   // 先完整检查两个 ID，再决定是否标记
   // 不能提前 return，否则命中去重的那条路径会漏掉对另一个 ID 的标记
-  const isProtocolDuplicate = protocolMessageId ? isMessageProcessed(protocolMessageId) : false;
-  const isBusinessDuplicate = businessMsgId ? isMessageProcessed(businessMsgId) : false;
+  const isProtocolDuplicate = scopedProtocolId ? isMessageProcessed(scopedProtocolId) : false;
+  const isBusinessDuplicate = scopedBusinessId ? isMessageProcessed(scopedBusinessId) : false;
 
   if (isProtocolDuplicate || isBusinessDuplicate) {
     return true;
   }
 
   // 首次处理：同时标记两个 ID，确保后续任意一个 ID 都能命中去重
-  if (protocolMessageId) markMessageProcessed(protocolMessageId);
-  if (businessMsgId) markMessageProcessed(businessMsgId);
+  if (scopedProtocolId) markMessageProcessed(scopedProtocolId);
+  if (scopedBusinessId) markMessageProcessed(scopedBusinessId);
 
   return false;
 }

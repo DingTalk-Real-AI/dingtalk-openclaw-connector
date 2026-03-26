@@ -100,15 +100,26 @@ export async function monitorSingleAccount(
   logger.info(`Initializing with clientId: ${clientIdStr.substring(0, 8)}...`);
   logger.info(`WebSocket keepAlive: false (using application-layer heartbeat)`);
 
-  // 🔧 修复代理问题：禁用 axios 的代理配置
-  // 问题：dingtalk-stream SDK 内部使用 axios，会被系统 PAC 文件影响
-  // 解决：在导入 dingtalk-stream 之前，先导入 axios 并禁用全局代理
-  // 注意：这会影响 dingtalk-stream SDK 内部的 axios，与 src/utils/http-client.ts 是两个不同的配置
+  // 🔧 配置 dingtalk-stream SDK 的代理策略
+  //
+  // dingtalk-stream SDK 内部使用 axios 发起 HTTP 请求（获取 WebSocket endpoint）。
+  // 策略与 src/utils/http-client.ts 保持一致：
+  //   - 默认禁用代理：避免阿里内网 PAC 文件将 *.dingtalk.com 路由到内网代理，
+  //     导致外网环境连接超时。
+  //   - DINGTALK_FORCE_PROXY=true：保留系统代理，供需要通过代理访问外网的内网环境使用。
+  //
+  // 注意：这里修改的是 axios 全局默认值，会影响 dingtalk-stream SDK 内部的 axios 实例。
+  // src/utils/http-client.ts 中的专用实例已在创建时单独配置，不受此处影响。
   try {
     const axios = (await import("axios")).default;
     if (axios.defaults) {
-      axios.defaults.proxy = false; // 禁用全局代理
-      logger.debug(`已禁用 axios 全局代理配置（用于 dingtalk-stream SDK）`);
+      const shouldDisableProxy = process.env.DINGTALK_FORCE_PROXY !== 'true';
+      if (shouldDisableProxy) {
+        axios.defaults.proxy = false;
+        logger.debug(`已禁用 axios 全局代理（dingtalk-stream SDK），如需代理请设置 DINGTALK_FORCE_PROXY=true`);
+      } else {
+        logger.debug(`保留系统代理配置（DINGTALK_FORCE_PROXY=true），dingtalk-stream SDK 将通过代理连接`);
+      }
     }
   } catch (err) {
     logger.warn(`无法配置 axios 代理设置: ${err}`);
@@ -491,7 +502,7 @@ export async function monitorSingleAccount(
       // 协议层去重（headers.messageId）：拦截同一次投递的重复回调
       // 注意：业务层去重（data.msgId）在 JSON 解析后执行，两层合并在 checkAndMarkDingtalkMessage 中
       // 此处仅做协议层的快速预检，避免不必要的 JSON 解析
-      if (messageId && checkAndMarkDingtalkMessage(messageId, undefined)) {
+      if (messageId && checkAndMarkDingtalkMessage(accountId, messageId, undefined)) {
         processedCount++;
         logger.warn(`⚠️ 检测到重复消息（协议层），跳过处理：messageId=${messageId} (${processedCount}/${receivedCount})`);
         logger.info(`========== 消息处理结束（重复） ==========\n`);
@@ -545,12 +556,6 @@ export async function monitorSingleAccount(
         // 钉钉重发时 headers.messageId 是新值，但 data.msgId 不变，
         // checkAndMarkDingtalkMessage 会命中 data.msgId 并返回 true 拦截重发。
         const businessMsgId = data.msgId;
-        if (checkAndMarkDingtalkMessage(undefined, businessMsgId)) {
-          processedCount++;
-          logger.warn(`⚠️ 检测到钉钉服务端重发消息，跳过处理：msgId=${businessMsgId} (${processedCount}/${receivedCount})`);
-          logger.info(`========== 消息处理结束（业务层去重） ==========\n`);
-          return;
-        }
 
         // 记录消息内容（简化版，避免过长）
         let contentPreview = "N/A";

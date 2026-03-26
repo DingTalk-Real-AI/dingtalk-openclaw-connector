@@ -62,7 +62,7 @@ import { QUEUE_BUSY_ACK_PHRASES } from "../utils/constants.ts";
 import { createDingtalkReplyDispatcher, normalizeSlashCommand } from "../reply-dispatcher.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
-import { createLoggerFromConfig } from '../utils/logger.ts';
+import { createLoggerFromConfig } from '../utils/index.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -1033,47 +1033,23 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     });
 
     // 使用 SDK 的 dispatchReplyFromConfig
-    log?.info?.(`调用 withReplyDispatcher，asyncMode=${asyncMode}`);
-    log?.info?.(`准备调用 withReplyDispatcher...`);
-    
-    let dispatchResult;
-    try {
-      dispatchResult = await core.channel.reply.withReplyDispatcher({
-        dispatcher,
-        onSettled: () => {
-          log?.info?.(`onSettled 被调用`);
-          markDispatchIdle();
-        },
-        run: async () => {
-          log?.info?.(`run 被调用，开始 dispatchReplyFromConfig`);
-          log?.info?.(`ctxPayload.SessionKey=${ctxPayload.SessionKey}`);
-          log?.info?.(`ctxPayload.Body 长度=${ctxPayload.Body?.length || 0}`);
-          log?.info?.(`replyOptions keys=${Object.keys(replyOptions).join(',')}`);
-          
-          const result = await core.channel.reply.dispatchReplyFromConfig({
-            ctx: ctxPayload,
-            cfg,
-            dispatcher,
-            replyOptions,
-          });
-          
-          log?.info?.(`dispatchReplyFromConfig 返回: queuedFinal=${result.queuedFinal}, counts=${JSON.stringify(result.counts)}`);
-          return result;
-        },
-      });
-      log?.info?.(`withReplyDispatcher 返回成功`);
-    } catch (dispatchErr: any) {
-      log?.error?.(`withReplyDispatcher 抛出异常: ${dispatchErr?.message || dispatchErr}`);
-      log?.error?.(`异常堆栈: ${dispatchErr?.stack || 'no stack'}`);
-      log?.error?.(`消息处理异常，但不阻塞后续消息: ${dispatchErr?.message || dispatchErr}`);
+    const dispatchResult = await core.channel.reply.withReplyDispatcher({
+      dispatcher,
+      onSettled: () => {
+        markDispatchIdle();
+      },
+      run: async () => {
+        const result = await core.channel.reply.dispatchReplyFromConfig({
+          ctx: ctxPayload,
+          cfg,
+          dispatcher,
+          replyOptions,
+        });
+        return result;
+      },
+    });
 
-      // ⚠️ 不要直接 throw，避免阻塞后续消息处理
-      // 记录错误后继续执行，确保后续消息能正常处理
-      dispatchResult = { queuedFinal: false, counts: { final: 0, partial: 0, tool: 0 } };
-    }
-    
     const { queuedFinal, counts } = dispatchResult;
-    log?.info?.(`SDK dispatch 完成: queuedFinal=${queuedFinal}, replies=${counts.final}, asyncMode=${asyncMode}`);
 
     // ===== 异步模式：主动推送最终结果 =====
     if (asyncMode) {

@@ -97,12 +97,12 @@ describe('core functionality', () => {
 
       cleanupProcessedMessages();
 
-      const isDuplicate = checkAndMarkDingtalkMessage('proto-id-1', 'biz-id-1');
+      const isDuplicate = checkAndMarkDingtalkMessage('acc-test', 'proto-id-1', 'biz-id-1');
       expect(isDuplicate).toBe(false);
 
-      // 两个 ID 都应被标记为已处理
-      expect(isMessageProcessed('proto-id-1')).toBe(true);
-      expect(isMessageProcessed('biz-id-1')).toBe(true);
+      // 两个 ID 都应被标记为已处理（带 accountId 前缀）
+      expect(isMessageProcessed('acc-test:proto-id-1')).toBe(true);
+      expect(isMessageProcessed('acc-test:biz-id-1')).toBe(true);
     });
 
     it('should return true when protocol messageId is already processed (协议层重复)', async () => {
@@ -111,10 +111,10 @@ describe('core functionality', () => {
 
       cleanupProcessedMessages();
 
-      // 预先标记协议层 ID
-      markMessageProcessed('proto-id-2');
+      // 预先标记协议层 ID（带 accountId 前缀）
+      markMessageProcessed('acc-test:proto-id-2');
 
-      const isDuplicate = checkAndMarkDingtalkMessage('proto-id-2', 'biz-id-2');
+      const isDuplicate = checkAndMarkDingtalkMessage('acc-test', 'proto-id-2', 'biz-id-2');
       expect(isDuplicate).toBe(true);
     });
 
@@ -124,11 +124,11 @@ describe('core functionality', () => {
 
       cleanupProcessedMessages();
 
-      // 首次处理：标记业务层 ID
-      markMessageProcessed('biz-id-3');
+      // 首次处理：标记业务层 ID（带 accountId 前缀）
+      markMessageProcessed('acc-test:biz-id-3');
 
       // 重发时：协议层 ID 是新值，但业务层 ID 不变 → 应被拦截
-      const isDuplicate = checkAndMarkDingtalkMessage('proto-id-3-new', 'biz-id-3');
+      const isDuplicate = checkAndMarkDingtalkMessage('acc-test', 'proto-id-3-new', 'biz-id-3');
       expect(isDuplicate).toBe(true);
     });
 
@@ -138,11 +138,11 @@ describe('core functionality', () => {
 
       cleanupProcessedMessages();
 
-      expect(checkAndMarkDingtalkMessage('proto-only', undefined)).toBe(false);
-      expect(isMessageProcessed('proto-only')).toBe(true);
+      expect(checkAndMarkDingtalkMessage('acc-test', 'proto-only', undefined)).toBe(false);
+      expect(isMessageProcessed('acc-test:proto-only')).toBe(true);
 
       // 再次调用应返回 true
-      expect(checkAndMarkDingtalkMessage('proto-only', undefined)).toBe(true);
+      expect(checkAndMarkDingtalkMessage('acc-test', 'proto-only', undefined)).toBe(true);
     });
 
     it('should work with only businessMsgId provided', async () => {
@@ -151,11 +151,11 @@ describe('core functionality', () => {
 
       cleanupProcessedMessages();
 
-      expect(checkAndMarkDingtalkMessage(undefined, 'biz-only')).toBe(false);
-      expect(isMessageProcessed('biz-only')).toBe(true);
+      expect(checkAndMarkDingtalkMessage('acc-test', undefined, 'biz-only')).toBe(false);
+      expect(isMessageProcessed('acc-test:biz-only')).toBe(true);
 
       // 再次调用应返回 true
-      expect(checkAndMarkDingtalkMessage(undefined, 'biz-only')).toBe(true);
+      expect(checkAndMarkDingtalkMessage('acc-test', undefined, 'biz-only')).toBe(true);
     });
 
     it('should return false when both IDs are undefined', async () => {

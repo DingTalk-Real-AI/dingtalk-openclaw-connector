@@ -5,20 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-03-26
+
+### 修复 / Fixes
+- 🐛 **账号 ID 大小写敏感修复** - 修复 `normalizeAccountId` 函数强制将账号 ID 转为小写（`.toLowerCase()`）导致驼峰命名账号（如 `zhizaoDashuIP`）无法匹配配置的问题。现在账号 ID 仅做 `trim()` 处理，保留原始大小写，与配置文件中的 key 严格匹配  
+  **Account ID case-sensitivity fix** - Fixed `normalizeAccountId` forcibly lowercasing account IDs, which caused camelCase account IDs (e.g., `zhizaoDashuIP`) to fail configuration lookup. Account IDs are now only trimmed, preserving original casing for strict matching against config keys
+
+- 🐛 **WebSocket 连接代理控制统一** - 修复 `src/core/connection.ts` 中 WebSocket 连接未遵循 `DINGTALK_FORCE_PROXY` 环境变量的问题，现在与 HTTP 请求保持一致的代理控制逻辑  
+  **Unified proxy control for WebSocket connections** - Fixed WebSocket connections not respecting the `DINGTALK_FORCE_PROXY` environment variable; proxy control is now consistent with HTTP requests
+
+- 🐛 **媒体下载代理控制统一** - 修复 `src/core/message-handler.ts` 中图片/文件下载时代理配置与 HTTP 客户端不一致的问题，确保所有媒体下载请求统一遵循代理控制策略  
+  **Unified proxy control for media downloads** - Fixed inconsistent proxy configuration for image/file downloads; all media download requests now follow the unified proxy control policy
+
+- 🐛 **多账号消息去重误判** - 修复多账号（多机器人）场景下，同一条群消息 @多个机器人时，第二个机器人因去重缓存未按账号隔离，误将消息判定为重复而跳过处理的问题。`checkAndMarkDingtalkMessage` 的去重 key 现在带有 `accountId` 前缀，不同机器人账号的去重缓存完全隔离  
+  **Multi-account message deduplication false positive** - Fixed an issue where a group message mentioning multiple bots caused the second bot to skip processing due to a shared deduplication cache. The deduplication key now includes an `accountId` prefix, fully isolating each bot's cache
+
 ## [0.8.6] - 2026-03-24
 
 ### 改进 / Improvements
 - ✅ **移除版本校验逻辑** - 删除插件入口 `index.ts` 中的 OpenClaw SDK 版本兼容性检查代码，简化插件启动流程，提升加载性能  
   **Removed version check logic** - Removed OpenClaw SDK version compatibility check code from plugin entry `index.ts`, simplifying plugin startup process and improving load performance
-
-- ✅ **版本号规范化** - 将版本号从 `0.8.3-beta` 升级到 `0.8.6`，移除 beta 标识，标志着插件进入稳定版本阶段  
-  **Version normalization** - Upgraded version from `0.8.3-beta` to `0.8.6`, removing beta tag to mark the plugin entering stable release stage
-
-### 配置 / Configuration
-- 更新 `package.json` 版本号：`0.8.3-beta` → `0.8.6`  
-  Updated `package.json` version: `0.8.3-beta` → `0.8.6`
-- 更新 `openclaw.plugin.json` 版本号：`0.8.3-beta` → `0.8.6`  
-  Updated `openclaw.plugin.json` version: `0.8.3-beta` → `0.8.6`
 
 ## [0.8.5] - 2026-03-24
 
