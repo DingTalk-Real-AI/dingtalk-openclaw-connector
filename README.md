@@ -93,19 +93,67 @@ yarn global add openclaw@latest
 
 ### 步骤 1：安装插件
 
-```bash
-# 推荐：从 npm 安装
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+#### 方法 A：通过 npm 包安装（推荐）
 
-# 或者：从 Git 安装
-openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
+```bash
+openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+```
+
+#### 方法 B：通过本地源码安装
+
+如果你想对插件进行二次开发，可以先克隆仓库：
+
+```bash
+# 1. 克隆插件仓库
+git clone https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
+cd dingtalk-openclaw-connector
+
+# 2. 安装依赖（必需）
+npm install
+
+# 3. 以链接模式安装（方便修改代码后实时生效）
+openclaw plugins install -l .
+```
+
+#### 方法 C：手动安装
+
+1. 将本仓库下载或复制到 `~/.openclaw/extensions/dingtalk-connector`。
+2. 确保包含 `index.ts`、`openclaw.plugin.json` 和 `package.json`。
+3. 在该目录下运行 `npm install` 安装依赖。
+
+#### 方法 D：国内网络环境安装（npm 镜像源）
+
+如果你在国内网络环境下执行 `openclaw plugins install` 时卡在 `Installing plugin dependencies...` 或出现 `npm install failed`，可临时为该次安装指定镜像源：
+
+```bash
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+```
+
+如果插件已处于半安装状态（例如扩展目录存在但依赖未装全），可进入插件目录手动补装依赖：
+
+```bash
+cd ~/.openclaw/extensions/dingtalk-connector
+rm -rf node_modules package-lock.json
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com npm install
+```
+
+如果希望长期生效，可设置 npm 默认镜像：
+
+```bash
+npm config set registry https://registry.npmmirror.com
+```
+
+或写入 `~/.npmrc`：
+
+```
+registry=https://registry.npmmirror.com
 ```
 
 **验证安装**：
 ```bash
 openclaw plugins list
 ```
-你应该看到 `✓ DingTalk Channel (v0.8.0) - loaded`
+你应该看到 `✓ DingTalk Channel (v0.8.6) - loaded`
 
 ---
 

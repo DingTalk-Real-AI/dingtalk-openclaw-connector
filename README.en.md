@@ -61,19 +61,67 @@ Whenever you see `~/.openclaw/openclaw.json` below, it is equivalent to the abov
 
 ### Step 1: Install the Plugin
 
-```bash
-# Recommended: Install from npm
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+#### Method A: Install via npm (Recommended)
 
-# Alternative: Install from Git
-openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
+```bash
+openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+```
+
+#### Method B: Install from Local Source
+
+If you want to develop or modify the plugin, clone the repository first:
+
+```bash
+# 1. Clone the plugin repository
+git clone https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
+cd dingtalk-openclaw-connector
+
+# 2. Install dependencies (required)
+npm install
+
+# 3. Install in link mode (changes take effect immediately)
+openclaw plugins install -l .
+```
+
+#### Method C: Manual Installation
+
+1. Download or copy this repository to `~/.openclaw/extensions/dingtalk-connector`.
+2. Make sure it contains `index.ts`, `openclaw.plugin.json`, and `package.json`.
+3. Run `npm install` in that directory to install dependencies.
+
+#### Method D: China Mainland Installation (npm Mirror)
+
+If `openclaw plugins install` gets stuck at `Installing plugin dependencies...` or fails with `npm install failed` due to network issues in China, you can specify a mirror registry for that install:
+
+```bash
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+```
+
+If the plugin is in a partially installed state (e.g., the extension directory exists but dependencies are incomplete), you can manually reinstall dependencies:
+
+```bash
+cd ~/.openclaw/extensions/dingtalk-connector
+rm -rf node_modules package-lock.json
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com npm install
+```
+
+To make the mirror permanent, set the default npm registry:
+
+```bash
+npm config set registry https://registry.npmmirror.com
+```
+
+Or add to `~/.npmrc`:
+
+```
+registry=https://registry.npmmirror.com
 ```
 
 **Verify installation**:
 ```bash
 openclaw plugins list
 ```
-You should see `✓ DingTalk Channel (v0.8.0) - loaded`
+You should see `✓ DingTalk Channel (v0.8.6) - loaded`
 
 ---
 
