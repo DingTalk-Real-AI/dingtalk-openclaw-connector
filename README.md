@@ -96,9 +96,6 @@ yarn global add openclaw@latest
 ```bash
 # 推荐：从 npm 安装
 openclaw plugins install @dingtalk-real-ai/dingtalk-connector
-
-# 或者：从 Git 安装
-openclaw plugins install https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector.git
 ```
 
 **验证安装**：
