@@ -667,7 +667,7 @@ export async function processFileMarkers(
 
       // 发送文件消息
       if (useProactiveApi && target) {
-        await sendFileProactive(config, target, fileInfo, uploadResult.downloadUrl, log);
+        await sendFileProactive(config, target, fileInfo, uploadResult.cleanMediaId, log);
       } else {
         await sendFileMessage(config, sessionWebhook, fileInfo, uploadResult.downloadUrl, log);
       }
@@ -1108,7 +1108,7 @@ export async function processRawMediaPaths(
         
         if (target) {
           // 文件消息使用下载链接
-          await sendFileProactive(config, target, fileInfo, uploadResult.downloadUrl, log);
+          await sendFileProactive(config, target, fileInfo, uploadResult.cleanMediaId, log);
         }
         statusMessages.push(`✅ 文件已发送: ${fileName}`);
       }
