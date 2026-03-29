@@ -1,22 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockAxiosPost = vi.hoisted(() => vi.fn());
-const mockAxiosGet = vi.hoisted(() => vi.fn());
+const mockHttpPost = vi.hoisted(() => vi.fn());
+const mockHttpGet = vi.hoisted(() => vi.fn());
+const mockOapiHttpGet = vi.hoisted(() => vi.fn());
 
 vi.mock("axios", () => ({
   default: {
-    post: mockAxiosPost,
-    get: mockAxiosGet,
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
+    post: vi.fn(),
+    get: vi.fn(),
   },
+}));
+
+vi.mock("../../src/utils/http-client.ts", () => ({
+  dingtalkHttp: { post: mockHttpPost, get: mockHttpGet },
+  dingtalkOapiHttp: { get: mockOapiHttpGet, post: vi.fn() },
+  dingtalkUploadHttp: { post: vi.fn() },
 }));
 
 describe("utils-legacy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAxiosPost.mockResolvedValue({
+    mockHttpPost.mockResolvedValue({
       data: { accessToken: "tk", expireIn: 7200 },
     });
-    mockAxiosGet.mockResolvedValue({
+    mockOapiHttpGet.mockResolvedValue({
       data: { errcode: 0, access_token: "oapi_tk", expires_in: 7200 },
     });
   });
@@ -28,7 +36,7 @@ describe("utils-legacy", () => {
     const t2 = await getAccessToken(cfg);
     expect(t1).toBe("tk");
     expect(t2).toBe("tk");
-    expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+    expect(mockHttpPost).toHaveBeenCalledTimes(1);
   });
 
   it("getOapiAccessToken caches and returns null on failure", async () => {
@@ -37,14 +45,14 @@ describe("utils-legacy", () => {
     const t = await getOapiAccessToken(cfg);
     expect(t).toBe("oapi_tk");
 
-    mockAxiosGet.mockRejectedValueOnce(new Error("network"));
+    mockOapiHttpGet.mockRejectedValueOnce(new Error("network"));
     const cfg2 = { clientId: "ut-fail", clientSecret: "sec" } as any;
     const t2 = await getOapiAccessToken(cfg2);
     expect(t2).toBeNull();
   });
 
   it("getUnionId caches result and handles failure", async () => {
-    mockAxiosGet
+    mockOapiHttpGet
       .mockResolvedValueOnce({ data: { errcode: 0, access_token: "oapi", expires_in: 7200 } })
       .mockResolvedValueOnce({ data: { unionid: "union-1" } });
 
@@ -95,19 +103,19 @@ describe("utils-legacy", () => {
     const cfg = { clientId: "c", clientSecret: "s" } as any;
     await addEmotionReply(cfg, {});
     await recallEmotionReply(cfg, {});
-    expect(mockAxiosPost).not.toHaveBeenCalled();
+    expect(mockHttpPost).not.toHaveBeenCalled();
   });
 
   it("addEmotionReply posts and handles error", async () => {
     const { addEmotionReply } = await import("../../src/utils/utils-legacy");
-    mockAxiosPost
+    mockHttpPost
       .mockResolvedValueOnce({ data: { accessToken: "tk", expireIn: 7200 } })
       .mockResolvedValueOnce({ data: {} });
     const cfg = { clientId: "em-id", clientSecret: "sec" } as any;
     await addEmotionReply(cfg, { msgId: "m1", conversationId: "c1" });
-    expect(mockAxiosPost).toHaveBeenCalledTimes(2);
+    expect(mockHttpPost).toHaveBeenCalledTimes(2);
 
-    mockAxiosPost.mockRejectedValueOnce(new Error("fail"));
+    mockHttpPost.mockRejectedValueOnce(new Error("fail"));
     const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn() };
     await addEmotionReply(cfg, { msgId: "m2", conversationId: "c2" }, log);
     expect(log.warn).toHaveBeenCalled();

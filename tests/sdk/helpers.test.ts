@@ -29,8 +29,8 @@ describe("sdk/helpers", () => {
       expect(normalizeAccountId("")).toBe(DEFAULT_ACCOUNT_ID);
     });
 
-    it("lowercases and trims non-default ids", () => {
-      expect(normalizeAccountId("  MyAccount  ")).toBe("myaccount");
+    it("trims non-default ids (preserves original case)", () => {
+      expect(normalizeAccountId("  MyAccount  ")).toBe("MyAccount");
     });
   });
 

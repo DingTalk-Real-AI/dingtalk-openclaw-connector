@@ -40,12 +40,17 @@ export type MessageHandler = (params: {
   cfg: ClawdbotConfig;
 }) => Promise<void>;
 
+/** 连接状态变更回调，用于向框架报告 connected / lastInboundAt 等字段 */
+export type OnStatusChange = (patch: Record<string, unknown>) => void;
+
 export type MonitorDingtalkAccountOpts = {
   cfg: ClawdbotConfig;
   account: ResolvedDingtalkAccount;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   messageHandler: MessageHandler;
+  /** 可选：连接状态变更时回调，用于更新 UI 显示的 Connected / Last inbound 字段 */
+  onStatusChange?: OnStatusChange;
 };
 
 // ============ 连接配置 ============
@@ -64,7 +69,7 @@ const MAX_BACKOFF_DELAY = 30 * 1000; // 30 秒
 export async function monitorSingleAccount(
   opts: MonitorDingtalkAccountOpts,
 ): Promise<void> {
-  const { cfg, account, runtime, abortSignal, messageHandler } = opts;
+  const { cfg, account, runtime, abortSignal, messageHandler, onStatusChange } = opts;
   const { accountId } = account;
 
   // 保存 cfg 以便传递给 messageHandler
@@ -279,6 +284,9 @@ export async function monitorSingleAccount(
       connectionEstablishedTime = Date.now(); // 重置连接建立时间
       reconnectAttempts = 0; // 重连成功，重置计数
 
+      // 重连成功，向框架报告 connected: true
+      onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
+
       logger.info(`✅ 重连成功 (socket 状态=${client.socket?.readyState})`);
     } catch (err: any) {
       reconnectAttempts++;
@@ -324,6 +332,9 @@ export async function monitorSingleAccount(
       logger.info(
         `WebSocket close: code=${code}, reason=${reason || "未知"}, isStopped=${isStopped}`,
       );
+
+      // 连接断开时，向框架报告 connected: false
+      onStatusChange?.({ connected: false });
 
       if (isStopped) {
         return;
@@ -481,6 +492,10 @@ export async function monitorSingleAccount(
     client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {
       receivedCount++;
       lastMessageTime = Date.now();
+
+      // 收到消息时，向框架报告 lastInboundAt（用于 UI 显示 "Last inbound"）
+      onStatusChange?.({ lastInboundAt: Date.now() });
+
       const messageId = res.headers?.messageId;
       const timestamp = new Date().toISOString();
 
@@ -618,6 +633,9 @@ export async function monitorSingleAccount(
       logger.info(
         `✅ 自定义 keepAlive: true (10 秒心跳，90 秒超时), 指数退避重连`,
       );
+
+      // 初次连接成功，向框架报告 connected: true
+      onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
 
       // 启动自定义心跳检测
       const cleanupKeepAlive = startKeepAlive();

@@ -5,9 +5,16 @@ const mockAxiosGet = vi.hoisted(() => vi.fn());
 const mockAxiosPost = vi.hoisted(() => vi.fn());
 vi.mock('axios', () => ({
   default: {
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
     get: mockAxiosGet,
     post: mockAxiosPost,
   },
+}));
+
+vi.mock('../../src/utils/http-client.ts', () => ({
+  dingtalkHttp: { post: mockAxiosPost, get: mockAxiosGet, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkOapiHttp: { get: mockAxiosGet, post: mockAxiosPost, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkUploadHttp: { post: mockAxiosPost, get: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
 }));
 
 // Mock fs
@@ -79,12 +86,15 @@ describe('upload functionality', () => {
 
       expect(result).toBe('media123');
 
-      // 契约断言：URL 必须包含 access_token 与 type
+      // 契约断言：URL 必须是 /media/upload，access_token 和 type 通过 params 传递
       const call = mockAxiosPost.mock.calls[0];
       expect(call).toBeDefined();
       const url = String(call[0]);
-      expect(url).toContain('https://oapi.dingtalk.com/media/upload?access_token=token123');
-      expect(url).toContain('&type=image');
+      expect(url).toContain('https://oapi.dingtalk.com/media/upload');
+      // access_token 和 type 通过 axios params 传递，在第三个参数的 params 中
+      const callConfig = call[2];
+      expect(callConfig?.params?.access_token).toBe('token123');
+      expect(callConfig?.params?.type).toBe('image');
 
       // 契约断言：第三参 headers 来自 form.getHeaders()（至少是对象）
       expect(call[2]).toBeDefined();
@@ -141,11 +151,11 @@ describe('upload functionality', () => {
 
       expect(mockAxiosPost).toHaveBeenCalledTimes(3);
 
-      // 契约断言：不同 mediaType 对应正确的 type 参数
-      const urls = mockAxiosPost.mock.calls.map((c) => String(c[0]));
-      expect(urls.some((u) => u.includes('&type=file'))).toBe(true);
-      expect(urls.some((u) => u.includes('&type=video'))).toBe(true);
-      expect(urls.some((u) => u.includes('&type=voice'))).toBe(true);
+      // 契约断言：不同 mediaType 对应正确的 type 参数（通过 axios params 传递）
+      const callParams = mockAxiosPost.mock.calls.map((c) => c[2]?.params?.type);
+      expect(callParams.some((t) => t === 'file')).toBe(true);
+      expect(callParams.some((t) => t === 'video')).toBe(true);
+      expect(callParams.some((t) => t === 'voice')).toBe(true);
     });
   });
 
@@ -265,7 +275,7 @@ describe('upload functionality', () => {
       expect(result).toContain('suffix');
       expect(result).not.toContain('[DINGTALK_FILE]');
       expect(
-        mockAxiosPost.mock.calls.some((c) => String(c[0]).includes('&type=file'))
+        mockAxiosPost.mock.calls.some((c) => c[2]?.params?.type === 'file')
       ).toBe(true);
     });
   });
@@ -292,7 +302,7 @@ describe('upload functionality', () => {
 
       expect(result).not.toContain('[DINGTALK_AUDIO]');
       expect(
-        mockAxiosPost.mock.calls.some((c) => String(c[0]).includes('&type=voice'))
+        mockAxiosPost.mock.calls.some((c) => c[2]?.params?.type === 'voice')
       ).toBe(true);
     });
   });

@@ -55,12 +55,17 @@ describe('session management helpers', () => {
         separateSessionByConversation: false,
       });
 
+      // peerId = conversationId（路由匹配用，不受 separateSessionByConversation 影响）
+      // sessionPeerId = senderId（按用户维度隔离，separateSessionByConversation=false 时）
       expect(ctx).toEqual({
         channel: 'dingtalk-connector',
         accountId: 'acc-1',
         chatType: 'group',
-        peerId: 'u-1',
+        peerId: 'cid-1',
+        sessionPeerId: 'u-1',
         senderName: 'Alice',
+        conversationId: 'cid-1',
+        groupSubject: 'Test Group',
       });
     });
 
@@ -71,11 +76,13 @@ describe('session management helpers', () => {
         conversationId: undefined,
       });
 
+      // 单聊：peerId = senderId，sessionPeerId = senderId
       expect(ctx).toEqual({
         channel: 'dingtalk-connector',
         accountId: 'acc-1',
         chatType: 'direct',
         peerId: 'u-1',
+        sessionPeerId: 'u-1',
         senderName: 'Alice',
       });
     });
@@ -87,11 +94,13 @@ describe('session management helpers', () => {
         conversationId: 'cid-1',
       });
 
+      // 默认群聊：peerId = conversationId，sessionPeerId = conversationId（整群共享）
       expect(ctx).toEqual({
         channel: 'dingtalk-connector',
         accountId: 'acc-1',
         chatType: 'group',
         peerId: 'cid-1',
+        sessionPeerId: 'cid-1',
         conversationId: 'cid-1',
         senderName: 'Alice',
         groupSubject: 'Test Group',
@@ -106,11 +115,13 @@ describe('session management helpers', () => {
         groupSessionScope: 'group_sender',
       });
 
+      // group_sender：peerId = conversationId（路由不变），sessionPeerId = conversationId:senderId（群内每人独立）
       expect(ctx).toEqual({
         channel: 'dingtalk-connector',
         accountId: 'acc-1',
         chatType: 'group',
-        peerId: 'cid-1:u-1',
+        peerId: 'cid-1',
+        sessionPeerId: 'cid-1:u-1',
         conversationId: 'cid-1',
         senderName: 'Alice',
         groupSubject: 'Test Group',

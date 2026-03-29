@@ -59,7 +59,8 @@ import {
 import { sendProactive, type AICardTarget } from "../services/messaging/index.ts";
 import { createAICardForTarget, streamAICard, type AICardInstance } from "../services/messaging/card.ts";
 import { QUEUE_BUSY_ACK_PHRASES } from "../utils/constants.ts";
-import { createDingtalkReplyDispatcher, normalizeSlashCommand } from "../reply-dispatcher.ts";
+import { createDingtalkReplyDispatcher } from "../reply-dispatcher.ts";
+import { normalizeSlashCommand } from "../utils/session.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
 import { createLoggerFromConfig } from '../utils/index.ts';
@@ -752,7 +753,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
   // ===== 图片下载到本地文件 =====
   const imageLocalPaths: string[] = [];
   
-  log?.info?.(`处理消息: accountId=${accountId}, sender=${senderName}, text=${content.text.slice(0, 50)}...`);
+  log?.info?.(`处理消息: accountId=${accountId}, data= ${JSON.stringify(data, null, 2)}, sender=${senderName}, text=${content.text.slice(0, 50)}...`);
   
   // 处理 imageUrls（来自富文本消息）
   for (let i = 0; i < content.imageUrls.length; i++) {

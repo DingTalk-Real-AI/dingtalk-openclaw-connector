@@ -4,7 +4,6 @@ import type {
   ClawdbotConfig,
 } from "openclaw/plugin-sdk";
 import {
-  buildBaseChannelStatusSummary,
   createDefaultChannelRuntimeState,
   DEFAULT_ACCOUNT_ID,
   resolveAllowlistProviderRuntimeGroupPolicy,
@@ -468,7 +467,10 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
   status: {
     defaultRuntime: createDefaultChannelRuntimeState(DEFAULT_ACCOUNT_ID, { port: null }),
     buildChannelSummary: ({ snapshot }) => ({
-      ...buildBaseChannelStatusSummary(snapshot),
+      // 只返回 probe 相关字段，不透传运行时字段（running/lastStartAt 等）。
+      // 运行时状态由框架从 store.runtimes 自动维护，buildChannelSummary 在 probe
+      // 流程中被调用时 runtime 为 undefined，透传会导致 lastStartAt 永远是 null。
+      configured: snapshot.configured ?? false,
       port: snapshot.port ?? null,
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
@@ -489,6 +491,11 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       lastStopAt: runtime?.lastStopAt ?? null,
       lastError: runtime?.lastError ?? null,
       port: runtime?.port ?? null,
+      // 连接状态和消息时间戳：由 startAccount 里的 onStatusChange 回调写入 runtime，
+      // 必须在此处透传，否则 UI 的 Connected 和 Last inbound 字段永远显示 n/a。
+      connected: runtime?.connected ?? null,
+      lastConnectedAt: runtime?.lastConnectedAt ?? null,
+      lastInboundAt: runtime?.lastInboundAt ?? null,
       probe,
     }),
   },
@@ -542,12 +549,26 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       ctx.log?.info(
         `starting dingtalk-connector[${ctx.accountId}] (mode: stream)`,
       );
+
+      // 把 ctx.setStatus 包装成 onStatusChange 回调，传入连接层，
+      // 使连接层能在 WebSocket 连接/断开/收到消息时更新 UI 显示的
+      // Connected 和 Last inbound 字段。
+      // 注意：ctx.setStatus 是完全替换而非 merge patch，必须先 getStatus()
+      // 获取当前快照再合并，否则会清空 configured/running 等已有字段。
+      const onStatusChange = (patch: Record<string, unknown>) => {
+        const currentSnapshot = ctx.getStatus?.() ?? { accountId: ctx.accountId };
+        const nextSnapshot = { ...currentSnapshot, ...patch, accountId: ctx.accountId };
+        process.stderr.write(`[dingtalk-connector][${ctx.accountId}] onStatusChange patch=${JSON.stringify(patch)} current=${JSON.stringify(currentSnapshot)} next=${JSON.stringify(nextSnapshot)}\n`);
+        ctx.setStatus(nextSnapshot as any);
+      };
+
       try {
         return await monitorDingtalkProvider({
           config: ctx.cfg,
           runtime: ctx.runtime,
           abortSignal: ctx.abortSignal,
           accountId: ctx.accountId,
+          onStatusChange,
         });
       } catch (err: any) {
         // 打印真实错误到 stderr，绕过框架 log 系统（框架的 runtime.log 可能未初始化）

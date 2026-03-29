@@ -29,21 +29,33 @@ vi.mock("../../src/runtime.ts", () => ({
   getDingtalkRuntime: mockGetDingtalkRuntime,
 }));
 
-vi.mock("../../src/services/messaging/index.ts", () => ({
+vi.mock("../../src/services/messaging/card.ts", () => ({
   createAICardForTarget: mockCreateAICardForTarget,
   streamAICard: mockStreamAICard,
   finishAICard: mockFinishAICard,
+}));
+
+vi.mock("../../src/services/messaging.ts", () => ({
   sendMessage: mockSendMessage,
 }));
 
-vi.mock("../../src/services/media/index.ts", () => ({
+vi.mock("../../src/services/media/image.ts", () => ({
   processLocalImages: vi.fn(async (s: string) => s),
+}));
+
+vi.mock("../../src/services/media/video.ts", () => ({
   processVideoMarkers: vi.fn(async (s: string) => s),
+}));
+
+vi.mock("../../src/services/media/audio.ts", () => ({
   processAudioMarkers: vi.fn(async (s: string) => s),
+}));
+
+vi.mock("../../src/services/media/file.ts", () => ({
   processFileMarkers: vi.fn(async (s: string) => s),
 }));
 
-vi.mock("../../src/utils/index.ts", () => ({
+vi.mock("../../src/utils/token.ts", () => ({
   getAccessToken: vi.fn(),
   getOapiAccessToken: mockGetOapiAccessToken,
 }));
@@ -84,7 +96,7 @@ describe("reply-dispatcher", () => {
   });
 
   it("normalizes slash commands", async () => {
-    const { normalizeSlashCommand } = await import("../../src/reply-dispatcher");
+    const { normalizeSlashCommand } = await import("../../src/utils/session");
     expect(normalizeSlashCommand("/reset")).toBe("/new");
     expect(normalizeSlashCommand("新会话")).toBe("/new");
     expect(normalizeSlashCommand("hello")).toBe("hello");

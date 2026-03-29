@@ -28,6 +28,8 @@ export type MonitorDingtalkOpts = {
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   accountId?: string;
+  /** 可选：连接状态变更时回调，用于更新 UI 显示的 Connected / Last inbound 字段 */
+  onStatusChange?: (patch: Record<string, unknown>) => void;
 };
 
 export {
@@ -69,6 +71,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
       runtime: opts.runtime,
       abortSignal: opts.abortSignal,
       messageHandler: handleDingTalkMessage,
+      onStatusChange: opts.onStatusChange,
     });
   }
 
@@ -95,6 +98,7 @@ export async function monitorDingtalkProvider(opts: MonitorDingtalkOpts = {}): P
         runtime: opts.runtime,
         abortSignal: opts.abortSignal,
         messageHandler: handleDingTalkMessage,
+        onStatusChange: opts.onStatusChange,
       }),
     );
   }

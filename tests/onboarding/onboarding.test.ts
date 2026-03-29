@@ -2,16 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockPromptSingleChannelSecretInput = vi.hoisted(() => vi.fn());
 const mockResolveDingtalkCredentials = vi.hoisted(() => vi.fn());
+const mockResolveDingtalkAccount = vi.hoisted(() => vi.fn());
 const mockProbeDingtalk = vi.hoisted(() => vi.fn());
 const mockHasConfiguredSecretInput = vi.hoisted(() => vi.fn());
 const mockAddWildcardAllowFrom = vi.hoisted(() => vi.fn());
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk", () => ({}));
+
+vi.mock("openclaw/plugin-sdk/setup", () => ({
   promptSingleChannelSecretInput: mockPromptSingleChannelSecretInput,
 }));
 
 vi.mock("../../src/config/accounts.ts", () => ({
   resolveDingtalkCredentials: mockResolveDingtalkCredentials,
+  resolveDingtalkAccount: mockResolveDingtalkAccount,
 }));
 
 vi.mock("../../src/probe.ts", () => ({
@@ -29,6 +33,15 @@ describe("dingtalkOnboardingAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolveDingtalkCredentials.mockReturnValue(null);
+    // Default: not configured (no credentials resolved)
+    mockResolveDingtalkAccount.mockReturnValue({
+      accountId: "__default__",
+      configured: false,
+      enabled: true,
+      clientId: undefined,
+      clientSecret: undefined,
+      config: {},
+    });
     mockProbeDingtalk.mockResolvedValue({ ok: true, botName: "bot-a" });
     mockHasConfiguredSecretInput.mockReturnValue(false);
     mockAddWildcardAllowFrom.mockImplementation((arr: any[] = []) =>
@@ -44,6 +57,7 @@ describe("dingtalkOnboardingAdapter", () => {
       note: vi.fn(async () => undefined),
       text: vi.fn(async () => "user1,user2"),
       select: vi.fn(async () => "open"),
+      confirm: vi.fn(async () => true),
       ...overrides,
     };
   }
@@ -59,11 +73,14 @@ describe("dingtalkOnboardingAdapter", () => {
   });
 
   it("getStatus returns connected when configured and probe ok", async () => {
-    process.env.TEST_ENV_CLIENT_ID = "id-from-env";
-    mockHasConfiguredSecretInput.mockReturnValue(true);
-    mockResolveDingtalkCredentials.mockReturnValue({
+    // Simulate a fully configured account (e.g. multi-account mode with account-level credentials)
+    mockResolveDingtalkAccount.mockReturnValue({
+      accountId: "__default__",
+      configured: true,
+      enabled: true,
       clientId: "id",
       clientSecret: "secret",
+      config: { clientId: "id", clientSecret: "secret" },
     });
     mockProbeDingtalk.mockResolvedValue({ ok: true, botName: "DingBot" });
 
@@ -71,8 +88,9 @@ describe("dingtalkOnboardingAdapter", () => {
     const cfg = {
       channels: {
         "dingtalk-connector": {
-          clientId: { source: "env", id: "TEST_ENV_CLIENT_ID" },
-          clientSecret: "sec",
+          accounts: {
+            mybot: { enabled: true, clientId: "id", clientSecret: "secret" },
+          },
         },
       },
     } as any;

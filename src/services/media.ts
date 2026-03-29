@@ -9,7 +9,6 @@ import type { DingtalkConfig } from '../types/index.ts';
 import { DINGTALK_OAPI, getOapiAccessToken } from '../utils/index.ts';
 import { dingtalkHttp, dingtalkOapiHttp } from '../utils/http-client.ts';
 
-// ============ 常量 ============
 
 /** 文本文件扩展名 */
 export const TEXT_FILE_EXTENSIONS = new Set([
@@ -53,7 +52,6 @@ export const AUDIO_MARKER_PATTERN = /\[DINGTALK_AUDIO\](.*?)\[\/DINGTALK_AUDIO\]
 /** 文件标记正则表达式 */
 export const FILE_MARKER_PATTERN = /\[DINGTALK_FILE\](.*?)\[\/DINGTALK_FILE\]/gs;
 
-// ============ 工具函数 ============
 
 /**
  * 去掉 file:// / MEDIA: / attachment:// 前缀，得到实际的绝对路径
@@ -223,7 +221,6 @@ export async function processLocalImages(
   return result;
 }
 
-// ============ 视频处理 ============
 
 /** 视频信息接口 */
 export interface VideoInfo {
@@ -455,7 +452,6 @@ export async function processVideoMarkers(
   return cleanedContent;
 }
 
-// ============ 音频处理 ============
 
 /** 音频信息接口 */
 export interface AudioInfo {
@@ -464,30 +460,41 @@ export interface AudioInfo {
 
 /**
  * 提取音频时长
+ *
+ * 使用 fluent-ffmpeg 的 ffprobe API，与 extractVideoMetadata 保持一致，
+ * 完全避免直接调用 child_process，消除安全扫描误报。
  */
 async function extractAudioDuration(filePath: string, log?: any): Promise<number | null> {
   try {
-    // 使用 ffprobe 提取音频时长
-    const { exec } = await import('child_process');
+    const ffmpeg = require('fluent-ffmpeg');
+
+    // 优先使用 @ffprobe-installer/ffprobe 提供的固定路径
+    try {
+      const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
+      if (ffprobeInstaller?.path) {
+        ffmpeg.setFfprobePath(ffprobeInstaller.path);
+      }
+    } catch {
+      // @ffprobe-installer/ffprobe 未安装（optionalDependency），使用系统 ffprobe
+    }
+
     return new Promise((resolve) => {
-      exec(
-        `ffprobe -v error -show_entries format=duration -of json "${filePath}"`,
-        (error: any, stdout: string) => {
-          if (error) {
-            log?.warn?.(`ffprobe 执行失败: ${error.message}`);
-            resolve(null);
-            return;
-          }
-          try {
-            const data = JSON.parse(stdout);
-            const duration = data.format?.duration ? Math.round(parseFloat(data.format.duration) * 1000) : 0;
-            resolve(duration);
-          } catch (err) {
-            log?.warn?.(`解析 ffprobe 输出失败`);
-            resolve(null);
-          }
-        },
-      );
+      ffmpeg.ffprobe(filePath, (err: any, metadata: any) => {
+        if (err) {
+          log?.warn?.(`ffprobe 执行失败: ${err.message}`);
+          resolve(null);
+          return;
+        }
+        try {
+          const duration = metadata.format?.duration
+            ? Math.round(parseFloat(metadata.format.duration) * 1000)
+            : 0;
+          resolve(duration);
+        } catch (parseErr) {
+          log?.warn?.(`解析 ffprobe 输出失败`);
+          resolve(null);
+        }
+      });
     });
   } catch (err: any) {
     log?.warn?.(`提取音频时长失败: ${err.message}`);
@@ -590,7 +597,6 @@ export async function processAudioMarkers(
   return cleanedContent;
 }
 
-// ============ 文件处理 ============
 
 /** 文件信息接口 */
 export interface FileInfo {
@@ -689,7 +695,6 @@ export async function processFileMarkers(
   return cleanedContent;
 }
 
-// ============ 视频消息发送 ============
 
 /** 视频元数据接口 */
 interface VideoMetadata {
@@ -800,7 +805,6 @@ export async function sendVideoProactive(
   }
 }
 
-// ============ 音频消息发送 ============
 
 /**
  * 发送音频消息（sessionWebhook 模式）
@@ -898,7 +902,6 @@ export async function sendAudioProactive(
   }
 }
 
-// ============ 文件消息发送 ============
 
 /**
  * 发送文件消息（sessionWebhook 模式）
@@ -993,9 +996,7 @@ export async function sendFileProactive(
   }
 }
 
-// ============================================================================
 // 裸露文件路径处理（绕过 OpenClaw SDK bug）
-// ============================================================================
 
 /**
  * 检测并处理响应中的裸露本地文件路径
@@ -1108,6 +1109,7 @@ export async function processRawMediaPaths(
         
         if (target) {
           // 文件消息使用下载链接
+          // 文件消息使用媒体文件ID（cleanMediaId）通过主动API发送
           await sendFileProactive(config, target, fileInfo, uploadResult.cleanMediaId, log);
         }
         statusMessages.push(`✅ 文件已发送: ${fileName}`);

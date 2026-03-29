@@ -5,9 +5,16 @@ const mockAxiosGet = vi.hoisted(() => vi.fn());
 const mockAxiosPost = vi.hoisted(() => vi.fn());
 vi.mock('axios', () => ({
   default: {
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
     get: mockAxiosGet,
     post: mockAxiosPost,
   },
+}));
+
+vi.mock('../../src/utils/http-client.ts', () => ({
+  dingtalkHttp: { post: mockAxiosPost, get: mockAxiosGet, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkOapiHttp: { get: mockAxiosGet, post: mockAxiosPost, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkUploadHttp: { post: mockAxiosPost, get: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
 }));
 
 // Mock fs
@@ -229,11 +236,10 @@ describe('download helpers', () => {
       const config = { clientId: 'test', clientSecret: 'secret' };
       const result = await downloadFileByCode('code123', 'file/with:invalid*chars.pdf', config, log);
 
-      // Source code uses path.basename which extracts 'with:invalid*chars.pdf'
-      // then adds timestamp: 'with:invalid*chars-{timestamp}.pdf'
-      // Note: Source code does NOT sanitize special characters like : * etc.
+      // Source code sanitizes special characters (: * etc.) to underscores
+      // then adds timestamp: 'with_invalid_chars.pdf-{timestamp}.pdf'
       const fileName = result?.split('/').pop() || '';
-      expect(fileName).toMatch(/with:invalid\*chars\.pdf-\d+\.pdf$/);
+      expect(fileName).toMatch(/with_invalid_chars\.pdf-\d+\.pdf$/);
     });
 
     it('should return null when no downloadUrl in response', async () => {

@@ -1,19 +1,21 @@
 import type {
-  ChannelOnboardingAdapter,
-  ChannelOnboardingDmPolicy,
-  ClawdbotConfig,
-  DmPolicy,
+  OpenClawConfig,
   SecretInput,
   WizardPrompter,
 } from "openclaw/plugin-sdk";
+import type {
+  ChannelSetupWizardAdapter,
+  ChannelSetupDmPolicy,
+  DmPolicy,
+} from "openclaw/plugin-sdk/setup";
 import {
   addWildcardAllowFrom,
   DEFAULT_ACCOUNT_ID,
   formatDocsLink,
   hasConfiguredSecretInput,
 } from "./sdk/helpers.ts";
-import { promptSingleChannelSecretInput } from "openclaw/plugin-sdk";
-import { resolveDingtalkCredentials } from "./config/accounts.ts";
+import { promptSingleChannelSecretInput } from "openclaw/plugin-sdk/setup";
+import { resolveDingtalkAccount, resolveDingtalkCredentials } from "./config/accounts.ts";
 import { probeDingtalk } from "./probe.ts";
 import type { DingtalkConfig } from "./types/index.ts";
 
@@ -30,7 +32,7 @@ function normalizeString(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
-function setDingtalkDmPolicy(cfg: ClawdbotConfig, dmPolicy: DmPolicy): ClawdbotConfig {
+function setDingtalkDmPolicy(cfg: OpenClawConfig, dmPolicy: DmPolicy): OpenClawConfig {
   const allowFrom =
     dmPolicy === "open"
       ? addWildcardAllowFrom(cfg.channels?.["dingtalk-connector"]?.allowFrom)?.map((entry) => String(entry))
@@ -48,7 +50,7 @@ function setDingtalkDmPolicy(cfg: ClawdbotConfig, dmPolicy: DmPolicy): ClawdbotC
   };
 }
 
-function setDingtalkAllowFrom(cfg: ClawdbotConfig, allowFrom: string[]): ClawdbotConfig {
+function setDingtalkAllowFrom(cfg: OpenClawConfig, allowFrom: string[]): OpenClawConfig {
   return {
     ...cfg,
     channels: {
@@ -69,9 +71,9 @@ function parseAllowFromInput(raw: string): string[] {
 }
 
 async function promptDingtalkAllowFrom(params: {
-  cfg: ClawdbotConfig;
+  cfg: OpenClawConfig;
   prompter: WizardPrompter;
-}): Promise<ClawdbotConfig> {
+}): Promise<OpenClawConfig> {
   const existing = params.cfg.channels?.["dingtalk-connector"]?.allowFrom ?? [];
   await params.prompter.note(
     [
@@ -137,9 +139,9 @@ async function promptDingtalkClientId(params: {
 }
 
 function setDingtalkGroupPolicy(
-  cfg: ClawdbotConfig,
+  cfg: OpenClawConfig,
   groupPolicy: "open" | "allowlist" | "disabled",
-): ClawdbotConfig {
+): OpenClawConfig {
   return {
     ...cfg,
     channels: {
@@ -153,7 +155,7 @@ function setDingtalkGroupPolicy(
   };
 }
 
-function setDingtalkGroupAllowFrom(cfg: ClawdbotConfig, groupAllowFrom: string[]): ClawdbotConfig {
+function setDingtalkGroupAllowFrom(cfg: OpenClawConfig, groupAllowFrom: string[]): OpenClawConfig {
   return {
     ...cfg,
     channels: {
@@ -166,7 +168,7 @@ function setDingtalkGroupAllowFrom(cfg: ClawdbotConfig, groupAllowFrom: string[]
   };
 }
 
-const dmPolicy: ChannelOnboardingDmPolicy = {
+const dmPolicy: ChannelSetupDmPolicy = {
   label: "DingTalk",
   channel,
   policyKey: "channels.dingtalk-connector.dmPolicy",
@@ -176,57 +178,21 @@ const dmPolicy: ChannelOnboardingDmPolicy = {
   promptAllowFrom: promptDingtalkAllowFrom,
 };
 
-export const dingtalkOnboardingAdapter: ChannelOnboardingAdapter = {
+export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
   channel,
   getStatus: async ({ cfg }) => {
-    const dingtalkCfg = cfg.channels?.["dingtalk-connector"] as DingtalkConfig | undefined;
+    // Use resolveDingtalkAccount to correctly support pure multi-account configs
+    // where credentials are only under accounts.<id>, not at the top level.
+    const defaultAccount = resolveDingtalkAccount({ cfg });
+    const configured = defaultAccount.configured;
 
-    const isClientIdConfigured = (value: unknown): boolean => {
-      const asString = normalizeString(value);
-      if (asString) {
-        return true;
-      }
-      if (!value || typeof value !== "object") {
-        return false;
-      }
-      const rec = value as Record<string, unknown>;
-      const source = normalizeString(rec.source)?.toLowerCase();
-      const id = normalizeString(rec.id);
-      if (source === "env" && id) {
-        return Boolean(normalizeString(process.env[id]));
-      }
-      return hasConfiguredSecretInput(value);
-    };
-
-    const topLevelConfigured = Boolean(
-      isClientIdConfigured(dingtalkCfg?.clientId) && hasConfiguredSecretInput(dingtalkCfg?.clientSecret),
-    );
-
-    const accountConfigured = Object.values(dingtalkCfg?.accounts ?? {}).some((account) => {
-      if (!account || typeof account !== "object") {
-        return false;
-      }
-      const hasOwnClientId = Object.prototype.hasOwnProperty.call(account, "clientId");
-      const hasOwnClientSecret = Object.prototype.hasOwnProperty.call(account, "clientSecret");
-      const accountClientIdConfigured = hasOwnClientId
-        ? isClientIdConfigured((account as Record<string, unknown>).clientId)
-        : isClientIdConfigured(dingtalkCfg?.clientId);
-      const accountSecretConfigured = hasOwnClientSecret
-        ? hasConfiguredSecretInput((account as Record<string, unknown>).clientSecret)
-        : hasConfiguredSecretInput(dingtalkCfg?.clientSecret);
-      return Boolean(accountClientIdConfigured && accountSecretConfigured);
-    });
-
-    const configured = topLevelConfigured || accountConfigured;
-    const resolvedCredentials = resolveDingtalkCredentials(dingtalkCfg, {
-      allowUnresolvedSecretRef: true,
-    });
-
-    // Try to probe if configured
     let probeResult = null;
-    if (configured && resolvedCredentials) {
+    if (configured && defaultAccount.clientId && defaultAccount.clientSecret) {
       try {
-        probeResult = await probeDingtalk(resolvedCredentials);
+        probeResult = await probeDingtalk({
+          clientId: defaultAccount.clientId,
+          clientSecret: defaultAccount.clientSecret,
+        });
       } catch {
         // Ignore probe errors
       }
@@ -261,7 +227,7 @@ export const dingtalkOnboardingAdapter: ChannelOnboardingAdapter = {
     const hasConfigCreds = Boolean(
       typeof dingtalkCfg?.clientId === "string" && dingtalkCfg.clientId.trim() && hasConfigSecret,
     );
-    const canUseEnv = Boolean(
+    let canUseEnv = Boolean(
       !hasConfigCreds && process.env.DINGTALK_CLIENT_ID?.trim() && process.env.DINGTALK_CLIENT_SECRET?.trim(),
     );
 

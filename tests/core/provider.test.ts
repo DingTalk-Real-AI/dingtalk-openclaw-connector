@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockLogInfo = vi.hoisted(() => vi.fn());
+
+vi.mock("../../src/utils/logger", () => ({
+  createLogger: vi.fn(() => ({ info: mockLogInfo, warn: vi.fn(), error: vi.fn(), debug: vi.fn() })),
+  createLoggerFromConfig: vi.fn(() => ({ info: mockLogInfo, warn: vi.fn(), error: vi.fn(), debug: vi.fn() })),
+}));
+
 describe("core/provider", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -99,15 +106,14 @@ describe("core/provider", () => {
       { accountId: "a-1", enabled: true, configured: true },
       { accountId: "a-2", enabled: true, configured: true },
     ];
-    const info = vi.fn();
     const { provider, monitorSingleAccount } = await loadProviderWithMocks({ accounts });
 
     await provider.monitorDingtalkProvider({
       config: {} as any,
-      runtime: { log: { info } } as any,
+      runtime: { log: { info: vi.fn() } } as any,
     });
 
-    expect(info).toHaveBeenCalledTimes(1);
+    expect(mockLogInfo).toHaveBeenCalledTimes(1);
     expect(monitorSingleAccount).toHaveBeenCalledTimes(2);
   });
 
@@ -115,17 +121,16 @@ describe("core/provider", () => {
     const accounts = [{ accountId: "a-1", enabled: true, configured: true }];
     const controller = new AbortController();
     controller.abort();
-    const info = vi.fn();
     const { provider, monitorSingleAccount } = await loadProviderWithMocks({ accounts });
 
     await provider.monitorDingtalkProvider({
       config: {} as any,
       abortSignal: controller.signal,
-      runtime: { log: { info } } as any,
+      runtime: { log: { info: vi.fn() } } as any,
     });
 
-    expect(info).toHaveBeenCalledTimes(2);
-    expect(info.mock.calls[1][0]).toContain("abort signal received during startup preflight");
+    expect(mockLogInfo).toHaveBeenCalledTimes(2);
+    expect(mockLogInfo.mock.calls[1][0]).toContain("abort signal received during startup preflight");
     expect(monitorSingleAccount).not.toHaveBeenCalled();
   });
 

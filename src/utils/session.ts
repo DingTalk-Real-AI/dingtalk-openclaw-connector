@@ -39,7 +39,7 @@ export interface SessionContext {
 export function buildSessionContext(params: {
   accountId: string;
   senderId: string;
-  senderName?: string;
+  senderName?: string
   conversationType: string;
   conversationId?: string;
   groupSubject?: string;
@@ -87,7 +87,9 @@ export function buildSessionContext(params: {
       chatType: isDirect ? 'direct' : 'group',
       peerId,
       sessionPeerId: senderId, // 只用 senderId，不区分会话
+      conversationId: isDirect ? undefined : conversationId,
       senderName,
+      groupSubject: isDirect ? undefined : groupSubject,
     };
   }
 

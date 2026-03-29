@@ -1,13 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+const mockHttpPost = vi.hoisted(() => vi.fn());
+const mockHttpGet = vi.hoisted(() => vi.fn());
+const mockOapiHttpGet = vi.hoisted(() => vi.fn());
+
 vi.mock('axios', () => ({
   default: {
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
     post: vi.fn(),
     get: vi.fn(),
   },
 }));
 
-import axios from 'axios';
+vi.mock('../../src/utils/http-client.ts', () => ({
+  dingtalkHttp: { post: mockHttpPost, get: mockHttpGet },
+  dingtalkOapiHttp: { get: mockOapiHttpGet, post: vi.fn() },
+  dingtalkUploadHttp: { post: vi.fn() },
+}));
 
 describe('config & token helpers', () => {
   const baseCfg = {
@@ -67,12 +76,11 @@ describe('config & token helpers', () => {
 
   describe('getAccessToken', () => {
     it('should request new token and cache it', async () => {
-      const { __testables } = await import('../../test');
-      const { getAccessToken } = __testables as any;
+      const { getAccessToken } = await import('../../src/utils/token');
       const now = Date.now();
       vi.spyOn(Date, 'now').mockReturnValue(now);
 
-      (axios.post as any).mockResolvedValue({
+      mockHttpPost.mockResolvedValue({
         data: {
           accessToken: 'token-1',
           expireIn: 3600,
@@ -84,15 +92,14 @@ describe('config & token helpers', () => {
 
       expect(token1).toBe('token-1');
       expect(token2).toBe('token-1');
-      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(mockHttpPost).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('getOapiAccessToken', () => {
     it('should return token when oapi returns success', async () => {
-      const { __testables } = await import('../../test');
-      const { getOapiAccessToken } = __testables as any;
-      (axios.get as any).mockResolvedValue({
+      const { getOapiAccessToken } = await import('../../src/utils/token');
+      mockOapiHttpGet.mockResolvedValue({
         data: {
           errcode: 0,
           access_token: 'oapi-token',
@@ -104,9 +111,8 @@ describe('config & token helpers', () => {
     });
 
     it('should return null when oapi returns error', async () => {
-      const { __testables } = await import('../../test');
-      const { getOapiAccessToken } = __testables as any;
-      (axios.get as any).mockResolvedValue({
+      const { getOapiAccessToken } = await import('../../src/utils/token');
+      mockOapiHttpGet.mockResolvedValue({
         data: {
           errcode: 123,
         },
@@ -116,10 +122,9 @@ describe('config & token helpers', () => {
       expect(token).toBeNull();
     });
 
-    it('should return null when axios.get throws', async () => {
-      const { __testables } = await import('../../test');
-      const { getOapiAccessToken } = __testables as any;
-      (axios.get as any).mockRejectedValue(new Error('network error'));
+    it('should return null when oapi get throws', async () => {
+      const { getOapiAccessToken } = await import('../../src/utils/token');
+      mockOapiHttpGet.mockRejectedValue(new Error('network error'));
       const token = await getOapiAccessToken(baseCfg.channels['dingtalk-connector']);
       expect(token).toBeNull();
     });
@@ -127,15 +132,14 @@ describe('config & token helpers', () => {
 
   describe('getUnionId', () => {
     it('should call oapi once and then use cache', async () => {
-      const { __testables } = await import('../../test');
-      const { getUnionId } = __testables as any;
+      const { getUnionId } = await import('../../src/utils/utils-legacy');
       const log = {
         info: vi.fn(),
         error: vi.fn(),
       };
 
       // 根据 URL 分支模拟 gettoken 与 user/get 两种调用
-      (axios.get as any).mockImplementation((url: string) => {
+      mockOapiHttpGet.mockImplementation((url: string) => {
         if (url.includes('gettoken')) {
           return Promise.resolve({
             data: {
@@ -162,7 +166,7 @@ describe('config & token helpers', () => {
       expect(u1).toBe('union-1');
       expect(u2).toBe('union-1');
       // 第一次：gettoken + user/get，两次 HTTP 调用；第二次命中缓存不再访问网络
-      expect((axios.get as any).mock.calls.length).toBe(2);
+      expect(mockOapiHttpGet.mock.calls.length).toBe(2);
       expect(log.info).toHaveBeenCalled();
     });
   });

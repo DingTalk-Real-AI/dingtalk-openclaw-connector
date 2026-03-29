@@ -5,8 +5,15 @@ const mockGetAccessToken = vi.hoisted(() => vi.fn());
 
 vi.mock("axios", () => ({
   default: {
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
     post: mockAxiosPost,
   },
+}));
+
+vi.mock('../../src/utils/http-client.ts', () => ({
+  dingtalkHttp: { post: mockAxiosPost, get: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkOapiHttp: { get: vi.fn(), post: mockAxiosPost, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkUploadHttp: { post: mockAxiosPost, get: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
 }));
 
 vi.mock("../../src/utils/token.ts", () => ({

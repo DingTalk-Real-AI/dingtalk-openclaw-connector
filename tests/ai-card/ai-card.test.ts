@@ -6,10 +6,17 @@ const mockAxiosPost = vi.hoisted(() => vi.fn());
 const mockAxiosPut = vi.hoisted(() => vi.fn());
 vi.mock('axios', () => ({
   default: {
+    create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } })),
     get: mockAxiosGet,
     post: mockAxiosPost,
     put: mockAxiosPut,
   },
+}));
+
+vi.mock('../../src/utils/http-client.ts', () => ({
+  dingtalkHttp: { post: mockAxiosPost, get: mockAxiosGet, put: mockAxiosPut, delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkOapiHttp: { get: mockAxiosGet, post: mockAxiosPost, put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
+  dingtalkUploadHttp: { post: mockAxiosPost, get: vi.fn(), put: vi.fn(), delete: vi.fn(), patch: vi.fn(), defaults: { headers: { common: {} } } },
 }));
 
 // Mock fs
@@ -211,7 +218,7 @@ describe('AI Card helpers', () => {
 
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: false };
 
-      await expect(streamAICard(card, 'Hello', false, log)).rejects.toThrow();
+      await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
       expect(log.error).toHaveBeenCalled();
     });
 
@@ -228,7 +235,7 @@ describe('AI Card helpers', () => {
 
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: true };
 
-      await expect(streamAICard(card, 'Hello', false, log)).rejects.toThrow();
+      await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
       expect(log.error).toHaveBeenCalled();
     });
   });
@@ -242,7 +249,7 @@ describe('AI Card helpers', () => {
 
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: true };
 
-      await finishAICard(card, 'Final content', log);
+      await finishAICard(card, 'Final content', undefined, log);
 
       expect(log.info).toHaveBeenCalled();
     });
@@ -261,7 +268,7 @@ describe('AI Card helpers', () => {
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: true };
 
       // Should not throw, just log error
-      await finishAICard(card, 'Final content', log);
+      await finishAICard(card, 'Final content', undefined, log);
 
       expect(log.error).toHaveBeenCalled();
     });

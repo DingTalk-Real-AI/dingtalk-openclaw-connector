@@ -45,23 +45,6 @@ import {
   processFileMarkers,
 } from "./services/media/index.ts";
 
-// ============ 新会话命令归一化 ============
-
-/** 新会话触发命令 */
-const NEW_SESSION_COMMANDS = ['/new', '/reset', '/clear', '新会话', '重新开始', '清空对话'];
-
-/**
- * 将新会话命令归一化为标准的 /new 命令
- * 支持多种别名：/new、/reset、/clear、新会话、重新开始、清空对话
- */
-export function normalizeSlashCommand(text: string): string {
-  const trimmed = text.trim();
-  const lower = trimmed.toLowerCase();
-  if (NEW_SESSION_COMMANDS.some(cmd => lower === cmd.toLowerCase())) {
-    return '/new';
-  }
-  return text;
-}
 
 export type CreateDingtalkReplyDispatcherParams = {
   cfg: ClawdbotConfig;
@@ -228,65 +211,71 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
 
   // 流式 AI Card 支持
   const streamingEnabled = (account.config as any)?.streaming !== false;
-  let isCreatingCard = false;  // ✅ 添加创建中标志，防止并发创建
+  // 用 Promise 保存 AI Card 的创建过程，避免 final 消息到达时轮询等待
+  let cardCreationPromise: Promise<void> | null = null;
 
-  const startStreaming = async () => {
-    // 异步模式下禁用流式 AI Card
-    if (asyncMode) {
-      log.info(`[DingTalk][startStreaming] 异步模式，跳过 AI Card 创建`);
-      return;
+  const startStreaming = (): Promise<void> => {
+    // 如果已经有创建中的 Promise，直接复用，避免并发创建
+    if (cardCreationPromise) {
+      return cardCreationPromise;
     }
-    if (!streamingEnabled) {
-      log.info(`[DingTalk][startStreaming] 流式功能被禁用，跳过 AI Card 创建`);
-      return;
-    }
+    // 如果 AI Card 已存在，直接返回已完成的 Promise
     if (currentCardTarget) {
-      log.info(`[DingTalk][startStreaming] AI Card 已存在，跳过创建`);
-      return;
-    }
-    if (isCreatingCard) {
-      log.info(`[DingTalk][startStreaming] AI Card 正在创建中，跳过`);
-      return;
+      return Promise.resolve();
     }
 
-    // 若队列繁忙时已预先创建了 Card（显示排队 ACK 文案），直接复用，无需新建
-    // 这样用户看到的是同一条消息从 ACK 文案更新为最终结果，而不是多出一条消息
-    if (preCreatedCard) {
-      log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
-      currentCardTarget = preCreatedCard as any;
-      accumulatedText = "";
-      return;
-    }
-    
-    isCreatingCard = true;
-    log.info(`[DingTalk][startStreaming] 开始创建 AI Card...`);
-
-    try {
-      const target: AICardTarget = isDirect
-        ? { type: 'user', userId: senderId }
-        : { type: 'group', openConversationId: conversationId };
-      
-      log.info(`[DingTalk][startStreaming] 目标：${JSON.stringify(target)}`);
-      
-      const card = await createAICardForTarget(
-        account.config as DingtalkConfig,
-        target,
-        params.runtime as any
-      );
-      currentCardTarget = card as any;
-      accumulatedText = "";
-      
-      if (card) {
-        log.info(`[DingTalk][startStreaming] ✅ AI Card 创建成功`);
-      } else {
-        log.warn(`[DingTalk][startStreaming] AI Card 创建返回 null，静默降级到普通消息模式`);
+    cardCreationPromise = (async () => {
+      // 异步模式下禁用流式 AI Card
+      if (asyncMode) {
+        log.info(`[DingTalk][startStreaming] 异步模式，跳过 AI Card 创建`);
+        return;
       }
-    } catch (error: any) {
-      log.error(`[DingTalk][startStreaming] ❌ AI Card 创建失败：${error?.message || String(error)}，静默降级到普通消息模式`);
-      currentCardTarget = null;
-    } finally {
-      isCreatingCard = false;
-    }
+      if (!streamingEnabled) {
+        log.info(`[DingTalk][startStreaming] 流式功能被禁用，跳过 AI Card 创建`);
+        return;
+      }
+
+      // 若队列繁忙时已预先创建了 Card（显示排队 ACK 文案），直接复用，无需新建
+      // 这样用户看到的是同一条消息从 ACK 文案更新为最终结果，而不是多出一条消息
+      if (preCreatedCard) {
+        log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
+        currentCardTarget = preCreatedCard as any;
+        accumulatedText = "";
+        return;
+      }
+
+      log.info(`[DingTalk][startStreaming] 开始创建 AI Card...`);
+
+      try {
+        const target: AICardTarget = isDirect
+          ? { type: 'user', userId: senderId }
+          : { type: 'group', openConversationId: conversationId };
+
+        log.info(`[DingTalk][startStreaming] 目标：${JSON.stringify(target)}`);
+
+        const card = await createAICardForTarget(
+          account.config as DingtalkConfig,
+          target,
+          log
+        );
+        currentCardTarget = card as any;
+        accumulatedText = "";
+
+        if (card) {
+          log.info(`[DingTalk][startStreaming] ✅ AI Card 创建成功`);
+        } else {
+          log.warn(`[DingTalk][startStreaming] AI Card 创建返回 null，静默降级到普通消息模式`);
+        }
+      } catch (error: any) {
+        log.error(`[DingTalk][startStreaming] ❌ AI Card 创建失败：${error?.message || String(error)}，静默降级到普通消息模式`);
+        currentCardTarget = null;
+      } finally {
+        // 创建完成后清空 Promise，允许下次重新创建
+        cardCreationPromise = null;
+      }
+    })();
+
+    return cardCreationPromise;
   };
 
   const closeStreaming: () => Promise<void> = async () => {
@@ -369,7 +358,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       await finishAICard(
         currentCardTarget as any,
         finalText,
-        params.runtime as any
+        account.config as DingtalkConfig,
+        log
       );
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {
@@ -406,10 +396,11 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       ...prefixOptions,
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
       onReplyStart: () => {
-        deliveredFinalTexts.clear();
         log.info(`[DingTalk][onReplyStart] 开始回复，流式 enabled=${streamingEnabled}`);
+        // 每次 onReplyStart 都是全新的回复周期，清空去重集合
+        deliveredFinalTexts.clear();
         if (streamingEnabled) {
-          // fire-and-forget：不阻塞 onReplyStart 返回，onPartialReply 会等待 Card 创建完成
+          // fire-and-forget：提前创建 AI Card，onPartialReply 会等待创建完成
           void startStreaming();
         }
         typingCallbacks.onActive?.();
@@ -468,51 +459,38 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           return;
         }
 
-        // 流式模式：使用 AI Card
-        if (info?.kind === "block" && streamingEnabled) {
-          if (!currentCardTarget) {
-            log.info(`[DingTalk][deliver] block 响应，AI Card 不存在，尝试创建...`);
-            await startStreaming();
+        // block 消息：Agent 的中间 status update
+        // 追加到同一张流式 AI Card 里（delta 模式），不单独创建新卡片
+        // 如果流式 AI Card 未启用，直接丢弃 block（不发送）
+        if (info?.kind === "block") {
+          if (!streamingEnabled) {
+            log.info(`[DingTalk][deliver] block 消息，流式未启用，丢弃`);
+            return;
           }
+          log.info(`[DingTalk][deliver] block 消息，追加到流式 AI Card，文本长度=${text.length}`);
+          // 确保 AI Card 已创建（startStreaming 内部会复用已有的 cardCreationPromise）
+          await startStreaming();
+          // AI Card 已就绪，用 streamAICard 更新内容（仅展示当前 block 文本，不累积到 accumulatedText）
+          // accumulatedText 专门给 onPartialReply 的流式更新使用，block 不能污染它
           if (currentCardTarget) {
-            accumulatedText += text;
-            log.info(`[DingTalk][deliver] 流式更新 AI Card，累积文本长度=${accumulatedText.length}`);
-            try {
-              await streamAICard(
-                currentCardTarget as any,
-                accumulatedText,
-                false,
-                params.runtime as any
-              );
-            } catch (streamErr: any) {
-              log.error(`[DingTalk][deliver] ❌ streamAICard 失败：${streamErr.message}`);
-              // ✅ 流式更新失败，发送兜底消息并降级
-              await sendFallbackErrorMessage('sendMessage', streamErr.message);
+            const now = Date.now();
+            if (now - lastUpdateTime >= updateInterval) {
+              try {
+                await streamAICard(
+                  currentCardTarget as any,
+                  text,
+                  false,
+                  account.config as DingtalkConfig,
+                  log
+                );
+                lastUpdateTime = now;
+                log.info(`[DingTalk][deliver] ✅ block 更新到 AI Card 成功`);
+              } catch (streamErr: any) {
+                log.error(`[DingTalk][deliver] ❌ block 更新 AI Card 失败：${streamErr.message}`);
+              }
             }
           } else {
-            log.warn(`[DingTalk][deliver] ⚠️ AI Card 创建失败，降级到非流式发送`);
-            // 降级逻辑：如果 AI Card 创建失败，直接发送普通消息
-            try {
-              for (const chunk of core.channel.text.chunkTextWithMode(
-                text,
-                textChunkLimit,
-                chunkMode
-              )) {
-                await sendMessage(
-                  account.config as DingtalkConfig,
-                  sessionWebhook,
-                  chunk,
-                  {
-                    useMarkdown: true,
-                    log: params.runtime.log,
-                  }
-                );
-              }
-              log.info(`[DingTalk][deliver] ✅ 降级发送成功`);
-            } catch (error: any) {
-              log.error(`[DingTalk][deliver] ❌ 降级发送失败：${error.message}`);
-              await sendFallbackErrorMessage('sendMessage', error.message);
-            }
+            log.warn(`[DingTalk][deliver] block 消息：AI Card 创建失败，丢弃该 block`);
           }
           return;
         }
@@ -520,23 +498,12 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 流式模式的 final 处理
         if (info?.kind === "final" && streamingEnabled) {
           log.info(`[DingTalk][deliver] final 响应，流式模式`);
-          // 如果还没有创建 AI Card，先创建
-          if (!currentCardTarget && !isCreatingCard) {
-            log.info(`[DingTalk][deliver] AI Card 不存在，尝试创建...`);
-            await startStreaming();
-          }
-          
-          // 等待创建完成
-          if (isCreatingCard) {
-            const maxWait = 5000;
-            const startTime = Date.now();
-            log.info(`[DingTalk][deliver] 等待 AI Card 创建完成，最多等待 ${maxWait}ms`);
-            while (isCreatingCard && Date.now() - startTime < maxWait) {
-              await new Promise(resolve => setTimeout(resolve, 50));
-            }
-          }
-          
+          // await startStreaming() 确保 AI Card 创建完成后再处理 final
+          await startStreaming();
+
           if (currentCardTarget) {
+            // 直接用 final 的 text 覆盖 accumulatedText，确保 closeStreaming 用最终内容关闭卡片
+            // 不能追加，因为 final text 本身就是完整的最终回复
             accumulatedText = text;
             log.info(`[DingTalk][deliver] 调用 closeStreaming 完成 AI Card`);
             await closeStreaming();
@@ -589,9 +556,9 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         typingCallbacks.onIdle?.();
       },
       onIdle: async () => {
-        log.info(`[DingTalk][onIdle] 回复空闲，关闭流式`);
-        await closeStreaming();
+        log.info(`[DingTalk][onIdle] 回复空闲，关闭 AI Card`);
         typingCallbacks.onIdle?.();
+        await closeStreaming();
       },
       onCleanup: () => {
         log.info(`[DingTalk][onCleanup] 清理回调`);
@@ -623,21 +590,9 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           return;
         }
         
-        // 如果还没有 AI Card，先启动流式
-        if (!currentCardTarget && !isCreatingCard) {
-          log.debug(`[DingTalk][onPartialReply] AI Card 不存在，尝试创建...`);
-          await startStreaming();
-        }
-        
-        // 如果正在创建中，等待创建完成
-        if (isCreatingCard) {
-          const maxWait = 5000;
-          const startTime = Date.now();
-          log.debug(`[DingTalk][onPartialReply] 等待 AI Card 创建完成，最多等待 ${maxWait}ms`);
-          while (isCreatingCard && Date.now() - startTime < maxWait) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        }
+        // await startStreaming() 确保 AI Card 创建完成后再更新
+        // startStreaming 内部会复用已有的 cardCreationPromise，不会重复创建
+        await startStreaming();
         
         if (currentCardTarget) {
           accumulatedText = payload.text;
@@ -658,7 +613,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 currentCardTarget as any,
                 displayContent,
                 false,
-                params.runtime as any
+                account.config as DingtalkConfig,
+                log
               );
               lastUpdateTime = now;
               log.debug(`[DingTalk][onPartialReply] ✅ AI Card 更新成功`);
@@ -682,7 +638,6 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         }
       },
       }),
-      disableBlockStreaming: true,  // block 内容合并到 final，流式更新通过 onPartialReply 实现
     },
     markDispatchIdle,
     getAsyncModeResponse: () => asyncModeFullResponse,

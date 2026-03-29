@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2026-03-29
+
+### 修复 / Fixes
+- 🐛 **多 block 流式响应产生多条独立气泡** ([#369](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/369)) - 重构 `startStreaming` 并发控制逻辑，从 `isCreatingCard` 布尔标志改为 `cardCreationPromise`，彻底消除多 block 响应场景下每个 block 新建独立 AI Card 气泡的问题  
+  **Multi-block streaming response creates multiple bubbles** - Refactored `startStreaming` concurrency control from boolean flag to `cardCreationPromise`, eliminating independent AI Card bubbles per block in multi-block responses
+
+- 🐛 **Web UI Connected / Last inbound 显示 n/a** - 新增 `onStatusChange` 回调在连接建立/断开/收到消息时上报状态字段；补全 `buildSessionContext` 中 `conversationId` 和 `groupSubject` 字段透传  
+  **Web UI shows n/a for Connected and Last inbound** - Added `onStatusChange` callback to report status fields on connection events; fixed `buildSessionContext` field passthrough
+
+- 🐛 **AI Card 函数调用参数错误** - 修复 `reply-dispatcher.ts` 中 `createAICardForTarget`、`streamAICard`、`finishAICard` 参数从 `params.runtime` 改为 `account.config/log`  
+  **AI Card function call parameter error** - Fixed parameters in `reply-dispatcher.ts` from `params.runtime` to `account.config/log`
+
+- 🐛 **sendFileProactive 参数错误导致文件发送失败** - 修复 `processFileMarkers` 和 `processRawMediaPaths` 错误传入 `downloadUrl`，改为正确的 `cleanMediaId`  
+  **File sending failure due to wrong sendFileProactive parameter** - Fixed incorrect `downloadUrl` parameter, now correctly uses `cleanMediaId`
+
+- 🐛 **纯多账号配置下 probe 被跳过** ([#381](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/381)) - `getStatus()` 改用 `resolveDingtalkAccount()` 统一获取账号信息，修复纯多账号配置下状态显示不准确的问题  
+  **Probe skipped in pure multi-account config** - `getStatus()` now uses `resolveDingtalkAccount()` for unified account resolution
+
+### 改进 / Improvements
+- ✅ **音频时长提取安全性改进** ([#134](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/134)) - `extractAudioDuration` 改用 `fluent-ffmpeg` 的 `ffprobe` API，消除安全扫描误报  
+  **Audio duration extraction security improvement** - Changed to `fluent-ffmpeg` `ffprobe` API, eliminating security scan false positives
+
+- ✅ **SDK 接口迁移** - `onboarding.ts` 类型引用迁移到新版 `ChannelSetupWizardAdapter`，导入路径更新为 `openclaw/plugin-sdk/setup`  
+  **SDK interface migration** - Migrated to `ChannelSetupWizardAdapter` and updated import path to `openclaw/plugin-sdk/setup`
+
 ## [0.8.7] - 2026-03-26
 
 ### 修复 / Fixes
