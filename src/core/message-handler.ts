@@ -1311,16 +1311,18 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
 
   if (asyncMode) {
     log?.info?.(`进入异步模式分支`);
-    const ackText = config.ackText || '🫡 任务已接收，处理中...';
-    try {
-      await sendProactive(config, proactiveTarget, ackText, {
-        msgType: 'text',
-        useAICard: false,
-        fallbackToNormal: true,
-        log,
-      });
-    } catch (ackErr: any) {
-      log?.warn?.(`Failed to send acknowledgment: ${ackErr?.message || ackErr}`);
+    const ackText = config.ackText || '';
+    if(ackText.trim()){
+      try {
+        await sendProactive(config, proactiveTarget, ackText, {
+          msgType: 'text',
+          useAICard: false,
+          fallbackToNormal: true,
+          log,
+        });
+      } catch (ackErr: any) {
+        log?.warn?.(`Failed to send acknowledgment: ${ackErr?.message || ackErr}`);
+      }
     }
   }
 
