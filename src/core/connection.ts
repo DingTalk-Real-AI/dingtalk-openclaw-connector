@@ -18,7 +18,6 @@ import type { ResolvedDingtalkAccount } from "../types/index.ts";
 import {
   checkAndMarkDingtalkMessage,
 } from "../utils/utils-legacy.ts";
-import { createLoggerFromConfig } from "../utils/logger.ts";
 
 // ============ 类型定义 ============
 
@@ -78,6 +77,7 @@ export async function monitorSingleAccount(
   const log = runtime?.log;
   
   // 创建 debug logger（仅在 debug 模式下输出 info/debug 日志）
+  const { createLoggerFromConfig } = await import('../utils/logger');
   const logger = createLoggerFromConfig(account.config, `DingTalk:${accountId}`);
 
   // 验证凭据是否存在

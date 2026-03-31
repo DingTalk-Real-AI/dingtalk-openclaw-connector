@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.10] - 2026-03-31
+
+### 修复 / Fixes
+- 🐛 **Gateway Methods 配置访问失败** ([#397](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/397)) - 修复 SDK 升级后 `context.deps.config` 为 `undefined`，所有 Gateway RPC 方法调用失败。改用 SDK 的 `loadConfig()` 函数获取配置  
+  **Gateway Methods config access failure** - Fixed `context.deps.config` being `undefined` after SDK upgrade, now uses `loadConfig()` from `openclaw/plugin-sdk/config-runtime`
+
+- 🐛 **锁定 axios 版本避免兼容性问题** ([#396](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/396)) - 将 `axios` 从 `^1.6.0` 锁定为 `1.6.0`，避免自动升级引入不兼容变更  
+  **Pin axios version** - Pinned `axios` from `^1.6.0` to `1.6.0` to prevent incompatible upgrades
+
+### 改进 / Improvements
+- ✅ **connection.ts 动态 import 优化** - 将 `createLoggerFromConfig` 改为动态 import，避免潜在循环依赖  
+  **connection.ts dynamic import** - Changed `createLoggerFromConfig` to dynamic import to avoid potential circular dependencies
+
 ## [0.8.9] - 2026-03-31
 
 ### 新增 / Added

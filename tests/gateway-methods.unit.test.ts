@@ -20,6 +20,11 @@ const mockConfig = {
   },
 };
 
+// Mock loadConfig：gateway-methods.ts 通过动态 import 获取配置
+vi.mock('openclaw/plugin-sdk/config-runtime', () => ({
+  loadConfig: () => mockConfig,
+}));
+
 const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
@@ -62,9 +67,7 @@ function createMockApi() {
       };
 
       const context = {
-        deps: {
-          getConfig: () => mockConfig,
-        },
+        deps: {},
       };
 
       await handler({ context, params, respond });
@@ -253,29 +256,23 @@ describe('Gateway Methods - 状态检查', () => {
 });
 
 describe('Gateway Methods - 配置读取', () => {
-  it('应该能从 context.deps.getConfig() 获取配置', async () => {
+  it('应该能通过 loadConfig 获取配置', async () => {
     const { api, handlers } = createMockApi();
     registerGatewayMethods(api);
 
     const handler = handlers.get('dingtalk-connector.status');
     expect(handler).toBeDefined();
 
-    let capturedConfig: any;
     const respond = vi.fn();
     const context = {
-      deps: {
-        getConfig: vi.fn(() => {
-          capturedConfig = mockConfig;
-          return mockConfig;
-        }),
-      },
+      deps: {},
     };
 
     await handler!({ context, params: {}, respond });
 
-    // 验证 getConfig 被调用
-    expect(context.deps.getConfig).toHaveBeenCalled();
-    expect(capturedConfig).toBe(mockConfig);
+    // 验证 respond 被调用且成功（loadConfig 已被 mock 返回 mockConfig）
+    expect(respond).toHaveBeenCalled();
+    expect(respond.mock.calls[0][0]).toBe(true);
   });
 });
 
