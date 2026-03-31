@@ -576,7 +576,7 @@ export async function processAudioMarkers(
 
       // 发送音频消息
       if (useProactiveApi && target) {
-        await sendAudioProactive(config, target, fileName, uploadResult.cleanMediaId, log, audioDurationMs ?? undefined);
+        await sendAudioProactive(config, target, fileName, uploadResult.mediaId, log, audioDurationMs ?? undefined);
       } else {
         await sendAudioMessage(config, sessionWebhook, fileName, uploadResult.downloadUrl, log, audioDurationMs ?? undefined);
       }
