@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.12] - 2026-04-01
+
+### 修复 / Fixes
+- 🐛 **修复 v0.8.11 安装后启动崩溃** ([#419](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/419)) - `mammoth` 和 `pdf-parse` 使用静态 import 但已从 dependencies 移除，导致模块加载阶段报错 `Cannot find module 'mammoth'`。改为动态 import + 优雅降级  
+  **Fix startup crash after v0.8.11 installation** - Changed `mammoth` and `pdf-parse` from static import to dynamic import with graceful degradation
+
+### 改进 / Improvements
+- ✅ **大幅精简依赖体积** - 移除 `pdf-parse`（~21MB）、`fluent-ffmpeg`（~12MB）、`@ffmpeg-installer/ffmpeg`（~70MB）、`@ffprobe-installer/ffprobe` 等非核心依赖，仅保留 `mammoth`（~2MB）在 `optionalDependencies`  
+  **Significantly reduce dependency size** - Removed ~100MB of non-core optional dependencies, keeping only `mammoth` (~2MB)
+
+### 重构 / Refactoring
+- ✅ **移除无效的代理禁用代码** - 经源码分析 `dingtalk-stream` SDK 的 WebSocket 连接使用 `ws` 库直接建立，不受 `axios.defaults.proxy` 影响。移除 `proxy-config.ts` 及相关代理配置  
+  **Remove ineffective proxy bypass code** - Analysis showed `ws` library bypasses axios entirely; removed `proxy-config.ts` and all proxy configuration code
+
 ## [0.8.11] - 2026-04-01
 
 ### 新增 / Added

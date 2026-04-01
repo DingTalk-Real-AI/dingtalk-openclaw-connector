@@ -1,15 +1,7 @@
 /**
  * HTTP 客户端配置模块
  * 
- * 提供统一的 axios 实例，禁用代理以避免系统 PAC 文件影响
- * 
- * 问题背景：
- * - 阿里巴巴内网 PAC 文件会将 *.dingtalk.com 路由到内网代理（如 192.168.1.176:443）
- * - 当不在内网环境时，会导致连接超时
- * 
- * 解决方案：
- * - 创建专用的 axios 实例，禁用代理
- * - 仅影响钉钉插件，不影响 OpenClaw Gateway 和其他插件
+ * 提供统一的 axios 实例，用于钉钉 API 请求。
  * 
  * 使用方式：
  * ```typescript
@@ -20,41 +12,26 @@
  */
 
 import axios, { type AxiosInstance } from 'axios';
-import { getProxyConfig } from './proxy-config.ts';
 
-/**
- * 钉钉专用 HTTP 客户端
- * 
- * 特性：
- * - 禁用代理（避免 PAC 文件影响）
- * - 30 秒超时
- * - 仅影响钉钉插件的请求
- */
+/** 钉钉专用 HTTP 客户端（30 秒超时） */
 export const dingtalkHttp: AxiosInstance = axios.create({
-  proxy: getProxyConfig(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-/**
- * 钉钉 OAPI 专用 HTTP 客户端（用于媒体上传等）
- */
+/** 钉钉 OAPI 专用 HTTP 客户端（60 秒超时，用于媒体上传等） */
 export const dingtalkOapiHttp: AxiosInstance = axios.create({
-  proxy: getProxyConfig(),
-  timeout: 60000, // 媒体上传可能需要更长时间
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-/**
- * 用于文件上传的 HTTP 客户端（支持 multipart/form-data）
- */
+/** 文件上传专用 HTTP 客户端（120 秒超时，无 body 大小限制） */
 export const dingtalkUploadHttp: AxiosInstance = axios.create({
-  proxy: getProxyConfig(),
-  timeout: 120000, // 文件上传需要更长时间
+  timeout: 120000,
   maxContentLength: Infinity,
   maxBodyLength: Infinity,
 });

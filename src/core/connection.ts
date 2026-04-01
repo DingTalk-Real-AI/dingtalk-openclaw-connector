@@ -130,31 +130,6 @@ export async function monitorSingleAccount(
   logger.info(`Initializing with clientId: ${clientIdStr.substring(0, 8)}...`);
   logger.info(`WebSocket keepAlive: false (using application-layer heartbeat)`);
 
-  // 🔧 配置 dingtalk-stream SDK 的代理策略
-  //
-  // dingtalk-stream SDK 内部使用 axios 发起 HTTP 请求（获取 WebSocket endpoint）。
-  // 策略与 src/utils/http-client.ts 保持一致：
-  //   - 默认禁用代理：避免阿里内网 PAC 文件将 *.dingtalk.com 路由到内网代理，
-  //     导致外网环境连接超时。
-  //   - DINGTALK_FORCE_PROXY=true：保留系统代理，供需要通过代理访问外网的内网环境使用。
-  //
-  // 注意：这里修改的是 axios 全局默认值，会影响 dingtalk-stream SDK 内部的 axios 实例。
-  // src/utils/http-client.ts 中的专用实例已在创建时单独配置，不受此处影响。
-  try {
-    const axios = (await import("axios")).default;
-    if (axios.defaults) {
-      const shouldDisableProxy = process.env.DINGTALK_FORCE_PROXY !== 'true';
-      if (shouldDisableProxy) {
-        axios.defaults.proxy = false;
-        logger.debug(`已禁用 axios 全局代理（dingtalk-stream SDK），如需代理请设置 DINGTALK_FORCE_PROXY=true`);
-      } else {
-        logger.debug(`保留系统代理配置（DINGTALK_FORCE_PROXY=true），dingtalk-stream SDK 将通过代理连接`);
-      }
-    }
-  } catch (err) {
-    logger.warn(`无法配置 axios 代理设置: ${err}`);
-  }
-
   // 动态导入 dingtalk-stream 模块（避免循环依赖和 ESM/CJS 兼容性问题）
   const dingtalkStreamModule = await import("dingtalk-stream");
   const DWClient = dingtalkStreamModule.DWClient;

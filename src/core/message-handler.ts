@@ -62,8 +62,6 @@ import { createLoggerFromConfig } from '../utils/index.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import mammoth from 'mammoth';
-import pdfParse from 'pdf-parse';
 
 // ============ 常量 ============
 
@@ -826,6 +824,15 @@ export async function downloadFileToLocal(
 async function parseDocxFile(filePath: string, log?: any): Promise<string | null> {
   try {
     log?.info?.(`开始解析 Word 文档: ${filePath}`);
+
+    let mammoth: any;
+    try {
+      mammoth = (await import('mammoth')).default;
+    } catch {
+      log?.warn?.('mammoth 库未安装，无法解析 .docx 文件。请运行: npm install mammoth');
+      return null;
+    }
+
     const buffer = fs.readFileSync(filePath);
     const result = await mammoth.extractRawText({ buffer });
     const text = result.value.trim();
@@ -849,6 +856,15 @@ async function parseDocxFile(filePath: string, log?: any): Promise<string | null
 async function parsePdfFile(filePath: string, log?: any): Promise<string | null> {
   try {
     log?.info?.(`开始解析 PDF 文档: ${filePath}`);
+
+    let pdfParse: any;
+    try {
+      pdfParse = (await import('pdf-parse')).default;
+    } catch {
+      log?.warn?.('pdf-parse 库未安装，无法解析 .pdf 文件。请运行: npm install pdf-parse');
+      return null;
+    }
+
     const buffer = fs.readFileSync(filePath);
     const data = await pdfParse(buffer);
     const text = data.text.trim();

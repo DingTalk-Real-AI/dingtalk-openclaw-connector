@@ -1,7 +1,7 @@
 {
   "id": "dingtalk-connector",
   "name": "DingTalk Channel",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "description": "DingTalk (钉钉) messaging channel via Stream mode with AI Card streaming",
   "author": "DingTalk Real Team",
   "main": "index.ts",
@@ -27,21 +27,44 @@
           },
           "clientId": {
             "anyOf": [
-              { "type": "string" },
-              { "type": "number" }
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
             ]
           },
           "clientSecret": {
             "anyOf": [
-              { "type": "string" },
+              {
+                "type": "string"
+              },
               {
                 "type": "object",
                 "properties": {
-                  "source": { "type": "string", "enum": ["env", "file", "exec"] },
-                  "provider": { "type": "string", "minLength": 1 },
-                  "id": { "type": "string", "minLength": 1 }
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "env",
+                      "file",
+                      "exec"
+                    ]
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
-                "required": ["source", "provider", "id"],
+                "required": [
+                  "source",
+                  "provider",
+                  "id"
+                ],
                 "additionalProperties": false
               }
             ]
@@ -55,23 +78,45 @@
           "dmPolicy": {
             "default": "open",
             "type": "string",
-            "enum": ["open", "pairing", "allowlist"]
+            "enum": [
+              "open",
+              "pairing",
+              "allowlist"
+            ]
           },
           "allowFrom": {
             "type": "array",
             "items": {
-              "anyOf": [{ "type": "string" }, { "type": "number" }]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
             }
           },
           "groupPolicy": {
             "default": "open",
             "type": "string",
-            "enum": ["open", "allowlist", "disabled"]
+            "enum": [
+              "open",
+              "allowlist",
+              "disabled"
+            ]
           },
           "groupAllowFrom": {
             "type": "array",
             "items": {
-              "anyOf": [{ "type": "string" }, { "type": "number" }]
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
             }
           },
           "requireMention": {
@@ -83,26 +128,52 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "requireMention": { "type": "boolean" },
+                "requireMention": {
+                  "type": "boolean"
+                },
                 "tools": {
                   "type": "object",
                   "properties": {
-                    "allow": { "type": "array", "items": { "type": "string" } },
-                    "deny": { "type": "array", "items": { "type": "string" } }
+                    "allow": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "deny": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
                   },
                   "additionalProperties": false
                 },
-                "enabled": { "type": "boolean" },
+                "enabled": {
+                  "type": "boolean"
+                },
                 "allowFrom": {
                   "type": "array",
                   "items": {
-                    "anyOf": [{ "type": "string" }, { "type": "number" }]
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
                   }
                 },
-                "systemPrompt": { "type": "string" },
+                "systemPrompt": {
+                  "type": "string"
+                },
                 "groupSessionScope": {
                   "type": "string",
-                  "enum": ["group", "group_sender"]
+                  "enum": [
+                    "group",
+                    "group_sender"
+                  ]
                 }
               },
               "additionalProperties": false
@@ -123,8 +194,12 @@
           "tools": {
             "type": "object",
             "properties": {
-              "docs": { "type": "boolean" },
-              "media": { "type": "boolean" }
+              "docs": {
+                "type": "boolean"
+              },
+              "media": {
+                "type": "boolean"
+              }
             },
             "additionalProperties": false
           },
@@ -145,7 +220,10 @@
           "groupSessionScope": {
             "default": "group",
             "type": "string",
-            "enum": ["group", "group_sender"]
+            "enum": [
+              "group",
+              "group_sender"
+            ]
           },
           "asyncMode": {
             "type": "boolean"
@@ -164,82 +242,212 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "enabled": { "type": "boolean" },
-                "name": { "type": "string" },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                },
                 "clientId": {
-                  "anyOf": [{ "type": "string" }, { "type": "number" }]
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
                 },
                 "clientSecret": {
                   "anyOf": [
-                    { "type": "string" },
+                    {
+                      "type": "string"
+                    },
                     {
                       "type": "object",
                       "properties": {
-                        "source": { "type": "string", "enum": ["env", "file", "exec"] },
-                        "provider": { "type": "string", "minLength": 1 },
-                        "id": { "type": "string", "minLength": 1 }
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "env",
+                            "file",
+                            "exec"
+                          ]
+                        },
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        }
                       },
-                      "required": ["source", "provider", "id"],
+                      "required": [
+                        "source",
+                        "provider",
+                        "id"
+                      ],
                       "additionalProperties": false
                     }
                   ]
                 },
-                "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist"] },
+                "dmPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "pairing",
+                    "allowlist"
+                  ]
+                },
                 "allowFrom": {
                   "type": "array",
-                  "items": { "anyOf": [{ "type": "string" }, { "type": "number" }] }
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
                 },
-                "groupPolicy": { "type": "string", "enum": ["open", "allowlist", "disabled"] },
+                "groupPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "allowlist",
+                    "disabled"
+                  ]
+                },
                 "groupAllowFrom": {
                   "type": "array",
-                  "items": { "anyOf": [{ "type": "string" }, { "type": "number" }] }
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
                 },
-                "requireMention": { "type": "boolean" },
+                "requireMention": {
+                  "type": "boolean"
+                },
                 "groups": {
                   "type": "object",
                   "additionalProperties": {
                     "type": "object",
                     "properties": {
-                      "requireMention": { "type": "boolean" },
+                      "requireMention": {
+                        "type": "boolean"
+                      },
                       "tools": {
                         "type": "object",
                         "properties": {
-                          "allow": { "type": "array", "items": { "type": "string" } },
-                          "deny": { "type": "array", "items": { "type": "string" } }
+                          "allow": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "deny": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
                         },
                         "additionalProperties": false
                       },
-                      "enabled": { "type": "boolean" },
+                      "enabled": {
+                        "type": "boolean"
+                      },
                       "allowFrom": {
                         "type": "array",
-                        "items": { "anyOf": [{ "type": "string" }, { "type": "number" }] }
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
                       },
-                      "systemPrompt": { "type": "string" },
-                      "groupSessionScope": { "type": "string", "enum": ["group", "group_sender"] }
+                      "systemPrompt": {
+                        "type": "string"
+                      },
+                      "groupSessionScope": {
+                        "type": "string",
+                        "enum": [
+                          "group",
+                          "group_sender"
+                        ]
+                      }
                     },
                     "additionalProperties": false
                   }
                 },
-                "historyLimit": { "type": "integer", "minimum": 0 },
-                "textChunkLimit": { "type": "integer", "exclusiveMinimum": 0 },
-                "mediaMaxMb": { "type": "number", "exclusiveMinimum": 0 },
+                "historyLimit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "textChunkLimit": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "mediaMaxMb": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
                 "tools": {
                   "type": "object",
                   "properties": {
-                    "docs": { "type": "boolean" },
-                    "media": { "type": "boolean" }
+                    "docs": {
+                      "type": "boolean"
+                    },
+                    "media": {
+                      "type": "boolean"
+                    }
                   },
                   "additionalProperties": false
                 },
-                "typingIndicator": { "type": "boolean" },
-                "resolveSenderNames": { "type": "boolean" },
-                "separateSessionByConversation": { "type": "boolean" },
-                "sharedMemoryAcrossConversations": { "type": "boolean" },
-                "groupSessionScope": { "type": "string", "enum": ["group", "group_sender"] },
-                "asyncMode": { "type": "boolean" },
-                "ackText": { "type": "string" },
-                "endpoint": { "type": "string" },
-                "debug": { "type": "boolean" }
+                "typingIndicator": {
+                  "type": "boolean"
+                },
+                "resolveSenderNames": {
+                  "type": "boolean"
+                },
+                "separateSessionByConversation": {
+                  "type": "boolean"
+                },
+                "sharedMemoryAcrossConversations": {
+                  "type": "boolean"
+                },
+                "groupSessionScope": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "group_sender"
+                  ]
+                },
+                "asyncMode": {
+                  "type": "boolean"
+                },
+                "ackText": {
+                  "type": "string"
+                },
+                "endpoint": {
+                  "type": "string"
+                },
+                "debug": {
+                  "type": "boolean"
+                }
               },
               "additionalProperties": false
             }
