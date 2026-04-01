@@ -748,6 +748,45 @@ export async function sendMediaToDingTalk(params: {
       };
     }
 
+    // 直接处理音频
+    if (mediaType === "voice") {
+      // 构建音频标记
+      const audioMarker = `[DINGTALK_AUDIO]{"path":"${mediaUrl}"}[/DINGTALK_AUDIO]`;
+
+      
+      // 直接处理视频标记（上传并发送视频消息）
+      const { processAudioMarkers } = await import("./media");
+      // 直接处理音频标记（上传并发送音频消息）
+      await processAudioMarkers(
+        audioMarker, // 只传入标记，不包含原始文本
+        "",
+        config,
+        oapiToken,
+        console,
+        true, // useProactiveApi
+        targetParam,
+      );
+
+      // 如果有原始文本，单独发送
+      if (text?.trim()) {
+        const result = await sendProactive(config, targetParam, text, {
+          msgType: "text",
+          replyToId,
+        });
+        return {
+          ...result,
+          processQueryKey: result.processQueryKey || "audio-text-sent",
+        };
+      }
+
+      // 音频已发送，返回成功
+      return {
+        ok: true,
+        usedAICard: false,
+        processQueryKey: "audio-message-sent",
+      };
+    }
+
     // 对于音频、文件，发送真正的文件消息
     const fs = await import("fs");
     const stats = fs.statSync(mediaUrl);
