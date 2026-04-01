@@ -3,11 +3,15 @@ import type {
   ClawdbotConfig,
 } from "openclaw/plugin-sdk";
 import {
+  buildChannelConfigSchema,
+} from "openclaw/plugin-sdk/core";
+import {
   createDefaultChannelRuntimeState,
   DEFAULT_ACCOUNT_ID,
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
 } from "./sdk/helpers.ts";
+import { DingtalkConfigBaseSchema } from "./config/schema.ts";
 import { createLogger } from "./utils/logger.ts";
 import {
   resolveDingtalkAccount,
@@ -76,103 +80,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     stripPatterns: () => ['@[^\\s]+'], // Strip @mentions
   },
   reload: { configPrefixes: ["channels.dingtalk-connector"] },
-  configSchema: {
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        enabled: { type: "boolean" },
-        defaultAccount: { type: "string" },
-        clientId: { type: "string" },
-        clientSecret: { type: "string" },
-        enableMediaUpload: { type: "boolean" },
-        systemPrompt: { type: "string" },
-        dmPolicy: { type: "string", enum: ["open", "pairing", "allowlist"] },
-        allowFrom: { type: "array", items: { type: "string" } },
-        groupPolicy: { type: "string", enum: ["open", "allowlist", "disabled"] },
-        groupAllowFrom: { type: "array", items: { type: "string" } },
-        requireMention: { type: "boolean" },
-        groupSessionScope: { type: "string", enum: ["group", "group_sender"] },
-        separateSessionByConversation: { type: "boolean" },
-        sharedMemoryAcrossConversations: { type: "boolean" },
-        historyLimit: { type: "integer", minimum: 0 },
-        textChunkLimit: { type: "integer", minimum: 1 },
-        mediaMaxMb: { type: "number", minimum: 0 },
-        typingIndicator: { type: "boolean" },
-        resolveSenderNames: { type: "boolean" },
-        asyncMode: { type: "boolean" },
-        ackText: { type: "string" },
-        endpoint: { type: "string" },
-        debug: { type: "boolean" },
-        tools: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            docs: { type: "boolean" },
-            media: { type: "boolean" },
-          },
-        },
-        groups: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            properties: {
-              requireMention: { type: "boolean" },
-              tools: {
-                type: "object",
-                properties: {
-                  allow: { type: "array", items: { type: "string" } },
-                  deny: { type: "array", items: { type: "string" } },
-                },
-              },
-              enabled: { type: "boolean" },
-              allowFrom: { type: "array", items: { type: "string" } },
-              systemPrompt: { type: "string" },
-              groupSessionScope: { type: "string", enum: ["group", "group_sender"] },
-            },
-          },
-        },
-        accounts: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            properties: {
-              enabled: { type: "boolean" },
-              name: { type: "string" },
-              clientId: { type: "string" },
-              clientSecret: { type: "string" },
-              enableMediaUpload: { type: "boolean" },
-              systemPrompt: { type: "string" },
-              dmPolicy: { type: "string", enum: ["open", "pairing", "allowlist"] },
-              allowFrom: { type: "array", items: { type: "string" } },
-              groupPolicy: { type: "string", enum: ["open", "allowlist", "disabled"] },
-              groupAllowFrom: { type: "array", items: { type: "string" } },
-              requireMention: { type: "boolean" },
-              groupSessionScope: { type: "string", enum: ["group", "group_sender"] },
-              separateSessionByConversation: { type: "boolean" },
-              sharedMemoryAcrossConversations: { type: "boolean" },
-              historyLimit: { type: "integer", minimum: 0 },
-              textChunkLimit: { type: "integer", minimum: 1 },
-              mediaMaxMb: { type: "number", minimum: 0 },
-              typingIndicator: { type: "boolean" },
-              asyncMode: { type: "boolean" },
-              ackText: { type: "string" },
-              endpoint: { type: "string" },
-              debug: { type: "boolean" },
-              tools: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  docs: { type: "boolean" },
-                  media: { type: "boolean" },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
+  configSchema: buildChannelConfigSchema(DingtalkConfigBaseSchema),
   config: {
     listAccountIds: (cfg) => listDingtalkAccountIds(cfg),
     resolveAccount: (cfg, accountId) => resolveDingtalkAccount({ cfg, accountId }),

@@ -19,32 +19,8 @@
  * ```
  */
 
-import axios, { type AxiosInstance, type CreateAxiosDefaults } from 'axios';
-
-/**
- * 获取代理配置
- * 
- * 策略：
- * 1. 如果设置了 DINGTALK_FORCE_PROXY=true，使用环境变量中的代理
- * 2. 否则禁用代理（避免被系统 PAC 影响）
- */
-function getProxyConfig(): CreateAxiosDefaults['proxy'] {
-  // 如果强制启用代理
-  if (process.env.DINGTALK_FORCE_PROXY === 'true') {
-    const proxyUrl =
-      process.env.https_proxy ||
-      process.env.HTTPS_PROXY ||
-      process.env.http_proxy ||
-      process.env.HTTP_PROXY;
-
-    if (proxyUrl) {
-      return proxyUrl as any;
-    }
-  }
-
-  // 默认禁用代理
-  return false;
-}
+import axios, { type AxiosInstance } from 'axios';
+import { getProxyConfig } from './proxy-config.ts';
 
 /**
  * 钉钉专用 HTTP 客户端

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.11] - 2026-04-01
+
+### 新增 / Added
+- ✨ **升级 Zod v4 + 自动生成 configSchema** - 将 Zod 从 v3 升级至 v4（`zod@^4.3.6`），通过 SDK 的 `buildChannelConfigSchema()` 自动从 Zod Schema 生成 JSON Schema，替代手动维护的 `configSchema.schema`  
+  **Upgrade Zod v4 + auto-generate configSchema** - Upgraded Zod from v3 to v4, auto-generating JSON Schema via SDK's `buildChannelConfigSchema()`
+
+### 改进 / Improvements
+- ✅ **依赖结构优化，减小安装体积** - 将 `openclaw` 移至 `peerDependencies`（optional），将 `fluent-ffmpeg`/`@ffmpeg-installer/ffmpeg`/`@ffprobe-installer/ffprobe` 移至 `optionalDependencies`，移除未使用的 `pako`  
+  **Dependency optimization, reduced install size** - Moved `openclaw` to `peerDependencies` (optional), moved ffmpeg packages to `optionalDependencies`, removed unused `pako`
+
 ## [0.8.10] - 2026-03-31
 
 ### 修复 / Fixes
