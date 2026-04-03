@@ -17,14 +17,30 @@ interface ReplyPayload {
   [key: string]: any;
 }
 
-// ✅ 动态导入 channel-runtime 模块
-const channelRuntimeModule = await import("openclaw/plugin-sdk/channel-runtime") as any;
+// ✅ Inline implementation to bypass jiti alias issue with openclaw/plugin-sdk subpaths
+function createReplyPrefixOptions(_params: Record<string, any>): Record<string, any> {
+  return {};
+}
 
-const {
-  createReplyPrefixOptions,
-  createTypingCallbacks,
-  logTypingFailure,
-} = channelRuntimeModule;
+function createTypingCallbacks(callbacks: {
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+  onStartError?: (err: any) => void;
+  onStopError?: (err: any) => void;
+}): { onActive?: () => Promise<void>; onInactive?: () => Promise<void> } {
+  return {
+    onActive: async () => {
+      try { await callbacks.start(); } catch (err) { callbacks.onStartError?.(err); }
+    },
+    onInactive: async () => {
+      try { await callbacks.stop(); } catch (err) { callbacks.onStopError?.(err); }
+    },
+  };
+}
+
+function logTypingFailure(params: { log: (msg: any) => void; channel: string; action: string; error: any }) {
+  params.log(`[Typing:${params.channel}:${params.action}] ${params.error?.message || String(params.error)}`);
+}
 
 import { createLoggerFromConfig } from "./utils/logger.ts";
 import { resolveDingtalkAccount } from "./config/accounts.ts";
