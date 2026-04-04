@@ -15,6 +15,7 @@ import {
   processFileMarkers,
   uploadMediaToDingTalk,
 } from "./media.ts";
+import { normalizeDingtalkTarget } from "../targets.ts";
 // ✅ 导入 AI Card 相关函数，避免重复实现
 import {
   createAICardForTarget,
@@ -552,11 +553,18 @@ export async function sendTextToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  const normalizedTarget = normalizeDingtalkTarget(target);
+  if (!normalizedTarget) {
+    log.error("target 规范化失败:", target);
+    return { ok: false, error: "Invalid target parameter", usedAICard: false };
+  }
+
+  const trimmedTarget = target.trim();
+  const lowerTarget = trimmedTarget.toLowerCase();
+  const isGroupTarget = lowerTarget.startsWith("group:") || normalizedTarget.startsWith("cid");
+  const targetParam = isGroupTarget
+    ? { type: "group" as const, openConversationId: normalizedTarget }
+    : { type: "user" as const, userId: normalizedTarget };
 
   return sendProactive(config, targetParam, text, {
     msgType: "text",
@@ -595,11 +603,18 @@ export async function sendMediaToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  const normalizedTarget = normalizeDingtalkTarget(target);
+  if (!normalizedTarget) {
+    log.error("target 规范化失败:", target);
+    return { ok: false, error: "Invalid target parameter", usedAICard: false };
+  }
+
+  const trimmedTarget = target.trim();
+  const lowerTarget = trimmedTarget.toLowerCase();
+  const isGroupTarget = lowerTarget.startsWith("group:") || normalizedTarget.startsWith("cid");
+  const targetParam = isGroupTarget
+    ? { type: "group" as const, openConversationId: normalizedTarget }
+    : { type: "user" as const, userId: normalizedTarget };
 
   log.info("参数解析完成，mediaUrl:", mediaUrl, "type:", typeof mediaUrl);
 

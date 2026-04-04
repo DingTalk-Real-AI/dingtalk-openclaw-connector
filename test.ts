@@ -396,4 +396,3 @@ export const __testables = {
   resolveAgentIdByBindings,
   setRuntimeForTest,
 };
-
