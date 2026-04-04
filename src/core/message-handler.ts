@@ -1667,15 +1667,22 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     }
 
     // 创建当前消息的处理任务
+    // Fire-and-forget: 启动 dispatch 但不在队列链中等待完成。
+    // 队列保证同一会话的消息按顺序*启动*，但每个 dispatch 独立在后台执行。
+    // 这允许 SDK 的 steer/followup 队列机制在当前 agent run 进行中时
+    // 接收到下一条消息，从而实现"转向"或"排队跟进"。
+    // 参考：OpenClaw Discord inbound-worker 使用 `void runQueue.enqueue(...)`。
     const currentTask = previousTask
-      .then(async () => {
+      .then(() => {
         log?.info?.(`[队列] 开始处理消息，queueKey=${queueKey}`);
-        await handleDingTalkMessageInternal({ ...params, preCreatedCard, emotionAlreadyAdded: isQueueBusy });
-        log?.info?.(`[队列] 消息处理完成，queueKey=${queueKey}`);
-      })
-      .catch((err: any) => {
-        log?.error?.(`[队列] 消息处理异常，queueKey=${queueKey}, error=${err.message}`);
-        // 不抛出错误，避免阻塞后续消息
+        // 不 await —— dispatch 在后台运行，队列立即释放给下一条消息
+        void handleDingTalkMessageInternal({ ...params, preCreatedCard, emotionAlreadyAdded: isQueueBusy })
+          .then(() => {
+            log?.info?.(`[队列] 消息处理完成，queueKey=${queueKey}`);
+          })
+          .catch((err: any) => {
+            log?.error?.(`[队列] 消息处理异常，queueKey=${queueKey}, error=${err.message}`);
+          });
       })
       .finally(() => {
         // 如果当前任务是队列中的最后一个任务，清理队列
