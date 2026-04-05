@@ -122,7 +122,9 @@ registry=https://registry.npmmirror.com
 ```bash
 openclaw plugins list
 ```
-You should see `✓ DingTalk Channel (v0.8.6) - loaded`
+You should see output similar to `✓ DingTalk Channel (vX.X.X) - loaded`.
+
+> ⚠️ **If you don't see `loaded`**, resolve the plugin loading issue before proceeding to Step 3. Otherwise, DingTalk will not appear in `openclaw channels add`.
 
 ---
 

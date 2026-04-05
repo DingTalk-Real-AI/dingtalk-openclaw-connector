@@ -607,7 +607,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               // 安全检查：确保 code 存在且为字符串
               const errorCode = err.response?.data?.code;
               if (err.response?.status === 403 && typeof errorCode === 'string' && errorCode.includes('QpsLimit')) {
-                // QPS 限流，跳过本次更新
+                // QPS 限流，跳过本次更新；同步更新节流时间，防止立即重试再次触发限流
+                lastUpdateTime = now;
                 log.warn(`[DingTalk][AICard] QPS 限流，跳过本次更新`);
               } else {
                 log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);

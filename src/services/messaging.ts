@@ -552,11 +552,17 @@ export async function sendTextToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  // 判断目标是用户还是群（支持 group:/user: 前缀，与 gateway-methods.ts 逻辑保持一致）
+  let targetParam: { type: "user"; userId: string } | { type: "group"; openConversationId: string };
+  if (target.startsWith("group:")) {
+    targetParam = { type: "group", openConversationId: target.slice(6) };
+  } else if (target.startsWith("user:")) {
+    targetParam = { type: "user", userId: target.slice(5) };
+  } else if (target.startsWith("cid")) {
+    targetParam = { type: "group", openConversationId: target };
+  } else {
+    targetParam = { type: "user", userId: target };
+  }
 
   return sendProactive(config, targetParam, text, {
     msgType: "text",
@@ -595,11 +601,17 @@ export async function sendMediaToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  // 判断目标是用户还是群（支持 group:/user: 前缀，与 gateway-methods.ts 逻辑保持一致）
+  let targetParam: { type: "user"; userId: string } | { type: "group"; openConversationId: string };
+  if (target.startsWith("group:")) {
+    targetParam = { type: "group", openConversationId: target.slice(6) };
+  } else if (target.startsWith("user:")) {
+    targetParam = { type: "user", userId: target.slice(5) };
+  } else if (target.startsWith("cid")) {
+    targetParam = { type: "group", openConversationId: target };
+  } else {
+    targetParam = { type: "user", userId: target };
+  }
 
   log.info("参数解析完成，mediaUrl:", mediaUrl, "type:", typeof mediaUrl);
 

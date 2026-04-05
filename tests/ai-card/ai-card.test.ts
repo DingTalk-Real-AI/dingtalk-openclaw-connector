@@ -219,7 +219,7 @@ describe('AI Card helpers', () => {
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: false };
 
       await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
-      expect(log.error).toHaveBeenCalled();
+      // streamAICard no longer pre-logs errors; callers are responsible for error handling
     });
 
     it('should handle streaming failure', async () => {
@@ -236,7 +236,7 @@ describe('AI Card helpers', () => {
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: true };
 
       await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
-      expect(log.error).toHaveBeenCalled();
+      // streamAICard no longer pre-logs errors; callers are responsible for error handling
     });
   });
 

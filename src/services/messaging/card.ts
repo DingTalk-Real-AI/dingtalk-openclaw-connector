@@ -281,7 +281,6 @@ export async function streamAICard(
       `[DingTalk][AICard] streaming 响应：status=${streamResp.status}`,
     );
   } catch (err: any) {
-    log?.error?.(`[DingTalk][AICard] streaming 更新失败：${err.message}`);
     throw err;
   }
 }

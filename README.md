@@ -154,7 +154,9 @@ registry=https://registry.npmmirror.com
 ```bash
 openclaw plugins list
 ```
-你应该看到 `✓ DingTalk Channel (v0.8.6) - loaded`
+你应该看到类似 `✓ DingTalk Channel (vX.X.X) - loaded` 的输出。
+
+> ⚠️ **如果没看到 `loaded`**，请先解决插件加载问题，再进行步骤 3 的配置。否则 `openclaw channels add` 中不会出现钉钉选项。
 
 ---
 

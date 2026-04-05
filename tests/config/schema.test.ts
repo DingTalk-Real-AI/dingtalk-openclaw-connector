@@ -21,4 +21,18 @@ describe("DingtalkConfigSchema", () => {
   it("requires allowFrom when dmPolicy is allowlist", () => {
     expect(() => DingtalkConfigSchema.parse({ dmPolicy: "allowlist", allowFrom: [] })).toThrow(/allowFrom/);
   });
+
+  it("accepts enableMediaUpload in per-account config", () => {
+    const out = DingtalkConfigSchema.parse({
+      accounts: { work: { enableMediaUpload: true } },
+    });
+    expect((out.accounts?.work as any)?.enableMediaUpload).toBe(true);
+  });
+
+  it("accepts systemPrompt in per-account config", () => {
+    const out = DingtalkConfigSchema.parse({
+      accounts: { work: { systemPrompt: "你是一个助手" } },
+    });
+    expect((out.accounts?.work as any)?.systemPrompt).toBe("你是一个助手");
+  });
 });
