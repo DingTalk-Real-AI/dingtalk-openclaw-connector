@@ -49,7 +49,7 @@ import {
   processLocalImages, 
   processVideoMarkers, 
   processAudioMarkers, 
-  processFileMarkers
+  uploadAndReplaceFileMarkers
 } from "../services/media/index.ts";
 import { sendProactive, type AICardTarget } from "../services/messaging/index.ts";
 import { createAICardForTarget, streamAICard, type AICardInstance } from "../services/messaging/card.ts";
@@ -701,7 +701,7 @@ export async function downloadMediaByCode(
 
     const resp = await dingtalkHttp.post(
       `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
-      { downloadCode, robotCode: config.clientId },
+      { downloadCode, robotCode: String(config.clientId) },
       {
         headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
         timeout: 30_000,
@@ -733,7 +733,7 @@ export async function getFileDownloadUrl(
 
     const resp = await dingtalkHttp.post(
       `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
-      { downloadCode, robotCode: config.clientId },
+      { downloadCode, robotCode: String(config.clientId) },
       {
         headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
         timeout: 30_000,
@@ -857,20 +857,40 @@ async function parsePdfFile(filePath: string, log?: any): Promise<string | null>
   try {
     log?.info?.(`开始解析 PDF 文档: ${filePath}`);
 
-    let pdfParse: any;
+    let pdfParseV1: any;
+    let pdfParseV2: any;
     try {
-      pdfParse = (await import('pdf-parse')).default;
+      const mod = await import('pdf-parse');
+      if (mod.PDFParse) {
+        pdfParseV2 = mod.PDFParse; // v2.x API
+      } else if (mod.default) {
+        pdfParseV1 = mod.default; // v1.x API
+      } else {
+        throw new Error('pdf-parse module format not recognized');
+      }
     } catch {
       log?.warn?.('pdf-parse 库未安装，无法解析 .pdf 文件。请运行: npm install pdf-parse');
       return null;
     }
 
     const buffer = fs.readFileSync(filePath);
-    const data = await pdfParse(buffer);
-    const text = data.text.trim();
-    
+    let text: string;
+    let numPages: number | undefined;
+
+    if (pdfParseV2) {
+      const parser = new pdfParseV2({ data: buffer });
+      const result = await parser.getText();
+      text = (result.text ?? '').trim();
+      numPages = result.total;
+      parser.destroy?.();
+    } else {
+      const data = await pdfParseV1(buffer);
+      text = (data.text ?? '').trim();
+      numPages = data.numpages;
+    }
+
     if (text) {
-      log?.info?.(`PDF 文档解析成功: ${filePath}, 文本长度=${text.length}, 页数=${data.numpages}`);
+      log?.info?.(`PDF 文档解析成功: ${filePath}, 文本长度=${text.length}, 页数=${numPages}`);
       return text;
     } else {
       log?.warn?.(`PDF 文档解析结果为空: ${filePath}`);
@@ -1495,7 +1515,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
             true,  // ✅ 使用主动 API 模式
             mediaTarget
           );
-          finalText = await processFileMarkers(
+          finalText = await uploadAndReplaceFileMarkers(
             finalText,
             '',
             config,

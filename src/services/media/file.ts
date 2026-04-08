@@ -29,9 +29,14 @@ export async function parseDocumentFile(filePath: string, log?: any): Promise<st
 }
 
 /**
- * 提取文件标记并发送文件消息
+ * 提取文件标记，上传文件到钉钉，并用文本替换标记。
+ * 
+ * 注意：此函数只做「上传 + 文本替换」，不会发送独立的文件消息。
+ * 如果需要上传后再发送独立文件消息，请使用 media.ts 中的 processFileMarkers。
+ * 
+ * 调用方：reply-dispatcher.ts、message-handler.ts（通过 media/index.ts 导入）
  */
-export async function processFileMarkers(
+export async function uploadAndReplaceFileMarkers(
   content: string,
   sessionWebhook: string,
   config: DingtalkConfig,

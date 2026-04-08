@@ -607,7 +607,12 @@ export interface FileInfo {
 }
 
 /**
- * 提取文件标记并发送文件消息
+ * 提取文件标记，上传文件到钉钉，并发送独立的文件消息（webhook 或 proactive API）。
+ * 
+ * 注意：此函数既做「上传」也做「发送」，是完整版的文件处理流程。
+ * 与 media/file.ts 中的 uploadAndReplaceFileMarkers 不同，后者只做上传+文本替换。
+ * 
+ * 调用方：messaging.ts（直接 import media.ts）
  */
 export async function processFileMarkers(
   content: string,
@@ -672,11 +677,11 @@ export async function processFileMarkers(
         continue;
       }
 
-      // 发送文件消息
+      // 发送文件消息（钉钉 API 统一要求带 @ 前缀的 mediaId）
       if (useProactiveApi && target) {
-        await sendFileProactive(config, target, fileInfo, uploadResult.cleanMediaId, log);
+        await sendFileProactive(config, target, fileInfo, uploadResult.mediaId, log);
       } else {
-        await sendFileMessage(config, sessionWebhook, fileInfo, uploadResult.downloadUrl, log);
+        await sendFileMessage(config, sessionWebhook, fileInfo, uploadResult.mediaId, log);
       }
       statusMessages.push(`✅ 文件已发送: ${fileName}`);
       log?.info?.(`${logPrefix} 文件处理完成: ${fileName}`);
@@ -771,7 +776,7 @@ export async function sendVideoProactive(
     };
 
     const body: any = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       msgKey: 'sampleVideo',
       msgParam: JSON.stringify(msgParam),
     };
@@ -873,7 +878,7 @@ export async function sendAudioProactive(
     };
 
     const body: any = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       msgKey: 'sampleAudio',
       msgParam: JSON.stringify(msgParam),
     };
@@ -942,6 +947,7 @@ async function sendFileMessage(
     }
   } catch (err: any) {
     log?.error?.(`发送文件消息异常: ${fileInfo.fileName}, 错误: ${err.message}`);
+    throw err;
   }
 }
 
@@ -960,14 +966,16 @@ export async function sendFileProactive(
     const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的文件消息格式
+    const resolvedFileName = fileInfo.fileName || path.basename(fileInfo.path);
+    const resolvedFileType = fileInfo.fileType || resolvedFileName.split('.').pop() || 'file';
     const msgParam = {
       mediaId: mediaId,
-      fileName: fileInfo.fileName,
-      fileType: fileInfo.fileType,
+      fileName: resolvedFileName,
+      fileType: resolvedFileType,
     };
 
     const body: any = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       msgKey: 'sampleFile',
       msgParam: JSON.stringify(msgParam),
     };
@@ -994,6 +1002,7 @@ export async function sendFileProactive(
     }
   } catch (err: any) {
     log?.error?.(`File[Proactive] 发送文件消息失败: ${fileInfo.fileName}, 错误: ${err.message}`);
+    throw err;
   }
 }
 
@@ -1109,9 +1118,7 @@ export async function processRawMediaPaths(
         };
         
         if (target) {
-          // 文件消息使用下载链接
-          // 文件消息使用媒体文件ID（cleanMediaId）通过主动API发送
-          await sendFileProactive(config, target, fileInfo, uploadResult.cleanMediaId, log);
+          await sendFileProactive(config, target, fileInfo, uploadResult.mediaId, log);
         }
         statusMessages.push(`✅ 文件已发送: ${fileName}`);
       }

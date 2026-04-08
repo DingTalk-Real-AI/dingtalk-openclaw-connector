@@ -229,7 +229,7 @@ export async function sendNormalToUser(
   try {
     const token = await getAccessToken(config);
     const body = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       userIds: userIdArray,
       msgKey: payload.msgKey,
       msgParam: JSON.stringify(payload.msgParam),
@@ -306,7 +306,7 @@ export async function sendNormalToGroup(
   try {
     const token = await getAccessToken(config);
     const body = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       openConversationId,
       msgKey: payload.msgKey,
       msgParam: JSON.stringify(payload.msgParam),
@@ -439,7 +439,7 @@ export async function sendAICardInternal(
     }
 
     // 7. 使用 finishAICard 设置内容
-    await finishAICard(card, processedContent, log);
+    await finishAICard(card, processedContent, config, log);
 
     log?.info?.(
       `AI Card 发送成功: ${targetDesc}, cardInstanceId=${card.cardInstanceId}`,
@@ -552,11 +552,17 @@ export async function sendTextToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  // 判断目标是用户还是群（支持 group:/user: 前缀，与 gateway-methods.ts 逻辑保持一致）
+  let targetParam: { type: "user"; userId: string } | { type: "group"; openConversationId: string };
+  if (target.startsWith("group:")) {
+    targetParam = { type: "group", openConversationId: target.slice(6) };
+  } else if (target.startsWith("user:")) {
+    targetParam = { type: "user", userId: target.slice(5) };
+  } else if (target.startsWith("cid")) {
+    targetParam = { type: "group", openConversationId: target };
+  } else {
+    targetParam = { type: "user", userId: target };
+  }
 
   return sendProactive(config, targetParam, text, {
     msgType: "text",
@@ -595,11 +601,17 @@ export async function sendMediaToDingTalk(params: {
     return { ok: false, error: "Invalid target parameter", usedAICard: false };
   }
 
-  // 判断目标是用户还是群
-  const isUser = !target.startsWith("cid");
-  const targetParam = isUser
-    ? { type: "user" as const, userId: target }
-    : { type: "group" as const, openConversationId: target };
+  // 判断目标是用户还是群（支持 group:/user: 前缀，与 gateway-methods.ts 逻辑保持一致）
+  let targetParam: { type: "user"; userId: string } | { type: "group"; openConversationId: string };
+  if (target.startsWith("group:")) {
+    targetParam = { type: "group", openConversationId: target.slice(6) };
+  } else if (target.startsWith("user:")) {
+    targetParam = { type: "user", userId: target.slice(5) };
+  } else if (target.startsWith("cid")) {
+    targetParam = { type: "group", openConversationId: target };
+  } else {
+    targetParam = { type: "user", userId: target };
+  }
 
   log.info("参数解析完成，mediaUrl:", mediaUrl, "type:", typeof mediaUrl);
 
@@ -794,8 +806,9 @@ export async function sendMediaToDingTalk(params: {
     // 获取文件扩展名作为 fileType
     const fileType = ext || "file";
     
-    // 构建文件信息
+    // 构建文件信息（path 字段用于 sendFileProactive 中 fileName 的 fallback）
     const fileInfo = {
+      path: mediaUrl,
       fileName: fileName,
       fileType: fileType,
     };
@@ -931,7 +944,7 @@ async function sendProactiveInternal(
     try {
       const card = await createAICardForTarget(config, target, externalLog);
       if (card) {
-        await finishAICard(card, content, externalLog);
+        await finishAICard(card, content, config, externalLog);
         return {
           ok: true,
           cardInstanceId: card.cardInstanceId,
@@ -983,7 +996,7 @@ async function sendProactiveInternal(
     }
 
     const body: any = {
-      robotCode: config.clientId,
+      robotCode: String(config.clientId),
       msgKey: payload.msgKey,
       msgParam: JSON.stringify(payload.msgParam),
     };

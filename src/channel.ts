@@ -162,10 +162,10 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       name: account.name,
       clientId: account.clientId,
     }),
-    resolveAllowFrom: ({ cfg, accountId }) => {
-      const account = resolveDingtalkAccount({ cfg, accountId });
-      return (account.config?.allowFrom ?? []).map((entry) => String(entry));
-    },
+    // 返回空列表，禁止框架层对发送者做全局过滤。
+    // 连接器内部（message-handler.ts）已按 dmPolicy/groupPolicy 各自独立检查，
+    // allowFrom 仅用于私聊，groupAllowFrom 仅用于群聊，不应被框架层全局应用。
+    resolveAllowFrom: () => [],
     formatAllowFrom: ({ allowFrom }) =>
       allowFrom
         .map((entry) => String(entry).trim())
@@ -289,8 +289,14 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     textChunkLimit: 2000,
     sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
       const account = resolveDingtalkAccount({ cfg, accountId });
+      // 使用已解析的凭据覆盖原始 config，防止 clientId/clientSecret 为 SecretInput 对象或 undefined
+      const resolvedConfig: DingtalkConfig = {
+        ...account.config,
+        ...(account.clientId != null ? { clientId: account.clientId } : {}),
+        ...(account.clientSecret != null ? { clientSecret: account.clientSecret } : {}),
+      };
       const result = await sendTextToDingTalk({
-        config: account.config,
+        config: resolvedConfig,
         target: to,
         text,
         replyToId,
@@ -303,6 +309,12 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     },
     sendMedia: async ({ cfg, to, text, mediaUrl, accountId, mediaLocalRoots, replyToId, threadId }) => {
       const account = resolveDingtalkAccount({ cfg, accountId });
+      // 使用已解析的凭据覆盖原始 config，防止 clientId/clientSecret 为 SecretInput 对象或 undefined
+      const resolvedConfig: DingtalkConfig = {
+        ...account.config,
+        ...(account.clientId != null ? { clientId: account.clientId } : {}),
+        ...(account.clientSecret != null ? { clientSecret: account.clientSecret } : {}),
+      };
       const logger = createLogger(account.config?.debug ?? false, 'DingTalk:SendMedia');
       
       logger.info('开始处理，参数:', JSON.stringify({
@@ -326,7 +338,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       }
 
       const result = await sendMediaToDingTalk({
-        config: account.config,
+        config: resolvedConfig,
         target: to,
         text,
         mediaUrl,

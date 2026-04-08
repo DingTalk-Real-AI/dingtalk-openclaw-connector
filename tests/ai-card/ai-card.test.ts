@@ -219,7 +219,7 @@ describe('AI Card helpers', () => {
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: false };
 
       await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
-      expect(log.error).toHaveBeenCalled();
+      // streamAICard no longer pre-logs errors; callers are responsible for error handling
     });
 
     it('should handle streaming failure', async () => {
@@ -236,7 +236,7 @@ describe('AI Card helpers', () => {
       const card = { cardInstanceId: 'card123', accessToken: 'token123', inputingStarted: true };
 
       await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
-      expect(log.error).toHaveBeenCalled();
+      // streamAICard no longer pre-logs errors; callers are responsible for error handling
     });
   });
 
@@ -252,6 +252,31 @@ describe('AI Card helpers', () => {
       await finishAICard(card, 'Final content', undefined, log);
 
       expect(log.info).toHaveBeenCalled();
+    });
+
+    it('should pass config to internal streamAICard call', async () => {
+      const { __testables } = await import('../../test');
+      const { finishAICard } = __testables as any;
+
+      mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
+
+      // Use a card with valid (non-expired) token so ensureValidToken skips refresh
+      const card = {
+        cardInstanceId: 'card123',
+        accessToken: 'valid-token',
+        inputingStarted: true,
+        tokenExpireTime: Date.now() + 2 * 60 * 60 * 1000, // 2 hours from now
+      };
+      const config = { clientId: 'test-id', clientSecret: 'test-secret' };
+
+      await finishAICard(card, 'Final content', config, log);
+
+      // Verify streaming PUT was called with the card's accessToken in headers
+      const streamingCall = mockAxiosPut.mock.calls.find(
+        (call: any[]) => typeof call[0] === 'string' && call[0].includes('/card/streaming')
+      );
+      expect(streamingCall).toBeDefined();
+      expect(streamingCall![2]?.headers?.['x-acs-dingtalk-access-token']).toBe('valid-token');
     });
 
     it('should handle finish failure gracefully', async () => {
