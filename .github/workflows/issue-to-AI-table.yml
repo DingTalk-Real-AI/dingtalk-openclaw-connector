@@ -33,7 +33,8 @@ jobs:
                 title: issue.title,
                 body: issue.body,
                 state: issue.state,
-                html_url: issue.html_url
+                html_url: issue.html_url,
+                labels: (issue.labels || []).map(label => label.name).join(', ') || '无标签'
               }
             };
             
