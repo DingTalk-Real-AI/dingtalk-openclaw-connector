@@ -1345,9 +1345,9 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     ? { userId: senderId }
     : { openConversationId: data.conversationId };
 
-  if (asyncMode) {
+  const ackText = config.ackText 
+  if (asyncMode && ackText) {
     log?.info?.(`进入异步模式分支`);
-    const ackText = config.ackText || '🫡 任务已接收，处理中...';
     try {
       await sendProactive(config, proactiveTarget, ackText, {
         msgType: 'text',
