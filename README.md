@@ -100,8 +100,6 @@ yarn global add openclaw@latest
 npx -y @dingtalk-real-ai/dingtalk-connector install
 ```
 
-此命令会自动完成：插件安装 → 展示钉钉授权二维码 → 等待扫码 → 保存凭证到配置文件。
-
 安装过程中，终端会展示：
 
 - 钉钉授权二维码（ASCII）
