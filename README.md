@@ -94,28 +94,30 @@ yarn global add openclaw@latest
 
 ### 步骤 1：安装插件
 
-#### 方法 A：通过 npm 包安装（推荐）
+#### 方法 A：一键安装 + 扫码授权（推荐）
 
 ```bash
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+npx -y @dingtalk-real-ai/dingtalk-connector install
 ```
 
-执行安装命令后，会自动触发钉钉一键扫码授权（Device Flow）。
+此命令会自动完成：插件安装 → 展示钉钉授权二维码 → 等待扫码 → 保存凭证到配置文件。
 
 安装过程中，终端会展示：
 
 - 钉钉授权二维码（ASCII）
 - `Authorization URL`（二维码无法显示时可直接打开）
 
-看到 `Success! Bot configured. (机器人配置成功!)` 即表示授权完成。
+看到 `Success! Bot configured. (机器人配置成功!)` 即表示授权完成。授权完成后，请手动重启 Gateway 使配置生效：
+
+```bash
+openclaw gateway restart
+```
 
 > 💡 **Windows 扫码提示**：如果在 Windows 设备中无法扫码成功，可能是终端分辨率导致二维码显示异常。建议更换终端使用 [Cmder](https://cmder.app/) 后重试。
 >
 > 💡 **扫码失败不影响安装**：即使扫码流程出现 `auth 失败 / 超时 / 二维码展示失败`，也不影响插件依赖继续下载与安装。安装完成后，请按手动流程完成配置：[`docs/DINGTALK_MANUAL_SETUP.md`](docs/DINGTALK_MANUAL_SETUP.md)
->
-> 📄 **扫码流程详细说明**：[`docs/DINGTALK_QR_AUTH.md`](docs/DINGTALK_QR_AUTH.md)
 
-#### 方法 B：通过本地源码安装
+#### 方法 B：通过本地源码安装（二次开发）
 
 如果你想对插件进行二次开发，可以先克隆仓库：
 
@@ -129,6 +131,9 @@ npm install
 
 # 3. 以链接模式安装（方便修改代码后实时生效）
 openclaw plugins install -l .
+
+# 4. 触发扫码授权
+node bin/dingtalk-connector.js install --local
 ```
 
 #### 方法 C：手动安装

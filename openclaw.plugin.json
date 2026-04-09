@@ -8,6 +8,7 @@
   "channels": [
     "dingtalk-connector"
   ],
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": true

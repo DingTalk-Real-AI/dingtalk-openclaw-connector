@@ -54,5 +54,6 @@ Thumbs.db
 
 # Test files
 test.ts
+test-audio-helpers.ts
 vitest.config.ts
 .gitignore

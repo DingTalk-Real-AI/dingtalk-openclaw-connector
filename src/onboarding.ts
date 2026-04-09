@@ -23,89 +23,19 @@ import {
   renderQrCodeText,
   waitForDingtalkRegistrationSuccess,
 } from "./device-auth.ts";
-import { spawn } from "node:child_process";
 
 const channel = "dingtalk-connector" as const;
 const DINGTALK_MANUAL_SETUP_DOC = "docs/DINGTALK_MANUAL_SETUP.md";
 
-async function runOpenclawCommand(args: string[], timeoutMs: number): Promise<{
-  ok: boolean;
-  output: string;
-}> {
-  return await new Promise((resolve) => {
-    const child = spawn("openclaw", args, {
-      shell: process.platform === "win32",
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let output = "";
-    child.stdout?.on("data", (buf) => {
-      output += String(buf ?? "");
-    });
-    child.stderr?.on("data", (buf) => {
-      output += String(buf ?? "");
-    });
-
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve({
-        ok: false,
-        output: `${output}\nCommand timeout after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({
-        ok: false,
-        output: `${output}\n${String(err)}`,
-      });
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({
-        ok: code === 0,
-        output,
-      });
-    });
-  });
-}
-
 async function restartOpenclawGateway(prompter: WizardPrompter): Promise<void> {
-  // Prefer soft restart first.
-  const restart = await runOpenclawCommand(["gateway", "restart"], 20_000);
-  if (restart.ok) {
-    await prompter.note(
-      [
-        "OpenClaw gateway restarted successfully.",
-        restart.output.trim() || "(no output)",
-      ].join("\n"),
-      "OpenClaw gateway",
-    );
-    return;
-  }
-
-  // Fallback to force reinstall service (same guidance style as Feishu installer flow).
-  const reinstall = await runOpenclawCommand(["gateway", "install", "--force"], 30_000);
-  if (reinstall.ok) {
-    await prompter.note(
-      [
-        "Gateway restart fallback succeeded via install --force.",
-        reinstall.output.trim() || "(no output)",
-      ].join("\n"),
-      "OpenClaw gateway",
-    );
-    return;
-  }
-
   await prompter.note(
     [
-      "Automatic gateway restart failed.",
-      "Please run one of the following commands manually:",
-      "- openclaw gateway restart",
-      "- openclaw gateway install --force",
+      "Configuration saved. Please restart the gateway to apply changes:",
+      "",
+      "  openclaw gateway restart",
+      "",
+      "If the restart fails, try:",
+      "  openclaw gateway install --force",
     ].join("\n"),
     "OpenClaw gateway",
   );

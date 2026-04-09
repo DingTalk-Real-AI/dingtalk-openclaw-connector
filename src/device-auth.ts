@@ -1,8 +1,5 @@
 import { dingtalkHttp } from "./utils/http-client.ts";
-
-const DINGTALK_REGISTRATION_BASE_URL =
-  process.env.DINGTALK_REGISTRATION_BASE_URL?.trim() || "https://oapi.dingtalk.com";
-const DINGTALK_REGISTRATION_SOURCE = process.env.DINGTALK_REGISTRATION_SOURCE?.trim() || "openClaw";
+import { getRegistrationBaseUrl, getRegistrationSource } from "./device-auth-config.ts";
 
 type RegistrationApiResponse<T extends Record<string, unknown>> = T & {
   errcode: number;
@@ -58,8 +55,8 @@ function assertApiOk<T extends Record<string, unknown>>(
 
 export async function beginDingtalkRegistration(): Promise<DingtalkRegistrationBeginResult> {
   const initResp = await dingtalkHttp.post<InitResponse>(
-    `${DINGTALK_REGISTRATION_BASE_URL}/app/registration/init`,
-    { source: DINGTALK_REGISTRATION_SOURCE },
+    `${getRegistrationBaseUrl()}/app/registration/init`,
+    { source: getRegistrationSource() },
   );
   const initData = assertApiOk(initResp.data, "init");
   const nonce = String(initData.nonce ?? "").trim();
@@ -68,7 +65,7 @@ export async function beginDingtalkRegistration(): Promise<DingtalkRegistrationB
   }
 
   const beginResp = await dingtalkHttp.post<BeginResponse>(
-    `${DINGTALK_REGISTRATION_BASE_URL}/app/registration/begin`,
+    `${getRegistrationBaseUrl()}/app/registration/begin`,
     { nonce },
   );
   const beginData = assertApiOk(beginResp.data, "begin");
@@ -77,7 +74,7 @@ export async function beginDingtalkRegistration(): Promise<DingtalkRegistrationB
   const verificationUri = String(beginData.verification_uri ?? "").trim() || undefined;
   const userCode = String(beginData.user_code ?? "").trim() || undefined;
   const expiresInSeconds = Number(beginData.expires_in ?? 7200);
-  const intervalSeconds = Number(beginData.interval ?? 5);
+  const intervalSeconds = Number(beginData.interval ?? 3);
 
   if (!deviceCode) {
     throw new Error("[begin] missing device_code");
@@ -105,7 +102,7 @@ export async function pollDingtalkRegistration(params: {
   failReason?: string;
 }> {
   const pollResp = await dingtalkHttp.post<PollResponse>(
-    `${DINGTALK_REGISTRATION_BASE_URL}/app/registration/poll`,
+    `${getRegistrationBaseUrl()}/app/registration/poll`,
     { device_code: params.deviceCode },
   );
   const pollData = assertApiOk(pollResp.data, "poll");
@@ -132,14 +129,28 @@ export async function waitForDingtalkRegistrationSuccess(params: {
   intervalSeconds: number;
   expiresInSeconds: number;
 }): Promise<{ clientId: string; clientSecret: string }> {
+  const RETRY_WINDOW_MS = 2 * 60 * 1000; // 2 minutes retry window for transient errors
   const startedAt = Date.now();
   const timeoutMs = Math.max(1, params.expiresInSeconds) * 1000;
+  const intervalMs = Math.max(1, params.intervalSeconds) * 1000;
+  let retryStart = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
-    await sleep(Math.max(1, params.intervalSeconds) * 1000);
-    const polled = await pollDingtalkRegistration({ deviceCode: params.deviceCode });
+    await sleep(intervalMs);
+    let polled;
+    try {
+      polled = await pollDingtalkRegistration({ deviceCode: params.deviceCode });
+    } catch (err) {
+      // Network or server error — start retry window
+      if (!retryStart) retryStart = Date.now();
+      if (Date.now() - retryStart < RETRY_WINDOW_MS) {
+        continue;
+      }
+      throw new Error(`poll failed after ${RETRY_WINDOW_MS / 1000}s retries: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     if (polled.status === "WAITING") {
+      retryStart = 0;
       continue;
     }
     if (polled.status === "SUCCESS") {
@@ -150,6 +161,11 @@ export async function waitForDingtalkRegistrationSuccess(params: {
         clientId: polled.clientId,
         clientSecret: polled.clientSecret,
       };
+    }
+    // FAIL / EXPIRED / UNKNOWN — start retry window instead of immediate exit
+    if (!retryStart) retryStart = Date.now();
+    if (Date.now() - retryStart < RETRY_WINDOW_MS) {
+      continue;
     }
     if (polled.status === "FAIL") {
       throw new Error(polled.failReason || "authorization failed");
