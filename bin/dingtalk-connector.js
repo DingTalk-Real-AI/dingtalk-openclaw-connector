@@ -7,7 +7,7 @@
  *   node bin/dingtalk-connector.js install --local              # local dev
  */
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -192,6 +192,14 @@ function getInstallSpec() {
 function installPlugin() {
   const spec = getInstallSpec();
   console.log('\n' + cyan(`📦 Installing ${spec}...`) + '\n');
+
+  // Remove existing plugin to avoid "plugin already exists" error
+  const existingDir = join(homedir(), '.openclaw', 'extensions', 'dingtalk-connector');
+  if (existsSync(existingDir)) {
+    console.log(dim(`  Removing previous installation: ${existingDir}`));
+    rmSync(existingDir, { recursive: true, force: true });
+  }
+
   const mod = ['child', 'process'].join('_');
   const { execFileSync } = createRequire(import.meta.url)(`node:${mod}`);
   try {

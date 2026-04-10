@@ -178,13 +178,13 @@ openclaw plugins list
 
 ---
 
-### 步骤 2：重启并测试
+### 步骤 2：重启openclaw
 
 ```bash
 # 重启 OpenClaw Gateway
 openclaw gateway restart
 
-# 实时查看日志
+# 实时查看日志（可选）
 openclaw logs --follow
 ```
 
