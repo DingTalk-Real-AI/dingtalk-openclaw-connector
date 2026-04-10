@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="DingTalk" src="docs/images/dingtalk.svg" width="72" height="72" />
+  <img alt="DingTalk" src="https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/dingtalk.svg" width="72" height="72" />
   <h1>钉钉 OpenClaw 官方连接器</h1>
   <p>将钉钉机器人连接到 OpenClaw Gateway，支持 AI Card 流式响应和会话管理</p>
   
@@ -172,7 +172,9 @@ registry=https://registry.npmmirror.com
 ```bash
 openclaw plugins list
 ```
-你应该看到 `✓ DingTalk Channel (v0.8.6) - loaded`
+你应该看到类似 `✓ DingTalk Channel (vX.X.X) - loaded` 的输出。
+
+> ⚠️ **如果没看到 `loaded`**，请先解决插件加载问题，再进行步骤 3 的配置。否则 `openclaw channels add` 中不会出现钉钉选项。
 
 ---
 
@@ -259,6 +261,29 @@ openclaw logs --follow
 2. 检查网关状态：`openclaw gateway status`
 3. 查看日志：`openclaw logs --follow`
 4. 确认应用已在钉钉开放平台发布
+
+---
+
+### 配置字段不合法（additional properties）
+
+**症状**：
+
+```
+Problem:
+  - channels.dingtalk-connector: invalid config: must NOT have additional properties
+```
+
+**原因**：配置文件中包含已废弃或已重命名的字段，连接器不再识别。
+
+**解决方案**：打开 `openclaw.config.yaml`，删除 `channels.dingtalk-connector` 下不再支持的字段。已知需要删除的旧字段：
+
+| 旧字段 | 说明 |
+|--------|------|
+| `gatewayPassword` | 早期版本字段，已废弃 |
+| `gatewayToken` | 早期版本字段，已废弃 |
+| `dmHistoryLimit` | v0.8.9 移除（未实现） |
+
+错误信息会指出具体的字段名，删除后重启即可。
 
 ---
 

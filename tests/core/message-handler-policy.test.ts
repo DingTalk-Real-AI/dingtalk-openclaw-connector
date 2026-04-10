@@ -18,7 +18,7 @@ vi.mock("../../src/services/media/index.ts", () => ({
   processLocalImages: vi.fn(async (s: string) => s),
   processVideoMarkers: vi.fn(async (s: string) => s),
   processAudioMarkers: vi.fn(async (s: string) => s),
-  processFileMarkers: vi.fn(async (s: string) => s),
+  uploadAndReplaceFileMarkers: vi.fn(async (s: string) => s),
   uploadMediaToDingTalk: vi.fn(async () => null),
   toLocalPath: vi.fn((s: string) => s),
   FILE_MARKER_PATTERN: /\[DINGTALK_FILE\](.*?)\[\/DINGTALK_FILE\]/gs,

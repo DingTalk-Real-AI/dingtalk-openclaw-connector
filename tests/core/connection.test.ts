@@ -157,4 +157,24 @@ describe("core/connection", () => {
     await running;
     expect(client!.disconnect).toHaveBeenCalled();
   });
+
+  it("rejects (not unhandled) when connect() fails", async () => {
+    const { monitorSingleAccount } = await import("../../src/core/connection");
+    FakeDWClient.nextConnectError = new Error("connection refused");
+
+    await expect(
+      monitorSingleAccount(createOpts()),
+    ).rejects.toThrow("Failed to connect to DingTalk Stream: connection refused");
+  });
+
+  it("rejects with 400 message when connect() fails with status 400", async () => {
+    const { monitorSingleAccount } = await import("../../src/core/connection");
+    const err = new Error("Request failed with status code 400");
+    (err as any).response = { status: 400, data: { message: "invalid_client" } };
+    FakeDWClient.nextConnectError = err;
+
+    await expect(
+      monitorSingleAccount(createOpts()),
+    ).rejects.toThrow("Bad Request (400)");
+  });
 });

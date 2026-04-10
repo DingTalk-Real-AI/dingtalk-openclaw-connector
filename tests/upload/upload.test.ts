@@ -248,10 +248,10 @@ describe('upload functionality', () => {
     });
   });
 
-  describe('processFileMarkers', () => {
-    it('should process file markers', async () => {
+  describe('uploadAndReplaceFileMarkers', () => {
+    it('should upload files and replace markers with text', async () => {
       const { __testables } = await import('../../test');
-      const { processFileMarkers } = __testables as any;
+      const { uploadAndReplaceFileMarkers } = __testables as any;
 
       const fs = await import('fs');
       vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -269,7 +269,7 @@ describe('upload functionality', () => {
         'prefix\n' +
         '[DINGTALK_FILE]{"path":"/tmp/file.pdf","fileName":"file.pdf","fileType":"pdf"}[/DINGTALK_FILE]\n' +
         'suffix';
-      const result = await processFileMarkers(content, 'https://webhook.example', {}, 'token123', log);
+      const result = await uploadAndReplaceFileMarkers(content, 'https://webhook.example', {}, 'token123', log);
 
       expect(result).toContain('prefix');
       expect(result).toContain('suffix');

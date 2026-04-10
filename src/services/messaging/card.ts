@@ -281,7 +281,6 @@ export async function streamAICard(
       `[DingTalk][AICard] streaming 响应：status=${streamResp.status}`,
     );
   } catch (err: any) {
-    log?.error?.(`[DingTalk][AICard] streaming 更新失败：${err.message}`);
     throw err;
   }
 }
@@ -304,7 +303,7 @@ export async function finishAICard(
     `[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`,
   );
 
-  await streamAICard(card, fixedContent, true, log);
+  await streamAICard(card, fixedContent, true, config, log);
 
   const body = {
     outTrackId: card.cardInstanceId,

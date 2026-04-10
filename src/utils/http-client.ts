@@ -2,6 +2,7 @@
  * HTTP 客户端配置模块
  * 
  * 提供统一的 axios 实例，用于钉钉 API 请求。
+ * 所有钉钉 API 调用必须使用此模块导出的实例，禁止直接使用 axios 或 fetch。
  * 
  * 使用方式：
  * ```typescript
@@ -13,7 +14,7 @@
 
 import axios, { type AxiosInstance } from 'axios';
 
-/** 钉钉专用 HTTP 客户端（30 秒超时） */
+/** 钉钉新版 API 专用 HTTP 客户端（30 秒超时，用于 api.dingtalk.com） */
 export const dingtalkHttp: AxiosInstance = axios.create({
   timeout: 30000,
   headers: {

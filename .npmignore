@@ -30,9 +30,17 @@ tests/
 # Development
 .aone_copilot/
 AGENTS.md
+CLAUDE.md
+.qoder/
+.claude/
 .github/
 .git/
 .gitignore
+install-beta.sh
+install-npm.sh
+
+# Large images
+docs/images/
 
 # Documentation (keep only essential docs)
 docs/RELEASE_NOTES_*.md

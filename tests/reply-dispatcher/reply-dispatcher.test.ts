@@ -52,7 +52,7 @@ vi.mock("../../src/services/media/audio.ts", () => ({
 }));
 
 vi.mock("../../src/services/media/file.ts", () => ({
-  processFileMarkers: vi.fn(async (s: string) => s),
+  uploadAndReplaceFileMarkers: vi.fn(async (s: string) => s),
 }));
 
 vi.mock("../../src/utils/token.ts", () => ({

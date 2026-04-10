@@ -664,7 +664,7 @@ export async function monitorSingleAccount(
 
       // 处理 400 错误（请求参数错误）
       if (error.response?.status === 400 || error.message?.includes("status code 400") || error.message?.includes("400")) {
-        throw new Error(
+        reject(new Error(
           `[DingTalk][${accountId}] Bad Request (400):\n` +
             `  - clientId or clientSecret format is invalid\n` +
             `  - clientId: ${clientIdStr} (type: ${typeof account.clientId}, length: ${clientIdStr.length})\n` +
@@ -676,24 +676,27 @@ export async function monitorSingleAccount(
             `    4. Check if clientId starts with 'ding' prefix\n` +
             `  - Error details: ${error.message}\n` +
             `  - Response data: ${JSON.stringify(error.response?.data || {})}`,
-        );
+        ));
+        return;
       }
 
       // 处理 401 认证错误
       if (error.response?.status === 401 || error.message?.includes("401")) {
-        throw new Error(
+        reject(new Error(
           `[DingTalk][${accountId}] Authentication failed (401 Unauthorized):\n` +
             `  - Your clientId or clientSecret is invalid, expired, or revoked\n` +
             `  - clientId: ${clientIdStr.substring(0, 8)}...\n` +
             `  - Please verify your credentials at DingTalk Developer Console\n` +
             `  - Error details: ${error.message}`,
-        );
+        ));
+        return;
       }
 
       // 处理其他连接错误
-      throw new Error(
+      reject(new Error(
         `[DingTalk][${accountId}] Failed to connect to DingTalk Stream: ${error.message}`,
-      );
+      ));
+      return;
     }
 
     // Handle disconnection（已被自定义 close 监听器替代）

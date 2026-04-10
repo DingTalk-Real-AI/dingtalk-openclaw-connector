@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="DingTalk" src="docs/images/dingtalk.svg" width="72" height="72" />
+  <img alt="DingTalk" src="https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/dingtalk.svg" width="72" height="72" />
   <h1>Official DingTalk OpenClaw Connector</h1>
   <p>Connect DingTalk bots to OpenClaw Gateway with AI Card streaming and session management</p>
   
@@ -174,7 +174,9 @@ registry=https://registry.npmmirror.com
 ```bash
 openclaw plugins list
 ```
-You should see `✓ DingTalk Channel (v0.8.6) - loaded`
+You should see output similar to `✓ DingTalk Channel (vX.X.X) - loaded`.
+
+> ⚠️ **If you don't see `loaded`**, resolve the plugin loading issue before proceeding to Step 3. Otherwise, DingTalk will not appear in `openclaw channels add`.
 
 ---
 
@@ -185,13 +187,13 @@ You should see `✓ DingTalk Channel (v0.8.6) - loaded`
 1. Go to [DingTalk Open Platform](https://open-dev.dingtalk.com/)
 2. Click **"Application Development"**
 
-![Create Application](docs/images/image-1.png)
+![Create Application](https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/image-1.png)
 
 #### 2.2 Add Bot Capability
 
 1. On the application details page, use the “one-click OpenClaw bot app” flow
 
-![Create OpenClaw bot app](docs/images/image-2.png)
+![Create OpenClaw bot app](https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/image-2.png)
 
 #### 2.3 Get Credentials
 
@@ -199,9 +201,9 @@ You should see `✓ DingTalk Channel (v0.8.6) - loaded`
 2. Copy your **AppKey** (Client ID)
 3. Copy your **AppSecret** (Client Secret)
 
-![Finish creation](docs/images/image-3.png)
+![Finish creation](https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/image-3.png)
 
-![Get credentials](docs/images/image-4.png)
+![Get credentials](https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-openclaw-connector/main/docs/images/image-4.png)
 
 > ⚠️ **Important**: Client ID and Client Secret are your bot’s unique credentials. Store them safely.
 
@@ -326,6 +328,29 @@ Both session routing/message policy options (including `pmpolicy` and `groupPoli
 2. Check gateway status: `openclaw gateway status`
 3. Check logs: `openclaw logs --follow`
 4. Verify the app is published/enabled in DingTalk Open Platform
+
+---
+
+### Invalid Config: additional properties
+
+**Symptoms**:
+
+```
+Problem:
+  - channels.dingtalk-connector: invalid config: must NOT have additional properties
+```
+
+**Cause**: Your config file contains deprecated or renamed fields that are no longer recognized.
+
+**Solution**: Open `openclaw.config.yaml` and remove any unsupported fields under `channels.dingtalk-connector`. Known fields to remove:
+
+| Old Field | Notes |
+|-----------|-------|
+| `gatewayPassword` | Deprecated legacy field |
+| `gatewayToken` | Deprecated legacy field |
+| `dmHistoryLimit` | Removed in v0.8.9 (never implemented) |
+
+The error message will indicate the exact field name. Remove it and restart.
 
 ---
 
