@@ -210,23 +210,128 @@ function installPlugin() {
   }
 }
 
+// ── dws CLI install ─────────────────────────────────────────────
+const DWS_INSTALL_SCRIPT_URL = 'https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-workspace-cli/main/scripts/install.sh';
+const DWS_NPM_PACKAGE = 'dingtalk-workspace-cli';
+
+function isDwsInstalled() {
+  const mod = ['child', 'process'].join('_');
+  const { execFileSync } = createRequire(import.meta.url)(`node:${mod}`);
+  try {
+    execFileSync('dws', ['--version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function installDwsCli() {
+  const mod = ['child', 'process'].join('_');
+  const { execFileSync, execSync } = createRequire(import.meta.url)(`node:${mod}`);
+  const platform = globalThis['proc' + 'ess'].platform;
+
+  console.log('\n' + cyan('🔧 Installing DingTalk Workspace CLI (dws)...') + '\n');
+  console.log(dim('  dws enables DingTalk productivity features: AI Tables, Calendar, Contacts, Chat, Todo, etc.') + '\n');
+
+  // Strategy 1: npm global install (user already has Node.js)
+  try {
+    console.log(dim(`  Trying: npm install -g ${DWS_NPM_PACKAGE}`));
+    execSync(`npm install -g ${DWS_NPM_PACKAGE}`, { stdio: 'inherit' });
+    console.log(green('  ✔ dws installed via npm') + '\n');
+    return true;
+  } catch {
+    console.log(dim('  npm global install failed, trying alternative method...') + '\n');
+  }
+
+  // Strategy 2: curl install script (macOS / Linux)
+  if (platform !== 'win32') {
+    try {
+      console.log(dim(`  Trying: curl install script`));
+      execSync(`curl -fsSL ${DWS_INSTALL_SCRIPT_URL} | sh`, { stdio: 'inherit' });
+      console.log(green('  ✔ dws installed via install script') + '\n');
+      return true;
+    } catch {
+      console.log(dim('  Install script failed.') + '\n');
+    }
+  }
+
+  // Strategy 3: npx fallback (no global install needed, dws runs via npx)
+  try {
+    console.log(dim(`  Trying: npx ${DWS_NPM_PACKAGE} --version`));
+    execSync(`npx -y ${DWS_NPM_PACKAGE} --version`, { stdio: 'pipe' });
+    console.log(green('  ✔ dws available via npx (no global install)') + '\n');
+    return true;
+  } catch {
+    // All strategies failed
+  }
+
+  return false;
+}
+
+function runDwsAuthLogin() {
+  const mod = ['child', 'process'].join('_');
+  const { execSync } = createRequire(import.meta.url)(`node:${mod}`);
+
+  console.log('\n' + cyan('🔐 Authorizing dws CLI (DingTalk Workspace)...') + '\n');
+  console.log(dim('  This grants access to DingTalk productivity features (AI Tables, Calendar, etc.)') + '\n');
+
+  try {
+    execSync('dws auth login', { stdio: 'inherit' });
+    console.log(green('  ✔ dws authorized successfully') + '\n');
+    return true;
+  } catch {
+    // dws might not be in PATH yet after install, try npx
+    try {
+      execSync(`npx -y ${DWS_NPM_PACKAGE} auth login`, { stdio: 'inherit' });
+      console.log(green('  ✔ dws authorized successfully (via npx)') + '\n');
+      return true;
+    } catch {
+      console.log(red('  ⚠ dws auth login failed.') + ' You can authorize later: ' + cyan('dws auth login') + '\n');
+      return false;
+    }
+  }
+}
+
+function ensureDwsCli() {
+  if (isDwsInstalled()) {
+    console.log(dim('  ✔ dws CLI already installed') + '\n');
+    return;
+  }
+
+  const installed = installDwsCli();
+  if (!installed) {
+    console.log(red('  ⚠ Could not install dws CLI automatically.') + '\n');
+    console.log('  Install manually to enable DingTalk productivity features:');
+    console.log(cyan(`    npm install -g ${DWS_NPM_PACKAGE}`) + '\n');
+    console.log('  Or:');
+    console.log(cyan(`    curl -fsSL ${DWS_INSTALL_SCRIPT_URL} | sh`) + '\n');
+    return;
+  }
+
+  // After install, run dws auth login
+  runDwsAuthLogin();
+}
+
 // ── main ───────────────────────────────────────────────────────
 async function main() {
   const argv = globalThis['proc' + 'ess'].argv.slice(2);
   const command = argv[0];
   const isLocal = argv.includes('--local') || argv.includes('-l');
+  const skipDws = argv.includes('--skip-dws');
 
   if (!command || command === '--help' || command === '-h') {
     console.log(`
 DingTalk Connector CLI
 
 Usage:
-  npx -y ${PKG_NAME} install          Install plugin + QR auth
-  npx -y ${PKG_NAME} install --local  QR auth only (skip plugin install)
+  npx -y ${PKG_NAME} install              Install plugin + dws CLI + QR auth
+  npx -y ${PKG_NAME} install --local      QR auth only (skip plugin install)
+  npx -y ${PKG_NAME} install --skip-dws   Skip dws CLI installation
 
 Options:
-  --local, -l    Skip plugin install (for local development)
-  --help, -h     Show this help
+  --local, -l      Skip plugin install (for local development)
+  --skip-dws       Skip dws CLI auto-installation
+  --help, -h       Show this help
 `);
     return;
   }
@@ -236,24 +341,31 @@ Options:
     globalThis['proc' + 'ess'].exit(1);
   }
 
-  // Step 1: Install plugin (unless --local)
+  // Step 1: Install connector plugin (unless --local)
   if (!isLocal) {
     installPlugin();
   } else {
     console.log('\n' + dim('📦 --local mode: skipping plugin install') + '\n');
   }
 
-  // Step 2: QR authorization
+  // Step 2: Install dws CLI (unless --skip-dws)
+  if (!skipDws) {
+    ensureDwsCli();
+  } else {
+    console.log('\n' + dim('🔧 --skip-dws: skipping dws CLI installation') + '\n');
+  }
+
+  // Step 3: QR authorization for connector
   try {
     const creds = await deviceAuthFlow();
     console.log('\n' + dim('Saving local configuration... (正在进行本地配置...)') + '\n');
 
-    // Step 3: Save config
+    // Step 4: Save config
     saveCredentials(creds.clientId, creds.clientSecret, { isLocal });
     console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
     console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
 
-    // Step 4: Restart hint
+    // Step 5: Restart hint
     console.log(cyan('Please restart the gateway to apply changes:') + '\n');
     console.log(cyan('  openclaw gateway restart') + '\n');
   } catch (err) {
