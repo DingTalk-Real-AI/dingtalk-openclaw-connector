@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "tsdown",
+    "prepare": "npm run build",
     "lint": "echo 'Lint check skipped'",
     "lint:fix": "echo 'Lint fix skipped'",
     "test": "vitest run tests/gateway-methods.unit.test.ts",
