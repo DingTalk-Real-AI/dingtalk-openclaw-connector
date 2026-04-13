@@ -4,10 +4,17 @@
   "version": "0.8.13",
   "description": "DingTalk (钉钉) messaging channel via Stream mode with AI Card streaming",
   "author": "DingTalk Real Team",
-  "main": "index.ts",
+  "main": "./dist/index.mjs",
   "channels": [
     "dingtalk-connector"
   ],
+  "channelEnvVars": {
+    "dingtalk-connector": [
+      "DINGTALK_CLIENT_ID",
+      "DINGTALK_CLIENT_SECRET"
+    ]
+  },
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": true

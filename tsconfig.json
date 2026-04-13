@@ -15,6 +15,6 @@
     "types": ["node"],
     "noImplicitAny": false
   },
-  "include": ["src/**/*", "index.ts"],
+  "include": ["src/**/*", "index.ts", "entry-bundled.ts"],
   "exclude": ["node_modules", "dist"]
 }

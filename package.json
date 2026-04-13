@@ -2,10 +2,40 @@
   "name": "@dingtalk-real-ai/dingtalk-connector",
   "version": "0.8.13",
   "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
-  "main": "index.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./bundled": {
+      "import": {
+        "types": "./dist/entry-bundled.d.mts",
+        "default": "./dist/entry-bundled.mjs"
+      }
+    }
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "bin": {
+    "dingtalk-connector": "bin/dingtalk-connector.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "skills/",
+    "docs/*.md",
+    "openclaw.plugin.json",
+    "tsconfig.json",
+    "LICENSE",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
-    "build": "echo 'No build needed - jiti loads TS at runtime'",
+    "build": "tsdown",
     "lint": "echo 'Lint check skipped'",
     "lint:fix": "echo 'Lint fix skipped'",
     "test": "vitest run tests/gateway-methods.unit.test.ts",
@@ -40,17 +70,6 @@
   },
   "homepage": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector#readme",
   "bugs": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues",
-  "files": [
-    "index.ts",
-    "src/",
-    "docs/*.md",
-    "openclaw.plugin.json",
-    "tsconfig.json",
-    "LICENSE",
-    "README.md",
-    "README.en.md",
-    "CHANGELOG.md"
-  ],
   "publishConfig": {
     "access": "public"
   },
@@ -76,16 +95,30 @@
     "@vitest/coverage-v8": "^2.0.0",
     "@vitest/ui": "^2.1.9",
     "openclaw": "^2026.3.23-2",
+    "tsdown": "^0.21.4",
     "typescript": "^5.6.0",
     "vitest": "^2.1.9"
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.mjs"
     ],
-    "channels": [
-      "dingtalk-connector"
-    ],
+    "channel": {
+      "id": "dingtalk-connector",
+      "label": "DingTalk",
+      "selectionLabel": "DingTalk (钉钉)",
+      "docsPath": "/channels/dingtalk-connector",
+      "docsLabel": "dingtalk-connector",
+      "blurb": "钉钉企业内部机器人，使用 Stream 模式，无需公网 IP，支持 AI Card 流式响应。",
+      "aliases": ["dd", "ding"],
+      "order": 35,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@dingtalk-real-ai/dingtalk-connector",
+      "localPath": "extensions/dingtalk",
+      "defaultChoice": "npm"
+    },
     "installDependencies": true
   }
 }
