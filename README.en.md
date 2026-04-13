@@ -40,6 +40,38 @@ Before you begin, ensure you have:
   ```
   Expected output: `✓ Gateway is running on http://127.0.0.1:18789`
 
+### ⚠️ Version Compatibility
+
+**Important**: dingtalk-connector v0.8.4+ requires **OpenClaw SDK v2026.3.22 or later**.
+
+| dingtalk-connector Version | Minimum OpenClaw SDK Version | Notes |
+|---------------------------|------------------------------|-------|
+| v0.8.4+ | v2026.3.22+ | Uses new SDK API with improved routing and session management |
+| v0.8.3 and below | v2026.3.x | Compatible with legacy SDK |
+
+**How to check versions**:
+```bash
+# Check OpenClaw version
+openclaw --version
+
+# Check plugin version
+openclaw plugins list
+```
+
+**How to upgrade**:
+```bash
+# Upgrade OpenClaw to the latest version
+npm install -g openclaw@latest
+
+# Or use yarn
+yarn global add openclaw@latest
+```
+
+**What happens when versions are incompatible**:
+- The plugin displays a detailed error message during loading
+- The message includes upgrade and downgrade instructions
+- The plugin stops loading automatically without affecting other plugins
+
 ### 2. DingTalk Enterprise Account
 
 - You need a DingTalk enterprise account to create internal applications
@@ -62,13 +94,30 @@ Whenever you see `~/.openclaw/openclaw.json` below, it is equivalent to the abov
 
 ### Step 1: Install the Plugin
 
-#### Method A: Install via npm (Recommended)
+#### Method A: One-Click Install + QR Auth (Recommended)
 
 ```bash
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector
+npx -y @dingtalk-real-ai/dingtalk-connector install
 ```
 
-#### Method B: Install from Local Source
+This command will automatically: install the plugin -> display DingTalk authorization QR code -> wait for scan -> save credentials to config file.
+
+During installation, the terminal will display:
+
+- DingTalk authorization QR code (ASCII)
+- `Authorization URL` (open directly if the QR code cannot be displayed)
+
+When you see `Success! Bot configured. (机器人配置成功!)`, the authorization is complete. After authorization, please manually restart the Gateway to apply the configuration:
+
+```bash
+openclaw gateway restart
+```
+
+> 💡 **Windows QR Code Tip**: If scanning fails on Windows, the QR code may not render correctly due to terminal resolution. Try switching to [Cmder](https://cmder.app/) and retry.
+>
+> 💡 **Scan Failure Does Not Affect Installation**: Even if the QR flow fails (auth error / timeout / QR code display failure), plugin dependencies will still be downloaded and installed. After installation, follow the manual setup guide: [`docs/DINGTALK_MANUAL_SETUP.md`](docs/DINGTALK_MANUAL_SETUP.md)
+
+#### Method B: Install from Local Source (Development)
 
 If you want to develop or modify the plugin, clone the repository first:
 
@@ -82,6 +131,9 @@ npm install
 
 # 3. Install in link mode (changes take effect immediately)
 openclaw plugins install -l .
+
+# 4. Trigger QR authorization
+node bin/dingtalk-connector.js install --local
 ```
 
 #### Method C: Manual Installation
@@ -161,17 +213,15 @@ You should see output similar to `✓ DingTalk Channel (vX.X.X) - loaded`.
 
 You have three options to configure the connector:
 
-#### Option A: Configuration Wizard (Recommended for Beginners)
+#### Option A: Re-run QR Authorization
 
-> You can directly copy and paste the following command into your terminal to run the configuration wizard.
+> Credentials are automatically configured during plugin installation (Step 1, Method A). If you need to re-run the QR authorization:
 
 ```bash
-openclaw channels add
+npx -y @dingtalk-real-ai/dingtalk-connector install
 ```
 
-Select **"DingTalk (钉钉)"** and follow the prompts to enter:
-- `clientId` (AppKey)
-- `clientSecret` (AppSecret)
+> 💡 **Note**: `openclaw channels add` only lists built-in channels. DingTalk is a third-party plugin — use the `npx` command above instead.
 
 #### Option B: Edit Configuration File
 

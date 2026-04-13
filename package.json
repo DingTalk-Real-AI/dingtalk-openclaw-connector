@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.13",
+  "version": "0.8.14-beta.4",
   "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
   "type": "module",
   "exports": {
@@ -20,12 +20,14 @@
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "bin": {
-    "dingtalk-connector": "bin/dingtalk-connector.js"
+    "dingtalk-connector": "./bin/dingtalk-connector.js"
   },
   "files": [
     "bin/",
     "dist/",
     "skills/",
+    "src/",
+    "index.ts",
     "docs/*.md",
     "openclaw.plugin.json",
     "tsconfig.json",
@@ -78,6 +80,7 @@
     "axios": "1.14.0",
     "dingtalk-stream": "2.1.4",
     "form-data": "^4.0.0",
+    "qrcode-terminal": "^0.12.0",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {

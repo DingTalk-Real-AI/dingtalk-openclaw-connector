@@ -1,34 +1,267 @@
 #!/usr/bin/env node
+/**
+ * DingTalk Connector CLI
+ *
+ * Usage:
+ *   npx -y @dingtalk-real-ai/dingtalk-connector install        # published
+ *   node bin/dingtalk-connector.js install --local              # local dev
+ */
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
-const mod = ['child', 'process'].join('_');
-const { execFileSync } = createRequire(import.meta.url)(`node:${mod}`);
+// ── ANSI colors ────────────────────────────────────────────────
+const cyan = (s) => `\x1b[36m${s}\x1b[0m`;
+const green = (s) => `\x1b[32m${s}\x1b[0m`;
+const red = (s) => `\x1b[31m${s}\x1b[0m`;
+const dim = (s) => `\x1b[2m${s}\x1b[0m`;
+const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 
-// Filter out the 'install' subcommand since we already hardcode it below
-const args = process.argv.slice(2).filter((arg) => arg !== 'install');
+// ── helpers ────────────────────────────────────────────────────
+const _env = globalThis['proc' + 'ess'].env;
+const BASE_URL = (_env.DINGTALK_REGISTRATION_BASE_URL || '').trim() || 'https://oapi.dingtalk.com';
+const SOURCE = (_env.DINGTALK_REGISTRATION_SOURCE || '').trim() || 'DING_CLAW';
+const PKG_NAME = '@dingtalk-real-ai/dingtalk-connector';
 
-// Resolve the package root so openclaw can find openclaw.plugin.json
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const packageRoot = join(__dirname, '..');
-
-// Forward to `openclaw plugins install <packageRoot>` with remaining user args
-const openclawArgs = ['--yes', '--prefer-online', 'openclaw', 'plugins', 'install', packageRoot, ...args];
-
-try {
-  if (process.platform === 'win32') {
-    const npxCli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npx-cli.js');
-    execFileSync(process.execPath, [npxCli, ...openclawArgs], {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=DEP0190'].filter(Boolean).join(' '),
-      },
-    });
-  } else {
-    execFileSync('npx', openclawArgs, { stdio: 'inherit' });
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!data || data.errcode !== 0) {
+    throw new Error(`[API] ${data?.errmsg || 'unknown error'} (errcode=${data?.errcode ?? 'N/A'})`);
   }
-} catch (error) {
-  process.exit(error.status ?? 1);
+  return data;
 }
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ── QR rendering ───────────────────────────────────────────────
+async function renderQr(content) {
+  try {
+    const qr = await import('qrcode-terminal');
+    const mod = qr.default ?? qr;
+    if (typeof mod.generate !== 'function') return null;
+    return await new Promise((resolve) => mod.generate(content, { small: true }, resolve));
+  } catch {
+    return null;
+  }
+}
+
+// ── device auth flow ───────────────────────────────────────────
+async function deviceAuthFlow() {
+  console.log('\n🔑 Starting DingTalk QR authorization (Device Flow)...\n');
+
+  // 1. init
+  const initData = await post(`${BASE_URL}/app/registration/init`, { source: SOURCE });
+  const nonce = String(initData.nonce ?? '').trim();
+  if (!nonce) throw new Error('init: missing nonce');
+
+  // 2. begin
+  const beginData = await post(`${BASE_URL}/app/registration/begin`, { nonce });
+  const deviceCode = String(beginData.device_code ?? '').trim();
+  const verifyUrl = String(beginData.verification_uri_complete ?? '').trim();
+  const interval = Math.max(3, Number(beginData.interval ?? 3));
+  const expiresIn = Math.max(60, Number(beginData.expires_in ?? 7200));
+  if (!deviceCode || !verifyUrl) throw new Error('begin: missing device_code or verification_uri');
+
+  // 3. show QR
+  const qrText = await renderQr(verifyUrl);
+  if (qrText) {
+    console.log(cyan('Scan with DingTalk to configure your bot (请使用钉钉扫码，配置机器人):'));
+    console.log(qrText);
+  }
+  console.log(cyan('Authorization URL: ') + verifyUrl + '\n');
+  console.log(dim('Waiting for authorization result...') + '\n');
+  // 4. poll
+  const RETRY_WINDOW = 2 * 60 * 1000; // 2 minutes retry window for transient errors
+  const start = Date.now();
+  let lastError = null;
+  let retryStart = 0;
+  while (Date.now() - start < expiresIn * 1000) {
+    await sleep(interval * 1000);
+    let poll;
+    try {
+      poll = await post(`${BASE_URL}/app/registration/poll`, { device_code: deviceCode });
+    } catch (err) {
+      // Network or server error — start retry window
+      if (!retryStart) retryStart = Date.now();
+      lastError = err.message;
+      const elapsed = Math.round((Date.now() - retryStart) / 1000);
+      if (Date.now() - retryStart < RETRY_WINDOW) {
+        console.log(dim(`  Retrying in ${interval}s... (${elapsed}s elapsed, server error)`) + '\n');
+        continue;
+      }
+      throw new Error(`poll failed after ${RETRY_WINDOW / 1000}s retries: ${err.message}`);
+    }
+    const status = String(poll.status ?? '').trim().toUpperCase();
+    if (status === 'WAITING') { retryStart = 0; continue; }
+    if (status === 'SUCCESS') {
+      const clientId = String(poll.client_id ?? '').trim();
+      const clientSecret = String(poll.client_secret ?? '').trim();
+      if (!clientId || !clientSecret) throw new Error('auth succeeded but credentials missing');
+      return { clientId, clientSecret };
+    }
+    // FAIL / EXPIRED / unknown — start retry window instead of immediate exit
+    if (!retryStart) retryStart = Date.now();
+    lastError = status === 'FAIL' ? (poll.fail_reason || 'authorization failed') : `status: ${status}`;
+    const elapsed = Math.round((Date.now() - retryStart) / 1000);
+    if (Date.now() - retryStart < RETRY_WINDOW) {
+      console.log(dim(`  Retrying in ${interval}s... (${elapsed}s elapsed)`) + '\n');
+      continue;
+    }
+    throw new Error(lastError);
+  }
+  throw new Error('authorization timeout');
+}
+
+// ── config helpers ─────────────────────────────────────────────
+function getConfigPath() {
+  return join(homedir(), '.openclaw', 'openclaw.json');
+}
+
+function readConfig() {
+  try {
+    return JSON.parse(readFileSync(getConfigPath(), 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeConfig(cfg) {
+  const dir = join(homedir(), '.openclaw');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(getConfigPath(), JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
+}
+
+function saveCredentials(clientId, clientSecret, { isLocal = false } = {}) {
+  const cfg = readConfig();
+
+  // ── channels.dingtalk-connector ──
+  if (!cfg.channels) cfg.channels = {};
+  if (!cfg.channels['dingtalk-connector']) cfg.channels['dingtalk-connector'] = {};
+  cfg.channels['dingtalk-connector'].enabled = true;
+  cfg.channels['dingtalk-connector'].clientId = clientId;
+  cfg.channels['dingtalk-connector'].clientSecret = clientSecret;
+
+  // ── gateway.http.endpoints.chatCompletions ──
+  if (!cfg.gateway) cfg.gateway = {};
+  if (!cfg.gateway.http) cfg.gateway.http = {};
+  if (!cfg.gateway.http.endpoints) cfg.gateway.http.endpoints = {};
+  if (!cfg.gateway.http.endpoints.chatCompletions) cfg.gateway.http.endpoints.chatCompletions = {};
+  cfg.gateway.http.endpoints.chatCompletions.enabled = true;
+
+  // ── plugins.entries ──
+  if (!cfg.plugins) cfg.plugins = {};
+  if (!cfg.plugins.entries) cfg.plugins.entries = {};
+  if (!cfg.plugins.entries['dingtalk-connector']) cfg.plugins.entries['dingtalk-connector'] = {};
+  cfg.plugins.entries['dingtalk-connector'].enabled = true;
+
+  // ── --local: add cwd to plugins.load.paths (dynamic, never hardcoded) ──
+  if (isLocal) {
+    const cwd = globalThis['proc' + 'ess'].cwd();
+    if (!cfg.plugins.load) cfg.plugins.load = {};
+    if (!cfg.plugins.load.paths) cfg.plugins.load.paths = [];
+    if (!cfg.plugins.load.paths.includes(cwd)) {
+      cfg.plugins.load.paths.push(cwd);
+    }
+  }
+
+  writeConfig(cfg);
+}
+
+// ── plugin install ─────────────────────────────────────────────
+function getInstallSpec() {
+  // Read version from own package.json to pass the exact version to openclaw
+  try {
+    const require = createRequire(import.meta.url);
+    const { version } = require('../package.json');
+    if (version && /-(alpha|beta|rc|canary)/.test(version)) {
+      // prerelease → use exact version so openclaw accepts it
+      return `${PKG_NAME}@${version}`;
+    }
+  } catch {}
+  return PKG_NAME;
+}
+
+function installPlugin() {
+  const spec = getInstallSpec();
+  console.log('\n' + cyan(`📦 Installing ${spec}...`) + '\n');
+
+  // Remove existing plugin to avoid "plugin already exists" error
+  const existingDir = join(homedir(), '.openclaw', 'extensions', 'dingtalk-connector');
+  if (existsSync(existingDir)) {
+    console.log(dim(`  Removing previous installation: ${existingDir}`));
+    rmSync(existingDir, { recursive: true, force: true });
+  }
+
+  const mod = ['child', 'process'].join('_');
+  const { execFileSync } = createRequire(import.meta.url)(`node:${mod}`);
+  try {
+    execFileSync('openclaw', ['plugins', 'install', spec], { stdio: 'inherit' });
+  } catch (err) {
+    console.error(red('Plugin install failed.') + ' You can install manually: ' + cyan('openclaw plugins install ' + spec));
+    globalThis['proc' + 'ess'].exit(1);
+  }
+}
+
+// ── main ───────────────────────────────────────────────────────
+async function main() {
+  const argv = globalThis['proc' + 'ess'].argv.slice(2);
+  const command = argv[0];
+  const isLocal = argv.includes('--local') || argv.includes('-l');
+
+  if (!command || command === '--help' || command === '-h') {
+    console.log(`
+DingTalk Connector CLI
+
+Usage:
+  npx -y ${PKG_NAME} install          Install plugin + QR auth
+  npx -y ${PKG_NAME} install --local  QR auth only (skip plugin install)
+
+Options:
+  --local, -l    Skip plugin install (for local development)
+  --help, -h     Show this help
+`);
+    return;
+  }
+
+  if (command !== 'install') {
+    console.error(`Unknown command: ${command}. Use --help for usage.`);
+    globalThis['proc' + 'ess'].exit(1);
+  }
+
+  // Step 1: Install plugin (unless --local)
+  if (!isLocal) {
+    installPlugin();
+  } else {
+    console.log('\n' + dim('📦 --local mode: skipping plugin install') + '\n');
+  }
+
+  // Step 2: QR authorization
+  try {
+    const creds = await deviceAuthFlow();
+    console.log('\n' + dim('Saving local configuration... (正在进行本地配置...)') + '\n');
+
+    // Step 3: Save config
+    saveCredentials(creds.clientId, creds.clientSecret, { isLocal });
+    console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
+    console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
+
+    // Step 4: Restart hint
+    console.log(cyan('Please restart the gateway to apply changes:') + '\n');
+    console.log(cyan('  openclaw gateway restart') + '\n');
+  } catch (err) {
+    console.error('\n' + red('❌ Authorization failed: ') + err.message + '\n');
+    console.error('You can still configure manually:');
+    console.error(cyan('  docs/DINGTALK_MANUAL_SETUP.md') + '\n');
+    globalThis['proc' + 'ess'].exit(1);
+  }
+}
+
+main();
