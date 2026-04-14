@@ -39,11 +39,10 @@ import {
   buildSessionContext,
   getAccessToken,
   getOapiAccessToken,
-  DINGTALK_API,
-  DINGTALK_OAPI,
   addEmotionReply,
   recallEmotionReply,
 } from "../utils/utils-legacy.ts";
+import { dingtalkApiUrl } from "../config/endpoints.ts";
 import { resolveAgentWorkspaceDir } from "../utils/agent.ts";
 import { 
   processLocalImages, 
@@ -700,7 +699,7 @@ export async function downloadMediaByCode(
     log?.info?.(`通过 downloadCode 下载媒体: ${downloadCode.slice(0, 30)}...`);
 
     const resp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
+      dingtalkApiUrl(config, '/v1.0/robot/messageFiles/download'),
       { downloadCode, robotCode: String(config.clientId) },
       {
         headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
@@ -732,7 +731,7 @@ export async function getFileDownloadUrl(
     log?.info?.(`获取文件下载链接: ${fileName}`);
 
     const resp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/robot/messageFiles/download`,
+      dingtalkApiUrl(config, '/v1.0/robot/messageFiles/download'),
       { downloadCode, robotCode: String(config.clientId) },
       {
         headers: { 'x-acs-dingtalk-access-token': token, 'Content-Type': 'application/json' },
@@ -1488,7 +1487,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
         let finalText = fullResponse;
 
         if (oapiToken) {
-          finalText = await processLocalImages(finalText, oapiToken, log);
+          finalText = await processLocalImages(finalText, oapiToken, log, config);
 
           const mediaTarget: AICardTarget = isDirect
             ? { type: 'user', userId: senderId }

@@ -42,7 +42,7 @@ export async function processAudioMarkers(
         result = result.replace(full, '⚠️ 音频文件不存在');
         continue;
       }
-      const uploadResult = await uploadMediaToDingTalk(absPath, 'voice', oapiToken, 20 * 1024 * 1024, log);
+      const uploadResult = await uploadMediaToDingTalk(absPath, 'voice', oapiToken, 20 * 1024 * 1024, log, config);
       result = result.replace(full, uploadResult ? `[音频已上传：${uploadResult}]` : '⚠️ 音频上传失败');
     } catch {
       log?.warn?.(`${logPrefix} 解析音频标记失败：${match[1]}`);

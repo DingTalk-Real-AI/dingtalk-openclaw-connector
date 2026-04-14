@@ -3,6 +3,14 @@
  */
 
 import type { DingtalkConfig, ResolvedDingtalkAccount } from '../types/index.ts';
+import {
+  DEFAULT_DINGTALK_API_ENDPOINT,
+  DEFAULT_DINGTALK_OAPI_ENDPOINT,
+  dingtalkApiUrl,
+  dingtalkOapiUrl,
+  dingtalkTokenUrl,
+  resolveDingtalkEndpoints,
+} from '../config/endpoints.ts';
 
 // SessionContext 和 buildSessionContext 统一由 session.ts 维护
 export type { SessionContext } from './session.ts';
@@ -17,8 +25,8 @@ export const DEFAULT_ACCOUNT_ID = '__default__';
 export const NEW_SESSION_COMMANDS = ['/new', '/reset', '/clear', '新会话', '重新开始', '清空对话'];
 
 /** 钉钉 API 常量 */
-export const DINGTALK_API = 'https://api.dingtalk.com';
-export const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
+export const DINGTALK_API = DEFAULT_DINGTALK_API_ENDPOINT;
+export const DINGTALK_OAPI = DEFAULT_DINGTALK_OAPI_ENDPOINT;
 
 // ============ 会话管理 ============
 
@@ -56,7 +64,8 @@ function cacheKey(config: DingtalkConfig): string {
     );
   }
   
-  return clientId;
+  const endpoints = resolveDingtalkEndpoints(config);
+  return `${clientId}|${endpoints.tokenEndpoint}|${endpoints.oapiEndpoint}`;
 }
 
 /**
@@ -71,7 +80,7 @@ export async function getAccessToken(config: DingtalkConfig): Promise<string> {
   }
 
   const { dingtalkHttp } = await import('./http-client.ts');
-  const response = await dingtalkHttp.post(`${DINGTALK_API}/v1.0/oauth2/accessToken`, {
+  const response = await dingtalkHttp.post(dingtalkTokenUrl(config, '/v1.0/oauth2/accessToken'), {
     appKey: config.clientId,
     appSecret: config.clientSecret,
   });
@@ -95,7 +104,7 @@ export async function getOapiAccessToken(config: DingtalkConfig): Promise<string
     }
 
     const { dingtalkOapiHttp } = await import('./http-client.ts');
-    const resp = await dingtalkOapiHttp.get(`${DINGTALK_OAPI}/gettoken`, {
+    const resp = await dingtalkOapiHttp.get(dingtalkOapiUrl(config, '/gettoken'), {
       params: { appkey: config.clientId, appsecret: config.clientSecret },
     });
     if (resp.data?.errcode === 0 && resp.data?.access_token) {
@@ -144,7 +153,7 @@ export async function getUnionId(
       return null;
     }
     const { dingtalkOapiHttp } = await import('./http-client.ts');
-    const resp = await dingtalkOapiHttp.get(`${DINGTALK_OAPI}/user/get`, {
+    const resp = await dingtalkOapiHttp.get(dingtalkOapiUrl(config, '/user/get'), {
       params: { access_token: token, userid: staffId },
       timeout: 10_000,
     });
@@ -401,7 +410,7 @@ export async function addEmotionReply(config: DingtalkConfig, data: any, log?: a
   try {
     const token = await getAccessToken(config);
     const { dingtalkHttp } = await import('./http-client.ts');
-    await dingtalkHttp.post(`${DINGTALK_API}/v1.0/robot/emotion/reply`, {
+    await dingtalkHttp.post(dingtalkApiUrl(config, '/v1.0/robot/emotion/reply'), {
       robotCode: data.robotCode ?? config.clientId,
       openMsgId: data.msgId,
       openConversationId: data.conversationId,
@@ -431,7 +440,7 @@ export async function recallEmotionReply(config: DingtalkConfig, data: any, log?
   try {
     const token = await getAccessToken(config);
     const { dingtalkHttp } = await import('./http-client.ts');
-    await dingtalkHttp.post(`${DINGTALK_API}/v1.0/robot/emotion/recall`, {
+    await dingtalkHttp.post(dingtalkApiUrl(config, '/v1.0/robot/emotion/recall'), {
       robotCode: data.robotCode ?? config.clientId,
       openMsgId: data.msgId,
       openConversationId: data.conversationId,

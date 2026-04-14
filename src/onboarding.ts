@@ -192,6 +192,11 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
         probeResult = await probeDingtalk({
           clientId: defaultAccount.clientId,
           clientSecret: defaultAccount.clientSecret,
+          gatewayEndpoint: defaultAccount.config.gatewayEndpoint,
+          tokenEndpoint: defaultAccount.config.tokenEndpoint,
+          apiEndpoint: defaultAccount.config.apiEndpoint,
+          oapiEndpoint: defaultAccount.config.oapiEndpoint,
+          endpoint: defaultAccount.config.endpoint,
         });
       } catch {
         // Ignore probe errors
@@ -351,6 +356,11 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
         const probe = await probeDingtalk({
           clientId,
           clientSecret: clientSecretProbeValue ?? undefined,
+          gatewayEndpoint: (next.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.gatewayEndpoint,
+          tokenEndpoint: (next.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.tokenEndpoint,
+          apiEndpoint: (next.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.apiEndpoint,
+          oapiEndpoint: (next.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.oapiEndpoint,
+          endpoint: (next.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.endpoint,
         });
         if (probe.ok) {
           await prompter.note(

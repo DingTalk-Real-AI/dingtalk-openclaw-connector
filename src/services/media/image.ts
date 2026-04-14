@@ -12,6 +12,7 @@ interface Logger {
   [key: string]: any;
 }
 
+import type { DingtalkConfig } from '../../types/index.ts';
 import {
   LOCAL_IMAGE_RE,
   BARE_IMAGE_PATH_RE,
@@ -27,6 +28,7 @@ export async function processLocalImages(
   content: string,
   oapiToken: string | null,
   log?: Logger,
+  config?: DingtalkConfig,
 ): Promise<string> {
   if (!oapiToken) {
     log?.warn?.(`[DingTalk][Media] 无 oapiToken，跳过图片后处理`);
@@ -42,7 +44,7 @@ export async function processLocalImages(
     for (const match of mdMatches) {
       const [fullMatch, alt, rawPath] = match;
       const cleanPath = rawPath.replace(/\\ /g, ' ');
-      const {mediaId} = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+      const {mediaId} = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log, config);
       if (mediaId) {
         // 使用标准 Markdown 图片语法：![文案](mediaId)
         const replacement = `![${alt}](${mediaId})`;
@@ -67,7 +69,7 @@ export async function processLocalImages(
   //   for (const match of newBareMatches.reverse()) {
   //     const [fullMatch, rawPath] = match;
   //     log?.info?.(`[DingTalk][Media] 纯文本图片："${fullMatch}" -> path="${rawPath}"`);
-  //     const {mediaId} = await uploadMediaToDingTalk(rawPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+  //     const {mediaId} = await uploadMediaToDingTalk(rawPath, 'image', oapiToken, 20 * 1024 * 1024, log, config);
   //     if (mediaId) {
   //       // 使用标准 Markdown 图片语法：![](mediaId)
   //       const replacement = `![](${mediaId})`;

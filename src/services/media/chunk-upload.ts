@@ -10,13 +10,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import type { DingtalkConfig } from '../../types/index.ts';
+import { dingtalkOapiUrl } from '../../config/endpoints.ts';
 import { createLogger } from '../../utils/logger.ts';
 import { dingtalkOapiHttp, dingtalkUploadHttp } from '../../utils/http-client.ts';
 // form-data 是 CJS 模块，静态 import 可确保 jiti/ESM 环境下 CJS 互操作行为稳定，
 // 避免动态 import 时 .default 偶发为 undefined 导致 "Cannot read properties of undefined (reading 'registry')"
 import FormData from 'form-data';
-
-const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
 
 /** 分块上传配置 */
 export const CHUNK_CONFIG = {
@@ -59,6 +59,7 @@ export async function enableUploadTransaction(
   fileName: string,
   fileSize: number,
   debug: boolean = false,
+  config?: DingtalkConfig,
 ): Promise<string | null> {
   const log = createLogger(debug, 'DingTalk][ChunkUpload');
   
@@ -70,7 +71,7 @@ export async function enableUploadTransaction(
     form.append('file_size', fileSize.toString());
 
     const resp = await dingtalkOapiHttp.post<UploadTransactionResponse>(
-      `${DINGTALK_OAPI}/file/upload/transaction/enable`,
+      dingtalkOapiUrl(config, '/file/upload/transaction/enable'),
       form,
       {
         params: { access_token: oapiToken },
@@ -109,6 +110,7 @@ export async function uploadFileBlock(
   chunkNumber: number,
   totalChunks: number,
   debug: boolean = false,
+  config?: DingtalkConfig,
 ): Promise<boolean> {
   const log = createLogger(debug, 'DingTalk][ChunkUpload');
   
@@ -125,7 +127,7 @@ export async function uploadFileBlock(
     });
 
     const resp = await dingtalkOapiHttp.post<UploadBlockResponse>(
-      `${DINGTALK_OAPI}/file/upload/chunk`,
+      dingtalkOapiUrl(config, '/file/upload/chunk'),
       form,
       {
         params: { access_token: oapiToken },
@@ -159,6 +161,7 @@ export async function submitUploadTransaction(
   uploadId: string,
   fileName: string,
   debug: boolean = false,
+  config?: DingtalkConfig,
 ): Promise<{ fileId?: string; downloadCode?: string } | null> {
   const log = createLogger(debug, 'DingTalk][ChunkUpload');
   
@@ -166,7 +169,7 @@ export async function submitUploadTransaction(
     log.info(`提交上传事务：${uploadId}`);
 
     const resp = await dingtalkOapiHttp.get<SubmitTransactionResponse>(
-      `${DINGTALK_OAPI}/file/upload/transaction/submit`,
+      dingtalkOapiUrl(config, '/file/upload/transaction/submit'),
       {
         params: {
           access_token: oapiToken,
@@ -225,6 +228,7 @@ export async function uploadLargeFileByChunks(
   mediaType: 'video' | 'file',
   oapiToken: string,
   debug: boolean = false,
+  config?: DingtalkConfig,
 ): Promise<string | null> {
   const log = createLogger(debug, 'DingTalk][ChunkUpload');
   
@@ -243,7 +247,7 @@ export async function uploadLargeFileByChunks(
     log.info(`开始分块上传：${fileName}, 大小：${fileSizeMB}MB, 类型：${mediaType}`);
 
     // 步骤一：开启上传事务
-    const uploadId = await enableUploadTransaction(oapiToken, fileName, fileSize, debug);
+    const uploadId = await enableUploadTransaction(oapiToken, fileName, fileSize, debug, config);
     if (!uploadId) {
       log.error(`开启事务失败，终止上传`);
       return null;
@@ -268,7 +272,8 @@ export async function uploadLargeFileByChunks(
         chunkData,
         i + 1, // chunkNumber 从 1 开始
         totalChunks,
-        debug
+        debug,
+        config,
       );
 
       if (!success) {
@@ -281,7 +286,7 @@ export async function uploadLargeFileByChunks(
     }
 
     // 步骤三：提交上传事务
-    const result = await submitUploadTransaction(oapiToken, uploadId, fileName, debug);
+    const result = await submitUploadTransaction(oapiToken, uploadId, fileName, debug, config);
     if (!result || !result.downloadCode) {
       log.error(`提交事务失败`);
       return null;

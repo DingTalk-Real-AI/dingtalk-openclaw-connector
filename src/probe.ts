@@ -1,4 +1,10 @@
 import { raceWithTimeoutAndAbort } from "./utils/async.ts";
+import {
+  type DingtalkEndpointConfig,
+  dingtalkApiUrl,
+  dingtalkTokenUrl,
+  resolveDingtalkEndpoints,
+} from "./config/endpoints.ts";
 import type { DingtalkProbeResult } from "./types/index.ts";
 
 /** LRU Cache for probe results to reduce repeated health-check calls. */
@@ -68,7 +74,11 @@ function setCachedProbeResult(
 }
 
 export async function probeDingtalk(
-  creds?: { clientId: string; clientSecret: string; accountId?: string },
+  creds?: DingtalkEndpointConfig & {
+    clientId?: string;
+    clientSecret?: string;
+    accountId?: string;
+  },
   options: ProbeDingtalkOptions = {},
 ): Promise<DingtalkProbeResult> {
   if (!creds?.clientId || !creds?.clientSecret) {
@@ -88,7 +98,10 @@ export async function probeDingtalk(
   const timeoutMs = options.timeoutMs ?? DINGTALK_PROBE_REQUEST_TIMEOUT_MS;
 
   // Return cached result if still valid.
-  const cacheKey = creds.accountId ?? `${creds.clientId}:${creds.clientSecret.slice(0, 8)}`;
+  const endpoints = resolveDingtalkEndpoints(creds);
+  const credentialKey = creds.accountId ?? `${creds.clientId}:${creds.clientSecret.slice(0, 8)}`;
+  const cacheKey =
+    `${credentialKey}:${endpoints.tokenEndpoint}:${endpoints.apiEndpoint}`;
   const cached = probeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.result;
@@ -97,7 +110,7 @@ export async function probeDingtalk(
   try {
     // Get access token
     const tokenResponse = await raceWithTimeoutAndAbort(
-      fetch("https://api.dingtalk.com/v1.0/oauth2/accessToken", {
+      fetch(dingtalkTokenUrl(creds, "/v1.0/oauth2/accessToken"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -142,7 +155,7 @@ export async function probeDingtalk(
 
     // Get bot info
     const botResponse = await raceWithTimeoutAndAbort(
-      fetch(`https://api.dingtalk.com/v1.0/contact/users/me`, {
+      fetch(dingtalkApiUrl(creds, "/v1.0/contact/users/me"), {
         method: "GET",
         headers: {
           "x-acs-dingtalk-access-token": tokenData.accessToken,

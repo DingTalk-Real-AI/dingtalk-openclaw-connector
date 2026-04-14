@@ -81,7 +81,7 @@ describe('AI Card helpers', () => {
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockImplementation((url: string) => {
-        if (url === 'https://api.dingtalk.com/v1.0/oauth2/accessToken') {
+        if (String(url).includes('/v1.0/oauth2/accessToken')) {
           return Promise.resolve({ data: { accessToken: 'token123', expireIn: 7200 } });
         }
         if (url.includes('/card/instances')) {
@@ -117,7 +117,7 @@ describe('AI Card helpers', () => {
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockImplementation((url: string) => {
-        if (url === 'https://api.dingtalk.com/v1.0/oauth2/accessToken') {
+        if (String(url).includes('/v1.0/oauth2/accessToken')) {
           return Promise.resolve({ data: { accessToken: 'token123', expireIn: 7200 } });
         }
         return Promise.resolve({ status: 200, data: {} });

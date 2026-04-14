@@ -4,7 +4,8 @@
  */
 
 import type { DingtalkConfig } from './types/index.ts';
-import { getAccessToken, DINGTALK_API } from './utils/index.ts';
+import { dingtalkApiUrl } from './config/endpoints.ts';
+import { getAccessToken } from './utils/index.ts';
 import { dingtalkHttp } from './utils/http-client.ts';
 
 // ============ 类型定义 ============
@@ -55,7 +56,7 @@ export class DingtalkDocsClient {
       this.log?.info?.(`[DingTalk][Docs] 获取文档信息: spaceId=${spaceId}, docId=${docId}`);
 
       const resp = await dingtalkHttp.get(
-        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/docs/${docId}`,
+        dingtalkApiUrl(this.config, `/v1.0/doc/spaces/${spaceId}/docs/${docId}`),
         { headers, timeout: 10_000 },
       );
 
@@ -89,7 +90,7 @@ export class DingtalkDocsClient {
       }
 
       const resp = await dingtalkHttp.get(
-        `${DINGTALK_API}/v2.0/wiki/nodes/${nodeId}/content`,
+        dingtalkApiUrl(this.config, `/v2.0/wiki/nodes/${nodeId}/content`),
         { headers, params: { operatorId }, timeout: 30_000 },
       );
 
@@ -154,7 +155,7 @@ export class DingtalkDocsClient {
       };
 
       await dingtalkHttp.post(
-        `${DINGTALK_API}/v1.0/doc/documents/${docId}/blocks/root/children`,
+        dingtalkApiUrl(this.config, `/v1.0/doc/documents/${docId}/blocks/root/children`),
         body,
         { headers, timeout: 10_000 },
       );
@@ -190,7 +191,7 @@ export class DingtalkDocsClient {
       };
 
       const resp = await dingtalkHttp.post(
-        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/docs`,
+        dingtalkApiUrl(this.config, `/v1.0/doc/spaces/${spaceId}/docs`),
         body,
         { headers, timeout: 10_000 },
       );
@@ -233,7 +234,7 @@ export class DingtalkDocsClient {
       if (spaceId) body.spaceId = spaceId;
 
       const resp = await dingtalkHttp.post(
-        `${DINGTALK_API}/v1.0/doc/docs/search`,
+        dingtalkApiUrl(this.config, '/v1.0/doc/docs/search'),
         body,
         { headers, timeout: 10_000 },
       );
@@ -270,7 +271,7 @@ export class DingtalkDocsClient {
       if (parentId) params.parentDentryId = parentId;
 
       const resp = await dingtalkHttp.get(
-        `${DINGTALK_API}/v1.0/doc/spaces/${spaceId}/dentries`,
+        dingtalkApiUrl(this.config, `/v1.0/doc/spaces/${spaceId}/dentries`),
         { headers, params, timeout: 10_000 },
       );
 

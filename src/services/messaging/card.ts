@@ -4,7 +4,8 @@
  */
 
 import type { DingtalkConfig } from "../../types/index.ts";
-import { DINGTALK_API, getAccessToken } from "../../utils/token.ts";
+import { dingtalkApiUrl } from "../../config/endpoints.ts";
+import { getAccessToken } from "../../utils/token.ts";
 import { dingtalkHttp } from "../../utils/http-client.ts";
 
 // ============ 常量 ============
@@ -141,7 +142,7 @@ export async function createAICardForTarget(
     };
 
     const createResp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/card/instances`,
+      dingtalkApiUrl(config, "/v1.0/card/instances"),
       createBody,
       {
         headers: {
@@ -159,7 +160,7 @@ export async function createAICardForTarget(
     );
 
     const deliverResp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/card/instances/deliver`,
+      dingtalkApiUrl(config, "/v1.0/card/instances/deliver"),
       deliverBody,
       {
         headers: {
@@ -233,7 +234,7 @@ export async function streamAICard(
     };
     try {
       const statusResp = await dingtalkHttp.put(
-        `${DINGTALK_API}/v1.0/card/instances`,
+        dingtalkApiUrl(config, "/v1.0/card/instances"),
         statusBody,
         {
           headers: {
@@ -268,7 +269,7 @@ export async function streamAICard(
   );
   try {
     const streamResp = await dingtalkHttp.put(
-      `${DINGTALK_API}/v1.0/card/streaming`,
+      dingtalkApiUrl(config, "/v1.0/card/streaming"),
       body,
       {
         headers: {
@@ -323,7 +324,7 @@ export async function finishAICard(
 
   try {
     const finishResp = await dingtalkHttp.put(
-      `${DINGTALK_API}/v1.0/card/instances`,
+      dingtalkApiUrl(config, "/v1.0/card/instances"),
       body,
       {
         headers: {

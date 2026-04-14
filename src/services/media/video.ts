@@ -150,7 +150,7 @@ export async function processVideoMarkers(
         result = result.replace(full, '⚠️ 视频文件不存在');
         continue;
       }
-      const mediaId = await uploadMediaToDingTalk(absPath, 'video', oapiToken, 20 * 1024 * 1024, log);
+      const mediaId = await uploadMediaToDingTalk(absPath, 'video', oapiToken, 20 * 1024 * 1024, log, config);
       result = result.replace(full, mediaId ? `[视频已上传：${mediaId}]` : '⚠️ 视频上传失败');
     } catch {
       log?.warn?.(`${logPrefix} 解析视频标记失败：${match[1]}`);

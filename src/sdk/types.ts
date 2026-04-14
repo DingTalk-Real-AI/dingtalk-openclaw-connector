@@ -99,6 +99,11 @@ export interface DingtalkAccountConfig {
   textChunkLimit?: number;
   mediaMaxMb?: number;
   typingIndicator?: boolean;
+  gatewayEndpoint?: string;
+  tokenEndpoint?: string;
+  apiEndpoint?: string;
+  oapiEndpoint?: string;
+  endpoint?: string;
   tools?: DingtalkToolsConfig;
 }
 
@@ -125,6 +130,11 @@ export interface DingtalkConfig {
   mediaMaxMb?: number;
   typingIndicator?: boolean;
   resolveSenderNames?: boolean;
+  gatewayEndpoint?: string;
+  tokenEndpoint?: string;
+  apiEndpoint?: string;
+  oapiEndpoint?: string;
+  endpoint?: string;
   tools?: DingtalkToolsConfig;
   groups?: Record<string, DingtalkGroupConfig>;
   accounts?: Record<string, DingtalkAccountConfig>;

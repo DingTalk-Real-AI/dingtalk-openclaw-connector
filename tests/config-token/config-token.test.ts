@@ -94,6 +94,30 @@ describe('config & token helpers', () => {
       expect(token2).toBe('token-1');
       expect(mockHttpPost).toHaveBeenCalledTimes(1);
     });
+
+    it('should use configured tokenEndpoint for access tokens', async () => {
+      const { getAccessToken } = await import('../../src/utils/token');
+      mockHttpPost.mockResolvedValue({
+        data: {
+          accessToken: 'token-custom',
+          expireIn: 3600,
+        },
+      });
+
+      const token = await getAccessToken({
+        ...baseCfg.channels['dingtalk-connector'],
+        tokenEndpoint: 'https://token.example.com/dingtalk/',
+      });
+
+      expect(token).toBe('token-custom');
+      expect(mockHttpPost).toHaveBeenCalledWith(
+        'https://token.example.com/dingtalk/v1.0/oauth2/accessToken',
+        {
+          appKey: 'id-1',
+          appSecret: 'secret-1',
+        },
+      );
+    });
   });
 
   describe('getOapiAccessToken', () => {
@@ -108,6 +132,27 @@ describe('config & token helpers', () => {
 
       const token = await getOapiAccessToken(baseCfg.channels['dingtalk-connector']);
       expect(token).toBe('oapi-token');
+    });
+
+    it('should use configured oapiEndpoint for OAPI tokens', async () => {
+      const { getOapiAccessToken } = await import('../../src/utils/token');
+      mockOapiHttpGet.mockResolvedValue({
+        data: {
+          errcode: 0,
+          access_token: 'oapi-custom',
+        },
+      });
+
+      const token = await getOapiAccessToken({
+        ...baseCfg.channels['dingtalk-connector'],
+        oapiEndpoint: 'https://oapi.example.com/dingtalk/',
+      });
+
+      expect(token).toBe('oapi-custom');
+      expect(mockOapiHttpGet).toHaveBeenCalledWith(
+        'https://oapi.example.com/dingtalk/gettoken',
+        { params: { appkey: 'id-1', appsecret: 'secret-1' } },
+      );
     });
 
     it('should return null when oapi returns error', async () => {
@@ -171,4 +216,3 @@ describe('config & token helpers', () => {
     });
   });
 });
-

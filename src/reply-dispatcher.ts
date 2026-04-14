@@ -293,7 +293,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       
       if (oapiToken) {
         // 处理本地图片
-        finalText = await processLocalImages(finalText, oapiToken, log);
+        finalText = await processLocalImages(finalText, oapiToken, log, account.config as DingtalkConfig);
         
         // ✅ 先处理 Markdown 标记格式的媒体文件
         finalText = await processVideoMarkers(

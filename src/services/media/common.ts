@@ -7,6 +7,11 @@ import * as path from 'path';
 // form-data 是 CJS 模块，静态 import 可确保 jiti/ESM 环境下 CJS 互操作行为稳定，
 // 避免动态 import 时 .default 偶发为 undefined 导致 "Cannot read properties of undefined (reading 'registry')"
 import FormData from 'form-data';
+import type { DingtalkConfig } from '../../types/index.ts';
+import {
+  DEFAULT_DINGTALK_OAPI_ENDPOINT,
+  dingtalkOapiUrl,
+} from '../../config/endpoints.ts';
 import { createLogger } from '../../utils/logger.ts';
 import { CHUNK_CONFIG } from './chunk-upload.ts';
 import { dingtalkOapiHttp, dingtalkUploadHttp } from '../../utils/http-client.ts';
@@ -68,10 +73,15 @@ export async function uploadMediaToDingTalk(
   oapiToken: string,
   maxSize: number = 20 * 1024 * 1024,
   logOrDebug?: any,
-  debug?: boolean,
+  debugOrConfig?: boolean | DingtalkConfig,
+  config?: DingtalkConfig,
 ): Promise<string | null> {
+  const endpointConfig =
+    typeof debugOrConfig === 'object' && debugOrConfig !== null
+      ? debugOrConfig
+      : config;
   const debugEnabled =
-    typeof logOrDebug === 'boolean' ? logOrDebug === true : debug === true;
+    typeof logOrDebug === 'boolean' ? logOrDebug === true : debugOrConfig === true;
   const externalLog = typeof logOrDebug === 'boolean' ? undefined : logOrDebug;
   const log = externalLog ?? createLogger(debugEnabled, `DingTalk][${mediaType}`);
   
@@ -96,7 +106,7 @@ export async function uploadMediaToDingTalk(
       log?.info?.(`文件超过 20MB，使用分块上传：${absPath} (${fileSizeMB}MB)`);
       try {
         const { uploadLargeFileByChunks } = await import('./chunk-upload');
-        const downloadCode = await uploadLargeFileByChunks(absPath, mediaType, oapiToken, debugEnabled);
+        const downloadCode = await uploadLargeFileByChunks(absPath, mediaType, oapiToken, debugEnabled, endpointConfig);
         if (downloadCode) {
           log?.info?.(`分块上传成功：${absPath}, download_code: ${downloadCode}`);
           return downloadCode;
@@ -127,7 +137,7 @@ export async function uploadMediaToDingTalk(
 
     log?.info?.(`上传文件：${absPath} (${fileSizeMB}MB), uploadType=${uploadType}`);
     const resp = await dingtalkUploadHttp.post(
-      `${DINGTALK_OAPI}/media/upload`,
+      dingtalkOapiUrl(endpointConfig, '/media/upload'),
       form,
       {
         params: { access_token: oapiToken, type: mediaType },
@@ -152,4 +162,4 @@ export async function uploadMediaToDingTalk(
 }
 
 /** 钉钉 OAPI 常量 */
-export const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
+export const DINGTALK_OAPI = DEFAULT_DINGTALK_OAPI_ENDPOINT;
