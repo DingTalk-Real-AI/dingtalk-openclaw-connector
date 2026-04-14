@@ -9,7 +9,8 @@ import * as path from 'path';
 // 避免动态 import 时 .default 偶发为 undefined 导致 "Cannot read properties of undefined (reading 'registry')"
 import FormData from 'form-data';
 import type { DingtalkConfig } from '../types/index.ts';
-import { DINGTALK_OAPI, getOapiAccessToken } from '../utils/index.ts';
+import { dingtalkApiUrl, dingtalkOapiUrl } from '../config/endpoints.ts';
+import { getOapiAccessToken } from '../utils/index.ts';
 import { dingtalkHttp, dingtalkOapiHttp } from '../utils/http-client.ts';
 
 
@@ -90,6 +91,7 @@ export async function uploadMediaToDingTalk(
   oapiToken: string,
   maxSize: number = 20 * 1024 * 1024,
   log?: any,
+  config?: DingtalkConfig,
 ): Promise<UploadResult | null> {
   try {
     const absPath = toLocalPath(filePath);
@@ -138,7 +140,7 @@ export async function uploadMediaToDingTalk(
 
     log?.info?.(`上传文件: ${absPath} (${fileSizeMB}MB)`);
     const resp = await dingtalkOapiHttp.post(
-      `${DINGTALK_OAPI}/media/upload?access_token=${oapiToken}&type=${mediaType === 'video' ? 'file' : mediaType}`,
+      `${dingtalkOapiUrl(config, '/media/upload')}?access_token=${oapiToken}&type=${mediaType === 'video' ? 'file' : mediaType}`,
       form,
       { headers: form.getHeaders(), timeout: 60_000 },
     );
@@ -171,6 +173,7 @@ export async function processLocalImages(
   content: string,
   oapiToken: string | null,
   log?: any,
+  config?: DingtalkConfig,
 ): Promise<string> {
   if (!oapiToken) {
     log?.warn?.(`无 oapiToken，跳过图片后处理`);
@@ -187,7 +190,7 @@ export async function processLocalImages(
       const [fullMatch, alt, rawPath] = match;
       // 清理转义字符（AI 可能会对含空格的路径添加 \ ）
       const cleanPath = rawPath.replace(/\\ /g, ' ');
-      const uploadResult = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+      const uploadResult = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log, config);
       if (uploadResult) {
         result = result.replace(fullMatch, `![${alt}](${uploadResult.downloadUrl})`);
       }
@@ -210,7 +213,7 @@ export async function processLocalImages(
     for (const match of newBareMatches.reverse()) {
       const [fullMatch, rawPath] = match;
       log?.info?.(`纯文本图片: "${fullMatch}" -> path="${rawPath}"`);
-      const uploadResult = await uploadMediaToDingTalk(rawPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+      const uploadResult = await uploadMediaToDingTalk(rawPath, 'image', oapiToken, 20 * 1024 * 1024, log, config);
       if (uploadResult) {
         const replacement = `![](${uploadResult.downloadUrl})`;
         result = result.slice(0, match.index!) + result.slice(match.index!).replace(fullMatch, replacement);
@@ -401,7 +404,7 @@ export async function processVideoMarkers(
       }
 
       // 3. 上传视频
-      const videoUploadResult = await uploadMediaToDingTalk(videoInfo.path, 'video', oapiToken, 20 * 1024 * 1024, log);
+      const videoUploadResult = await uploadMediaToDingTalk(videoInfo.path, 'video', oapiToken, 20 * 1024 * 1024, log, config);
       if (!videoUploadResult) {
         log?.warn?.(`${logPrefix} 视频上传失败: ${videoInfo.path}`);
         statusMessages.push(`⚠️ 视频上传失败: ${fileName}（文件可能超过 20MB 限制）`);
@@ -410,7 +413,7 @@ export async function processVideoMarkers(
       const videoMediaId = videoUploadResult.mediaId; // 使用原始 media_id（带 @）
 
       // 4. 上传封面
-      const picUploadResult = await uploadMediaToDingTalk(thumbnailPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+      const picUploadResult = await uploadMediaToDingTalk(thumbnailPath, 'image', oapiToken, 20 * 1024 * 1024, log, config);
       if (!picUploadResult) {
         log?.warn?.(`${logPrefix} 封面上传失败: ${thumbnailPath}`);
         statusMessages.push(`⚠️ 视频封面上传失败: ${fileName}`);
@@ -565,7 +568,7 @@ export async function processAudioMarkers(
       const ext = path.extname(audioInfo.path).slice(1).toLowerCase();
 
       // 上传音频到钉钉
-      const uploadResult = await uploadMediaToDingTalk(audioInfo.path, 'voice', oapiToken, 20 * 1024 * 1024, log);
+      const uploadResult = await uploadMediaToDingTalk(audioInfo.path, 'voice', oapiToken, 20 * 1024 * 1024, log, config);
       if (!uploadResult) {
         statusMessages.push(`⚠️ 音频上传失败: ${fileName}（文件可能超过 20MB 限制）`);
         continue;
@@ -671,7 +674,7 @@ export async function processFileMarkers(
     const fileName = fileInfo.fileName || path.basename(fileInfo.path);
     try {
       // 上传文件到钉钉
-      const uploadResult = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, 20 * 1024 * 1024, log);
+      const uploadResult = await uploadMediaToDingTalk(fileInfo.path, 'file', oapiToken, 20 * 1024 * 1024, log, config);
       if (!uploadResult) {
         statusMessages.push(`⚠️ 文件上传失败: ${fileName}（文件可能超过 20MB 限制）`);
         continue;
@@ -765,7 +768,6 @@ export async function sendVideoProactive(
 ): Promise<void> {
   try {
     const token = await (await import('../utils/index.ts')).getAccessToken(config);
-    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的视频消息格式
     const msgParam = {
@@ -784,10 +786,10 @@ export async function sendVideoProactive(
     let endpoint: string;
     if (target.type === 'group') {
       body.openConversationId = target.openConversationId;
-      endpoint = `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/groupMessages/send');
     } else {
       body.userIds = [target.userId];
-      endpoint = `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/oToMessages/batchSend');
     }
 
     log?.info?.(`Video[Proactive] 发送视频消息`);
@@ -868,7 +870,6 @@ export async function sendAudioProactive(
 ): Promise<void> {
   try {
     const token = await (await import('../utils/index.ts')).getAccessToken(config);
-    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的音频消息格式
     const actualDuration = (durationMs && durationMs > 0) ? durationMs.toString() : '60000';
@@ -886,10 +887,10 @@ export async function sendAudioProactive(
     let endpoint: string;
     if (target.type === 'group') {
       body.openConversationId = target.openConversationId;
-      endpoint = `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/groupMessages/send');
     } else {
       body.userIds = [target.userId];
-      endpoint = `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/oToMessages/batchSend');
     }
 
     log?.info?.(`Audio[Proactive] 发送音频消息: ${fileName}`);
@@ -963,7 +964,6 @@ export async function sendFileProactive(
 ): Promise<void> {
   try {
     const token = await (await import('../utils/index.ts')).getAccessToken(config);
-    const { DINGTALK_API } = await import('../utils/index.ts');
 
     // 钉钉普通消息 API 的文件消息格式
     const resolvedFileName = fileInfo.fileName || path.basename(fileInfo.path);
@@ -983,10 +983,10 @@ export async function sendFileProactive(
     let endpoint: string;
     if (target.type === 'group') {
       body.openConversationId = target.openConversationId;
-      endpoint = `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/groupMessages/send');
     } else {
       body.userIds = [target.userId];
-      endpoint = `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`;
+      endpoint = dingtalkApiUrl(config, '/v1.0/robot/oToMessages/batchSend');
     }
 
     log?.info?.(`File[Proactive] 发送文件消息: ${fileInfo.fileName}`);
@@ -1079,7 +1079,8 @@ export async function processRawMediaPaths(
         mediaType,
         oapiToken,
         20 * 1024 * 1024,
-        log
+        log,
+        config,
       );
       
       if (!uploadResult) {

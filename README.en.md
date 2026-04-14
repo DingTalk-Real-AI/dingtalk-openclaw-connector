@@ -244,6 +244,17 @@ openclaw logs --follow
 | `clientId` | — | DingTalk AppKey |
 | `clientSecret` | — | DingTalk AppSecret |
 
+### Endpoint Configuration
+
+All endpoint fields are optional. When omitted, the connector uses the defaults below. `endpoint` is a deprecated compatibility alias for `gatewayEndpoint`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `gatewayEndpoint` | `https://api.dingtalk.com` | DingTalk Stream gateway endpoint |
+| `tokenEndpoint` | `https://api.dingtalk.com` | OpenAPI access-token endpoint prefix |
+| `apiEndpoint` | `https://api.dingtalk.com` | OpenAPI endpoint prefix |
+| `oapiEndpoint` | `https://oapi.dingtalk.com` | Legacy OAPI endpoint prefix |
+
 ### Session Management
 
 | Option | Default | Description |

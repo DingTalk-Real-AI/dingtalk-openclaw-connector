@@ -15,6 +15,7 @@
 import * as fs from 'fs';
 import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
 import type { ResolvedDingtalkAccount } from "../types/index.ts";
+import { resolveDingtalkEndpoints } from "../config/endpoints.ts";
 import {
   checkAndMarkDingtalkMessage,
 } from "../utils/utils-legacy.ts";
@@ -140,12 +141,13 @@ export async function monitorSingleAccount(
   }
 
   // 配置 DWClient：禁用 SDK 内置的 keepAlive 和 autoReconnect，使用自定义实现
+  const endpoints = resolveDingtalkEndpoints(account.config);
   const client = new DWClient({
     clientId: account.clientId,
     clientSecret: account.clientSecret,
     debug: account.config.debug,
     // 显式设置 HTTPS endpoint，防止被降级为 HTTP
-    endpoint: account.config.endpoint || "https://api.dingtalk.com",
+    endpoint: endpoints.gatewayEndpoint,
     autoReconnect: false, // ❌ 禁用 SDK 自动重连
     keepAlive: false, // ❌ 禁用 SDK 心跳检测
   } as any);

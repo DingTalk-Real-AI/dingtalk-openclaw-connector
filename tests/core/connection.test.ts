@@ -15,6 +15,7 @@ class FakeSocket extends EventEmitter {
 class FakeDWClient extends EventEmitter {
   static nextConnectError: any = null;
   static latestInstance: FakeDWClient | null = null;
+  static latestOptions: any = null;
   socket = new FakeSocket();
   callback: ((res: any) => Promise<void>) | null = null;
   disconnect = vi.fn(async () => undefined);
@@ -30,8 +31,9 @@ class FakeDWClient extends EventEmitter {
   registerCallbackListener = vi.fn((_: string, cb: any) => {
     this.callback = cb;
   });
-  constructor(_: any) {
+  constructor(options: any) {
     super();
+    FakeDWClient.latestOptions = options;
     FakeDWClient.latestInstance = this;
   }
 }
@@ -59,6 +61,7 @@ describe("core/connection", () => {
     vi.clearAllMocks();
     FakeDWClient.nextConnectError = null;
     FakeDWClient.latestInstance = null;
+    FakeDWClient.latestOptions = null;
     // 默认首次处理：返回 false（未重复）
     mockCheckAndMarkDingtalkMessage.mockReturnValue(false);
   });
@@ -165,6 +168,30 @@ describe("core/connection", () => {
     await expect(
       monitorSingleAccount(createOpts()),
     ).rejects.toThrow("Failed to connect to DingTalk Stream: connection refused");
+  });
+
+  it("passes configured gatewayEndpoint to DWClient", async () => {
+    const { monitorSingleAccount } = await import("../../src/core/connection");
+    const controller = new AbortController();
+    const running = monitorSingleAccount(
+      createOpts({
+        abortSignal: controller.signal,
+        account: {
+          config: {
+            gatewayEndpoint: "https://gateway.example.com/dingtalk/",
+            debug: false,
+          },
+        },
+      }),
+    );
+
+    for (let i = 0; i < 10 && !FakeDWClient.latestOptions; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(FakeDWClient.latestOptions.endpoint).toBe("https://gateway.example.com/dingtalk");
+    controller.abort();
+    await running;
   });
 
   it("rejects with 400 message when connect() fails with status 400", async () => {

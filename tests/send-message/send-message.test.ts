@@ -28,7 +28,7 @@ describe('message sending helpers', () => {
     vi.clearAllMocks();
     // getAccessToken() 与真正发送都会走 axios.post，这里按 url 分流 mock。
     mockAxiosPost.mockImplementation(async (url: string) => {
-      if (url === 'https://api.dingtalk.com/v1.0/oauth2/accessToken') {
+      if (String(url).includes('/v1.0/oauth2/accessToken')) {
         return { data: { accessToken: 'token123', expireIn: 7200 } };
       }
       return { data: { success: true } };

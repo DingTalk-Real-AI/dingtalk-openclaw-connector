@@ -276,6 +276,17 @@ openclaw logs --follow
 | `clientId` | — | 钉钉 AppKey |
 | `clientSecret` | — | 钉钉 AppSecret |
 
+### Endpoint 配置
+
+以下 endpoint 均可省略；省略时会使用默认值。`endpoint` 是旧版字段，仍会作为 `gatewayEndpoint` 的兼容别名读取。
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `gatewayEndpoint` | `https://api.dingtalk.com` | DingTalk Stream 网关地址 |
+| `tokenEndpoint` | `https://api.dingtalk.com` | 新版 OpenAPI access token 地址前缀 |
+| `apiEndpoint` | `https://api.dingtalk.com` | 新版 OpenAPI 地址前缀 |
+| `oapiEndpoint` | `https://oapi.dingtalk.com` | 旧版 OAPI 地址前缀 |
+
 ### 会话管理
 
 | 选项 | 默认值 | 说明 |

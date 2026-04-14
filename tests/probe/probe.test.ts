@@ -100,6 +100,22 @@ describe("probeDingtalk", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps probe cache separate for different endpoint configs", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("accessToken")) {
+        return { json: async () => ({ accessToken: "tk" }) };
+      }
+      return { json: async () => ({ errcode: 0, nick: "bot-a" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const baseCreds = { clientId: "id", clientSecret: "secret", accountId: "acc-1" };
+    await probeDingtalk({ ...baseCreds, apiEndpoint: "https://api-a.example.com" });
+    await probeDingtalk({ ...baseCreds, apiEndpoint: "https://api-b.example.com" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it("catches unexpected fetch error", async () => {
     vi.stubGlobal(
       "fetch",

@@ -64,7 +64,11 @@ const DingtalkSharedConfigShape = {
   groupSessionScope: GroupSessionScopeSchema,
   asyncMode: z.boolean().optional(),
   ackText: z.string().optional(),
-  endpoint: z.string().optional(), // DWClient gateway endpoint
+  gatewayEndpoint: z.string().url().optional(), // DWClient gateway endpoint
+  tokenEndpoint: z.string().url().optional(), // OAuth token endpoint
+  apiEndpoint: z.string().url().optional(), // DingTalk OpenAPI endpoint
+  oapiEndpoint: z.string().url().optional(), // DingTalk legacy OAPI endpoint
+  endpoint: z.string().url().optional(), // Deprecated: DWClient gateway endpoint alias
   debug: z.boolean().optional(), // DWClient debug mode
   enableMediaUpload: z.boolean().optional(),
   systemPrompt: z.string().optional(),

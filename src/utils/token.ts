@@ -4,12 +4,19 @@
  */
 
 import type { DingtalkConfig } from '../types/index.ts';
+import {
+  DEFAULT_DINGTALK_API_ENDPOINT,
+  DEFAULT_DINGTALK_OAPI_ENDPOINT,
+  dingtalkOapiUrl,
+  dingtalkTokenUrl,
+  resolveDingtalkEndpoints,
+} from '../config/endpoints.ts';
 import { dingtalkHttp, dingtalkOapiHttp } from './http-client.ts';
 
 // ============ 常量 ============
 
-export const DINGTALK_API = 'https://api.dingtalk.com';
-export const DINGTALK_OAPI = 'https://oapi.dingtalk.com';
+export const DINGTALK_API = DEFAULT_DINGTALK_API_ENDPOINT;
+export const DINGTALK_OAPI = DEFAULT_DINGTALK_OAPI_ENDPOINT;
 
 // ============ Access Token 缓存 ============
 
@@ -35,7 +42,8 @@ function cacheKey(config: DingtalkConfig): string {
     );
   }
   
-  return clientId;
+  const endpoints = resolveDingtalkEndpoints(config);
+  return `${clientId}|${endpoints.tokenEndpoint}|${endpoints.oapiEndpoint}`;
 }
 
 /**
@@ -49,7 +57,7 @@ export async function getAccessToken(config: DingtalkConfig): Promise<string> {
     return cached.token;
   }
 
-  const response = await dingtalkHttp.post(`${DINGTALK_API}/v1.0/oauth2/accessToken`, {
+  const response = await dingtalkHttp.post(dingtalkTokenUrl(config, '/v1.0/oauth2/accessToken'), {
     appKey: config.clientId,
     appSecret: config.clientSecret,
   });
@@ -75,7 +83,7 @@ export async function getOapiAccessToken(config: DingtalkConfig): Promise<string
       return cached.token;
     }
 
-    const resp = await dingtalkOapiHttp.get(`${DINGTALK_OAPI}/gettoken`, {
+    const resp = await dingtalkOapiHttp.get(dingtalkOapiUrl(config, '/gettoken'), {
       params: { appkey: config.clientId, appsecret: config.clientSecret },
     });
 

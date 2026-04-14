@@ -231,8 +231,25 @@
           "ackText": {
             "type": "string"
           },
+          "gatewayEndpoint": {
+            "type": "string",
+            "format": "uri"
+          },
+          "tokenEndpoint": {
+            "type": "string",
+            "format": "uri"
+          },
+          "apiEndpoint": {
+            "type": "string",
+            "format": "uri"
+          },
+          "oapiEndpoint": {
+            "type": "string",
+            "format": "uri"
+          },
           "endpoint": {
-            "type": "string"
+            "type": "string",
+            "format": "uri"
           },
           "debug": {
             "type": "boolean"
@@ -442,8 +459,25 @@
                 "ackText": {
                   "type": "string"
                 },
+                "gatewayEndpoint": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "tokenEndpoint": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "apiEndpoint": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "oapiEndpoint": {
+                  "type": "string",
+                  "format": "uri"
+                },
                 "endpoint": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "uri"
                 },
                 "debug": {
                   "type": "boolean"
@@ -483,9 +517,29 @@
           "help": "启用调试日志",
           "advanced": true
         },
-        "channels.dingtalk-connector.endpoint": {
+        "channels.dingtalk-connector.gatewayEndpoint": {
           "label": "Gateway Endpoint",
-          "help": "自定义 DWClient 网关地址（高级）",
+          "help": "自定义 DingTalk Stream 网关地址（高级）",
+          "advanced": true
+        },
+        "channels.dingtalk-connector.tokenEndpoint": {
+          "label": "Token Endpoint",
+          "help": "自定义新版 OpenAPI access token 地址前缀（高级）",
+          "advanced": true
+        },
+        "channels.dingtalk-connector.apiEndpoint": {
+          "label": "API Endpoint",
+          "help": "自定义新版 OpenAPI 地址前缀（高级）",
+          "advanced": true
+        },
+        "channels.dingtalk-connector.oapiEndpoint": {
+          "label": "OAPI Endpoint",
+          "help": "自定义旧版 OAPI 地址前缀（高级）",
+          "advanced": true
+        },
+        "channels.dingtalk-connector.endpoint": {
+          "label": "Gateway Endpoint (legacy)",
+          "help": "旧版字段，仍会作为 gatewayEndpoint 的兼容别名读取（高级）",
           "advanced": true
         },
         "channels.dingtalk-connector.accounts": {

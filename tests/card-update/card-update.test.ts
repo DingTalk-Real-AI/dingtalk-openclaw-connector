@@ -28,7 +28,7 @@ describe('card update regression', () => {
     vi.clearAllMocks();
     mockAxiosPost.mockImplementation(async (url: string) => {
       // getAccessToken
-      if (url === 'https://api.dingtalk.com/v1.0/oauth2/accessToken') {
+      if (String(url).includes('/v1.0/oauth2/accessToken')) {
         return { data: { accessToken: 'token123', expireIn: 7200 } };
       }
       // create / deliver

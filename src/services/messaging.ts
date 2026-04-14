@@ -4,8 +4,9 @@
  */
 
 import type { DingtalkConfig } from "../types/index.ts";
-import { DINGTALK_API, getAccessToken, getOapiAccessToken } from "../utils/index.ts";
-import { dingtalkHttp, dingtalkOapiHttp } from "../utils/http-client.ts";
+import { dingtalkApiUrl } from "../config/endpoints.ts";
+import { getAccessToken, getOapiAccessToken } from "../utils/index.ts";
+import { dingtalkHttp } from "../utils/http-client.ts";
 import { MEDIA_MSG_TYPES } from "../utils/constants.ts";
 import { createLoggerFromConfig } from "../utils/logger.ts";
 import {
@@ -216,7 +217,7 @@ export async function sendNormalToUser(
   const oapiToken = await getOapiAccessToken(config);
   if (oapiToken) {
     log?.info?.(`[sendNormalToUser] 开始图片后处理`);
-    processedContent = await processLocalImages(content, oapiToken, log);
+    processedContent = await processLocalImages(content, oapiToken, log, config);
   } else {
     log?.warn?.(`[sendNormalToUser] 无法获取 oapiToken，跳过媒体后处理`);
   }
@@ -240,7 +241,7 @@ export async function sendNormalToUser(
     );
 
     const resp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`,
+      dingtalkApiUrl(config, "/v1.0/robot/oToMessages/batchSend"),
       body,
       {
         headers: {
@@ -293,7 +294,7 @@ export async function sendNormalToGroup(
   const oapiToken = await getOapiAccessToken(config);
   if (oapiToken) {
     log?.info?.(`[sendNormalToGroup] 开始图片后处理`);
-    processedContent = await processLocalImages(content, oapiToken, log);
+    processedContent = await processLocalImages(content, oapiToken, log, config);
   } else {
     log?.warn?.(`[sendNormalToGroup] 无法获取 oapiToken，跳过媒体后处理`);
   }
@@ -317,7 +318,7 @@ export async function sendNormalToGroup(
     );
 
     const resp = await dingtalkHttp.post(
-      `${DINGTALK_API}/v1.0/robot/groupMessages/send`,
+      dingtalkApiUrl(config, "/v1.0/robot/groupMessages/send"),
       body,
       {
         headers: {
@@ -376,7 +377,7 @@ export async function sendAICardInternal(
     let processedContent = content;
     if (oapiToken) {
       log?.info?.(`开始图片后处理`);
-      processedContent = await processLocalImages(content, oapiToken, log);
+      processedContent = await processLocalImages(content, oapiToken, log, config);
     } else {
       log?.warn?.(
         `无法获取 oapiToken，跳过媒体后处理`,
@@ -693,6 +694,7 @@ export async function sendMediaToDingTalk(params: {
       oapiToken,
       maxSize,
       log,
+      config,
     );
     log.info("uploadMediaToDingTalk 返回结果:", uploadResult);
 
@@ -946,8 +948,8 @@ async function sendProactiveInternal(
 
     // ✅ 根据目标类型选择不同的 API
     const webhookUrl = isUser
-      ? `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`
-      : `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
+      ? dingtalkApiUrl(config, "/v1.0/robot/oToMessages/batchSend")
+      : dingtalkApiUrl(config, "/v1.0/robot/groupMessages/send");
 
     // 使用 buildMsgPayload 构建消息体（支持所有消息类型）
     const payload = buildMsgPayload(msgType, content, options.title);

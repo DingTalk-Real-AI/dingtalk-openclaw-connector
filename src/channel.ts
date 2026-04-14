@@ -370,11 +370,23 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
     }),
-    probeAccount: async ({ account }) => await probeDingtalk({
-      clientId: account.clientId!,
-      clientSecret: account.clientSecret!,
-      accountId: account.accountId,
-    }),
+    probeAccount: async ({ account }) => {
+      const endpointConfig = account.config
+        ? {
+            gatewayEndpoint: account.config.gatewayEndpoint,
+            tokenEndpoint: account.config.tokenEndpoint,
+            apiEndpoint: account.config.apiEndpoint,
+            oapiEndpoint: account.config.oapiEndpoint,
+            endpoint: account.config.endpoint,
+          }
+        : {};
+      return await probeDingtalk({
+        clientId: account.clientId!,
+        clientSecret: account.clientSecret!,
+        accountId: account.accountId,
+        ...endpointConfig,
+      });
+    },
     buildAccountSnapshot: ({ account, runtime, probe }) => ({
       accountId: account.accountId,
       enabled: account.enabled,

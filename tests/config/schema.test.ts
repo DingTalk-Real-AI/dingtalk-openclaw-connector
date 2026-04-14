@@ -35,4 +35,22 @@ describe("DingtalkConfigSchema", () => {
     });
     expect((out.accounts?.work as any)?.systemPrompt).toBe("你是一个助手");
   });
+
+  it("accepts configurable DingTalk endpoints at top-level and per account", () => {
+    const out = DingtalkConfigSchema.parse({
+      gatewayEndpoint: "https://gateway.example.com/dingtalk",
+      tokenEndpoint: "https://token.example.com/dingtalk",
+      apiEndpoint: "https://api.dingtalk.com",
+      oapiEndpoint: "https://oapi.dingtalk.com",
+      accounts: {
+        work: {
+          apiEndpoint: "https://example.com/api",
+          oapiEndpoint: "https://example.com/oapi",
+        },
+      },
+    });
+
+    expect(out.gatewayEndpoint).toBe("https://gateway.example.com/dingtalk");
+    expect((out.accounts?.work as any)?.apiEndpoint).toBe("https://example.com/api");
+  });
 });
