@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { __testables } from '../../test';
+import { __testables } from '../test';
 
 const { buildDeliverBody, buildMsgPayload } = __testables as any;
 

@@ -39,7 +39,7 @@ describe('card update regression', () => {
 
   describe('createAICard (passive)', () => {
     it('should create card for direct message (user target)', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICard } = __testables as any;
 
       const config = { clientId: 'robotCode', clientSecret: 'secret' };
@@ -60,7 +60,7 @@ describe('card update regression', () => {
     });
 
     it('should create card for group message (group target)', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICard } = __testables as any;
 
       const config = { clientId: 'robotCode', clientSecret: 'secret' };
@@ -82,7 +82,7 @@ describe('card update regression', () => {
 
   describe('streamAICard / finishAICard', () => {
     it('should set INPUTING once and stream content', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       const card = { cardInstanceId: 'card_1', accessToken: 'token123', inputingStarted: false };
@@ -103,7 +103,7 @@ describe('card update regression', () => {
     });
 
     it('should throw if INPUTING update fails', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       mockAxiosPut.mockImplementation(async (url: string) => {
@@ -116,7 +116,7 @@ describe('card update regression', () => {
     });
 
     it('should finish card by finalizing stream and setting FINISHED', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { finishAICard } = __testables as any;
 
       const card = { cardInstanceId: 'card_1', accessToken: 'token123', inputingStarted: true };

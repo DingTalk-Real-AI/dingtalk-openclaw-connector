@@ -51,7 +51,7 @@ describe('MCP tools integration', () => {
 
   describe('sendToUser for MCP', () => {
     it('should send text message to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -63,7 +63,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send markdown message to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -75,7 +75,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should return error when userId is missing', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const config = { clientId: 'test', clientSecret: 'secret' };
@@ -86,7 +86,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should return error when clientId is missing', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const result = await sendToUser({}, 'user123', 'Hello', { log });
@@ -98,7 +98,7 @@ describe('MCP tools integration', () => {
 
   describe('sendToGroup for MCP', () => {
     it('should send message to group', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToGroup } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -110,7 +110,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should return error when openConversationId is missing', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToGroup } = __testables as any;
 
       const config = { clientId: 'test', clientSecret: 'secret' };
@@ -122,7 +122,7 @@ describe('MCP tools integration', () => {
 
   describe('sendProactive for MCP', () => {
     it('should send message to user via userId', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -134,7 +134,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send message to user via userIds array', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -146,7 +146,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send message to group via openConversationId', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -158,7 +158,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should return error when no target specified', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendProactive } = __testables as any;
 
       const config = { clientId: 'test', clientSecret: 'secret' };
@@ -171,7 +171,7 @@ describe('MCP tools integration', () => {
 
   describe('sendFileProactive for MCP', () => {
     it('should send file to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendFileProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -186,7 +186,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send file to group', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendFileProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -203,7 +203,7 @@ describe('MCP tools integration', () => {
 
   describe('sendVideoProactive for MCP', () => {
     it('should send video to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendVideoProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -218,7 +218,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send video to group', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendVideoProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -235,7 +235,7 @@ describe('MCP tools integration', () => {
 
   describe('sendAudioProactive for MCP', () => {
     it('should send audio to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAudioProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -250,7 +250,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should send audio to group', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAudioProactive } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ data: { processQueryKey: 'key123' } });
@@ -267,7 +267,7 @@ describe('MCP tools integration', () => {
 
   describe('uploadMediaToDingTalk for MCP', () => {
     it('should upload media successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosGet.mockResolvedValue({ data: { errcode: 0, access_token: 'token123' } });
@@ -285,7 +285,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should handle upload failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -303,7 +303,7 @@ describe('MCP tools integration', () => {
 
   describe('extractMessageContent for MCP', () => {
     it('should extract text content', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { extractMessageContent } = __testables as any;
 
       const data = {
@@ -317,7 +317,7 @@ describe('MCP tools integration', () => {
     });
 
     it('should extract markdown content', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { extractMessageContent } = __testables as any;
 
       const data = {

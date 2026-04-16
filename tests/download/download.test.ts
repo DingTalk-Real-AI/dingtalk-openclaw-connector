@@ -59,7 +59,7 @@ describe('download helpers', () => {
 
   describe('downloadImageToFile', () => {
     it('should download image and return local path', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       const mockBuffer = Buffer.from('fake-image-data');
@@ -75,7 +75,7 @@ describe('download helpers', () => {
     });
 
     it('should detect png content type', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       const mockBuffer = Buffer.from('fake-png-data');
@@ -90,7 +90,7 @@ describe('download helpers', () => {
     });
 
     it('should detect gif content type', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       const mockBuffer = Buffer.from('fake-gif-data');
@@ -105,7 +105,7 @@ describe('download helpers', () => {
     });
 
     it('should detect webp content type', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       const mockBuffer = Buffer.from('fake-webp-data');
@@ -120,7 +120,7 @@ describe('download helpers', () => {
     });
 
     it('should default to jpg for unknown content type', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       const mockBuffer = Buffer.from('fake-data');
@@ -135,7 +135,7 @@ describe('download helpers', () => {
     });
 
     it('should return null on download failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadImageToFile } = __testables as any;
 
       mockAxiosGet.mockRejectedValue(new Error('Network error'));
@@ -149,7 +149,7 @@ describe('download helpers', () => {
 
   describe('downloadMediaByCode', () => {
     it('should download media using downloadCode', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadMediaByCode } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -170,7 +170,7 @@ describe('download helpers', () => {
     });
 
     it('should return null when no downloadUrl in response', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadMediaByCode } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -185,7 +185,7 @@ describe('download helpers', () => {
     });
 
     it('should return null on API error', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadMediaByCode } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('API error'));
@@ -200,7 +200,7 @@ describe('download helpers', () => {
 
   describe('downloadFileByCode', () => {
     it('should download file and preserve original filename', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadFileByCode } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -221,7 +221,7 @@ describe('download helpers', () => {
     });
 
     it('should sanitize filename with special characters', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadFileByCode } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -243,7 +243,7 @@ describe('download helpers', () => {
     });
 
     it('should return null when no downloadUrl in response', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadFileByCode } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -258,7 +258,7 @@ describe('download helpers', () => {
     });
 
     it('should return null on download failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { downloadFileByCode } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('API error'));
