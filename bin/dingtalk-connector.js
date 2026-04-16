@@ -211,20 +211,15 @@ function installPlugin() {
 }
 
 // ── DWS environment variables ────────────────────────────────────
-// dws CLI requires DWS_CHANNEL and DWS_CHANNEL_CLIENT_ID to identify
-// the calling context (openclaw connector) and the DingTalk app.
-function getDwsEnv(clientId) {
-  return {
-    ..._env,
-    DWS_CHANNEL: 'openclaw',
-    ...(clientId ? { DWS_CHANNEL_CLIENT_ID: String(clientId) } : {}),
-  };
-}
-
-function injectDwsEnvVars(clientId) {
+// dws CLI requires DWS_CHANNEL, DWS_CLIENT_ID, and DWS_CLIENT_SECRET
+// to identify the calling context and the DingTalk app credentials.
+function injectDwsEnvVars(clientId, clientSecret) {
   _env.DWS_CHANNEL = 'openclaw';
   if (clientId) {
-    _env.DWS_CHANNEL_CLIENT_ID = String(clientId);
+    _env.DWS_CLIENT_ID = String(clientId);
+  }
+  if (clientSecret) {
+    _env.DWS_CLIENT_SECRET = String(clientSecret);
   }
   console.log(dim('  ✔ DWS environment variables injected (DWS_CHANNEL=openclaw)') + '\n');
 }
@@ -405,7 +400,7 @@ Options:
     saveCredentials(creds.clientId, creds.clientSecret, { isLocal });
 
     // Step 4.1: Inject DWS environment variables for dws CLI integration
-    injectDwsEnvVars(creds.clientId);
+    injectDwsEnvVars(creds.clientId, creds.clientSecret);
 
     console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
     console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
