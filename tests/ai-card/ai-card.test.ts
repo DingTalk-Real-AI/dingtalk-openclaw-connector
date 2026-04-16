@@ -52,7 +52,7 @@ describe('AI Card helpers', () => {
 
   describe('buildDeliverBody', () => {
     it('should build deliver body for user target', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { buildDeliverBody } = __testables as any;
 
       const result = buildDeliverBody('card123', { type: 'user', userId: 'user123' }, 'robotCode');
@@ -64,7 +64,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should build deliver body for group target', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { buildDeliverBody } = __testables as any;
 
       const result = buildDeliverBody('card123', { type: 'group', openConversationId: 'conv123' }, 'robotCode');
@@ -77,7 +77,7 @@ describe('AI Card helpers', () => {
 
   describe('createAICardForTarget', () => {
     it('should create AI card for user successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockImplementation((url: string) => {
@@ -113,7 +113,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should create AI card for group successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockImplementation((url: string) => {
@@ -140,7 +140,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should return null on create card failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('API error'));
@@ -155,7 +155,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should return null on deliver card failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICardForTarget } = __testables as any;
 
       mockAxiosPost.mockImplementation((url: string) => {
@@ -179,7 +179,7 @@ describe('AI Card helpers', () => {
 
   describe('streamAICard', () => {
     it('should switch to INPUTING status on first call', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
@@ -194,7 +194,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should not switch to INPUTING on subsequent calls', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
@@ -211,7 +211,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should throw on INPUTING failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       mockAxiosPut.mockRejectedValue(new Error('Status update failed'));
@@ -223,7 +223,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should handle streaming failure', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       mockAxiosPut.mockImplementation((url: string) => {
@@ -242,7 +242,7 @@ describe('AI Card helpers', () => {
 
   describe('finishAICard', () => {
     it('should finalize card with content', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { finishAICard } = __testables as any;
 
       mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
@@ -255,7 +255,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should pass config to internal streamAICard call', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { finishAICard } = __testables as any;
 
       mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
@@ -280,7 +280,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should handle finish failure gracefully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { finishAICard } = __testables as any;
 
       mockAxiosPut.mockImplementation((url: string) => {
@@ -301,7 +301,7 @@ describe('AI Card helpers', () => {
 
   describe('sendAICardToUser', () => {
     it('should send AI card to user successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardToUser } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ status: 200, data: {} });
@@ -317,7 +317,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should return error when card creation fails', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardToUser } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('API error'));
@@ -333,7 +333,7 @@ describe('AI Card helpers', () => {
 
   describe('sendAICardToGroup', () => {
     it('should send AI card to group successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardToGroup } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({ status: 200, data: {} });
@@ -349,7 +349,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should return error when card creation fails', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardToGroup } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('API error'));
@@ -365,7 +365,7 @@ describe('AI Card helpers', () => {
 
   describe('sendAICardInternal', () => {
     it('should return ok with usedAICard false when content is empty after processing', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardInternal } = __testables as any;
 
       mockAxiosGet.mockResolvedValue({ data: { errcode: 0, access_token: 'token123' } });
@@ -381,7 +381,7 @@ describe('AI Card helpers', () => {
     });
 
     it('should process local images when oapiToken is available', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendAICardInternal } = __testables as any;
 
       mockAxiosGet.mockImplementation((url: string) => {

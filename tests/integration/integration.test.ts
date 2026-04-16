@@ -30,7 +30,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
 
   describe('Authentication', () => {
     it('should obtain access token', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getAccessToken } = __testables as any;
 
       const result = await getAccessToken(config);
@@ -40,7 +40,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
     });
 
     it('should fail with invalid credentials', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getAccessToken } = __testables as any;
 
       const invalidConfig = {
@@ -54,7 +54,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
 
   describe('Message Sending', () => {
     it('should send text message to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const result = await sendToUser(config, testUserId, 'Integration test message', {
@@ -66,7 +66,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
     });
 
     it('should send markdown message to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const result = await sendToUser(
@@ -80,7 +80,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
     });
 
     it('should send AI card to user', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const result = await sendToUser(
@@ -101,7 +101,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
     let card: any;
 
     it('should create AI card', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { createAICardForTarget } = __testables as any;
 
       const result = await createAICardForTarget(config, { type: 'user', userId: testUserId });
@@ -118,7 +118,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
         return;
       }
 
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { streamAICard } = __testables as any;
 
       await streamAICard(card, 'Streaming update content', false);
@@ -131,7 +131,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
         return;
       }
 
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { finishAICard } = __testables as any;
 
       await finishAICard(card, 'Final card content');
@@ -142,7 +142,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
 
   describe('Media Upload', () => {
     it('should upload image file', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk, getOapiAccessToken } = __testables as any;
 
       // Get access token
@@ -183,7 +183,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
 
   describe('Error Handling', () => {
     it('should handle invalid user ID gracefully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       const result = await sendToUser(config, 'invalid-user-id-12345', 'Test message', {
@@ -195,7 +195,7 @@ describe.skipIf(skipIntegration)('Integration Tests', () => {
     });
 
     it('should handle rate limiting', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { sendToUser } = __testables as any;
 
       // Send multiple messages rapidly

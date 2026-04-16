@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { __testables } from '../../test';
+import { __testables } from '../test';
 
 const { toLocalPath, processLocalImages, uploadMediaToDingTalk } = __testables as any;
 

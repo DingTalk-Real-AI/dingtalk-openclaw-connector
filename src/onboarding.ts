@@ -18,8 +18,28 @@ import { promptSingleChannelSecretInput } from "openclaw/plugin-sdk/setup";
 import { resolveDingtalkAccount, resolveDingtalkCredentials } from "./config/accounts.ts";
 import { probeDingtalk } from "./probe.ts";
 import type { DingtalkConfig } from "./types/index.ts";
+import {
+  beginDingtalkRegistration,
+  renderQrCodeText,
+  waitForDingtalkRegistrationSuccess,
+} from "./device-auth.ts";
 
 const channel = "dingtalk-connector" as const;
+const DINGTALK_MANUAL_SETUP_DOC = "docs/DINGTALK_MANUAL_SETUP.md";
+
+async function restartOpenclawGateway(prompter: WizardPrompter): Promise<void> {
+  await prompter.note(
+    [
+      "Configuration saved. Please restart the gateway to apply changes:",
+      "",
+      "  openclaw gateway restart",
+      "",
+      "If the restart fails, try:",
+      "  openclaw gateway install --force",
+    ].join("\n"),
+    "OpenClaw gateway",
+  );
+}
 
 function normalizeString(value: unknown): string | undefined {
   if (typeof value === "number") {
@@ -136,6 +156,92 @@ async function promptDingtalkClientId(params: {
     }),
   ).trim();
   return clientId;
+}
+
+async function tryScanAuthorizeDingtalk(prompter: WizardPrompter): Promise<{
+  clientId: string;
+  clientSecret: string;
+} | null> {
+  const useScanAuth = await prompter.confirm({
+    message: "Use DingTalk one-click QR authorization to create app credentials?",
+    initialValue: true,
+  });
+  if (!useScanAuth) {
+    return null;
+  }
+
+  const begin = await beginDingtalkRegistration();
+  const qr = await renderQrCodeText(begin.verificationUriComplete);
+
+  if (!qr) {
+    await prompter.note(
+      [
+        "QR rendering failed in current terminal.",
+        `Authorization URL: ${begin.verificationUriComplete}`,
+        "You can continue with URL authorization, or switch to manual credential input.",
+      ].join("\n"),
+      "DingTalk authorization",
+    );
+    const continueWithUrl = await prompter.confirm({
+      message: "QR display failed. Continue with URL authorization?",
+      initialValue: true,
+    });
+    if (!continueWithUrl) {
+      await prompter.note(
+        `已切换为手动配置流程。文档：${DINGTALK_MANUAL_SETUP_DOC}`,
+        "DingTalk authorization",
+      );
+      // Explicitly fall back to manual flow
+      return null;
+    }
+  }
+
+  await prompter.note(
+    [
+      "Scan with DingTalk to configure your bot (请使用钉钉扫码，配置机器人):",
+      qr || "[QR rendering unavailable, please open the link below]",
+      `Authorization URL: ${begin.verificationUriComplete}`,
+      "In the authorization page, you can create a new bot or bind an existing bot.",
+      "Waiting for authorization result...",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+
+  const result = await waitForDingtalkRegistrationSuccess({
+    deviceCode: begin.deviceCode,
+    intervalSeconds: begin.intervalSeconds,
+    expiresInSeconds: begin.expiresInSeconds,
+  });
+
+  await prompter.note("Success! Bot configured. (机器人配置成功!)");
+  await restartOpenclawGateway(prompter);
+
+  return result;
+}
+
+function formatDingtalkAuthFailure(err: unknown): string {
+  const raw = String(err ?? "");
+  if (/timeout/i.test(raw)) {
+    return "扫码授权超时。";
+  }
+  if (/expired/i.test(raw)) {
+    return "扫码授权已过期。";
+  }
+  if (/authorization failed/i.test(raw) || /auth/i.test(raw)) {
+    return "扫码授权失败。";
+  }
+  return "扫码授权未成功完成。";
+}
+
+async function noteDingtalkManualFallback(prompter: WizardPrompter, err: unknown): Promise<void> {
+  await prompter.note(
+    [
+      `${formatDingtalkAuthFailure(err)} 你仍可继续安装并改用手动配置。`,
+      `手动流程文档：${DINGTALK_MANUAL_SETUP_DOC}`,
+    ].join("\n"),
+    "DingTalk authorization",
+  );
 }
 
 function setDingtalkGroupPolicy(
@@ -262,7 +368,7 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
       }
     }
 
-    // If not using env vars, prompt for credentials
+    // If not using env vars, authorize or prompt for credentials
     if (!canUseEnv) {
       // Check if we should keep existing configuration
       if (resolved && hasConfigSecret) {
@@ -272,25 +378,78 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
         });
 
         if (!keepExisting) {
-          // User wants to reconfigure, proceed to input
-          // Step 1: Prompt for Client ID first
+          // Preferred path: one-click QR authorization
+          try {
+            const authResult = await tryScanAuthorizeDingtalk(prompter);
+            if (authResult) {
+              clientId = authResult.clientId;
+              clientSecret = authResult.clientSecret;
+              clientSecretProbeValue = authResult.clientSecret;
+            }
+          } catch (err) {
+            await noteDingtalkManualFallback(prompter, err);
+          }
+
+          // Fallback: manual input
+          if (!clientId || !clientSecret) {
+            clientId = await promptDingtalkClientId({
+              prompter,
+              initialValue:
+                normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
+            });
+
+            const clientSecretResult = await promptSingleChannelSecretInput({
+              cfg: next,
+              prompter,
+              providerHint: "dingtalk",
+              credentialLabel: "Client Secret",
+              accountConfigured: false,
+              canUseEnv: false,
+              hasConfigToken: false,
+              envPrompt: "",
+              keepPrompt: "",
+              inputPrompt: "Enter DingTalk Client Secret",
+              preferredEnvVar: "DINGTALK_CLIENT_SECRET",
+            });
+
+            if (clientSecretResult.action === "set") {
+              clientSecret = clientSecretResult.value;
+              clientSecretProbeValue = clientSecretResult.resolvedValue;
+            }
+          }
+        }
+        // If keepExisting is true, we don't modify anything
+      } else {
+        // No existing config: prefer one-click QR authorization
+        try {
+          const authResult = await tryScanAuthorizeDingtalk(prompter);
+          if (authResult) {
+            clientId = authResult.clientId;
+            clientSecret = authResult.clientSecret;
+            clientSecretProbeValue = authResult.clientSecret;
+          }
+        } catch (err) {
+          await noteDingtalkManualFallback(prompter, err);
+        }
+
+        // Fallback to manual input if QR flow is skipped/failed
+        if (!clientId || !clientSecret) {
           clientId = await promptDingtalkClientId({
             prompter,
             initialValue:
               normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
           });
 
-          // Step 2: Then prompt for Client Secret
           const clientSecretResult = await promptSingleChannelSecretInput({
             cfg: next,
             prompter,
             providerHint: "dingtalk",
             credentialLabel: "Client Secret",
-            accountConfigured: false, // Force new input
-            canUseEnv: false, // Already handled above
-            hasConfigToken: false, // Force new input
-            envPrompt: "", // Not used
-            keepPrompt: "", // Not used
+            accountConfigured: false,
+            canUseEnv: false,
+            hasConfigToken: false,
+            envPrompt: "",
+            keepPrompt: "",
             inputPrompt: "Enter DingTalk Client Secret",
             preferredEnvVar: "DINGTALK_CLIENT_SECRET",
           });
@@ -299,35 +458,6 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
             clientSecret = clientSecretResult.value;
             clientSecretProbeValue = clientSecretResult.resolvedValue;
           }
-        }
-        // If keepExisting is true, we don't modify anything
-      } else {
-        // No existing config, prompt for new credentials
-        // Step 1: Prompt for Client ID first
-        clientId = await promptDingtalkClientId({
-          prompter,
-          initialValue:
-            normalizeString(dingtalkCfg?.clientId) ?? normalizeString(process.env.DINGTALK_CLIENT_ID),
-        });
-
-        // Step 2: Then prompt for Client Secret
-        const clientSecretResult = await promptSingleChannelSecretInput({
-          cfg: next,
-          prompter,
-          providerHint: "dingtalk",
-          credentialLabel: "Client Secret",
-          accountConfigured: false,
-          canUseEnv: false,
-          hasConfigToken: false,
-          envPrompt: "",
-          keepPrompt: "",
-          inputPrompt: "Enter DingTalk Client Secret",
-          preferredEnvVar: "DINGTALK_CLIENT_SECRET",
-        });
-
-        if (clientSecretResult.action === "set") {
-          clientSecret = clientSecretResult.value;
-          clientSecretProbeValue = clientSecretResult.resolvedValue;
         }
       }
     }

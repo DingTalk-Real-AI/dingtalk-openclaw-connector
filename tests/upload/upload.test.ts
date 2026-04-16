@@ -70,7 +70,7 @@ describe('upload functionality', () => {
 
   describe('uploadMediaToDingTalk', () => {
     it('should upload media successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -106,7 +106,7 @@ describe('upload functionality', () => {
     });
 
     it('should return null when upload fails', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -122,7 +122,7 @@ describe('upload functionality', () => {
     });
 
     it('should handle network error', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('Network error'));
@@ -133,7 +133,7 @@ describe('upload functionality', () => {
     });
 
     it('should support different media types', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadMediaToDingTalk } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -161,7 +161,7 @@ describe('upload functionality', () => {
 
   describe('extractVideoMetadata', () => {
     it('should extract video metadata', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { extractVideoMetadata } = __testables as any;
 
       // Mock fluent-ffmpeg - this will fail without actual ffmpeg
@@ -172,7 +172,7 @@ describe('upload functionality', () => {
     });
 
     it('should return default metadata on error', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { extractVideoMetadata } = __testables as any;
 
       const result = await extractVideoMetadata('/nonexistent/video.mp4', log);
@@ -183,7 +183,7 @@ describe('upload functionality', () => {
 
   describe('extractVideoThumbnail', () => {
     it('should extract video thumbnail', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { extractVideoThumbnail } = __testables as any;
 
       const result = await extractVideoThumbnail('/tmp/video.mp4', '/tmp/thumb.png', log);
@@ -195,7 +195,7 @@ describe('upload functionality', () => {
 
   describe('processLocalImages', () => {
     it('should process local images', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { processLocalImages } = __testables as any;
 
       const fs = await import('fs');
@@ -216,7 +216,7 @@ describe('upload functionality', () => {
     });
 
     it('should handle missing images', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { processLocalImages } = __testables as any;
 
       const fs = await import('fs');
@@ -231,7 +231,7 @@ describe('upload functionality', () => {
 
   describe('processVideoMarkers', () => {
     it('should process video markers', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { processVideoMarkers } = __testables as any;
 
       const fs = await import('fs');
@@ -250,7 +250,7 @@ describe('upload functionality', () => {
 
   describe('uploadAndReplaceFileMarkers', () => {
     it('should upload files and replace markers with text', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { uploadAndReplaceFileMarkers } = __testables as any;
 
       const fs = await import('fs');
@@ -282,7 +282,7 @@ describe('upload functionality', () => {
 
   describe('processAudioMarkers', () => {
     it('should process audio markers', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { processAudioMarkers } = __testables as any;
 
       const fs = await import('fs');

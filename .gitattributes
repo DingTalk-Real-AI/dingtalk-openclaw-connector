@@ -1,0 +1,3 @@
+# Override GitHub Linguist language detection
+coverage/** linguist-generated
+docs/** linguist-documentation

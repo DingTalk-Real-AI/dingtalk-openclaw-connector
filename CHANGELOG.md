@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.16] - 2026-04-16
+
+### 修复 / Fixes
+- 🐛 **AI Card 流式更新 QPS 限流** - 新增全局令牌桶限流器（`cardRateLimiter`），所有会话共享 20 QPS 速率限制，避免多会话并发时总 QPS 叠加超过钉钉 API 限制；遇到 403 QpsLimit 自动退避 2s 后重试  
+  **AI Card streaming QPS rate limiting** - Added global token bucket rate limiter shared across all sessions (20 QPS cap) with automatic 2s backoff and retry on 403 QpsLimit
+
+- 🐛 **streamAICard null card 崩溃** - 修复 `createAICardForTarget` 返回 `null` 后调用方通过 `as any` 绕过类型检查导致 `Cannot read properties of null` 崩溃，添加 null 守卫  
+  **streamAICard null card crash** - Fixed crash when `createAICardForTarget` returns `null` and callers bypass type checking; added null guard
+
+- 🐛 **插件配置格式兼容性** - 修复 `package.json` 中缺少 `openclaw.channels` 数组导致旧版 OpenClaw 框架安装失败的问题，同时保留新版 `openclaw.channel` 对象格式  
+  **Plugin config format compatibility** - Fixed missing `openclaw.channels` array in `package.json` that caused installation failure on older OpenClaw framework versions; both old and new config formats are now present
+
+### 改进 / Improvements
+- ✅ **单实例节流间隔优化** - `reply-dispatcher.ts` 的 `updateInterval` 从 500ms 增大到 800ms，配合全局限流器降低单实例发送频率  
+  **Per-instance throttle interval** - Increased `updateInterval` from 500ms to 800ms to complement global rate limiter
+
+## [0.8.15] - 2026-04-15
+
+### 新增 / Added
+- ✨ **一键扫码安装** - 新增 `npx -y @dingtalk-real-ai/dingtalk-connector install` 命令，通过钉钉扫码一键完成机器人创建、凭证获取、插件安装和配置写入，零手动配置  
+  **One-click QR install** - Added `npx` CLI command for one-click DingTalk bot setup via QR scan: creates bot, obtains credentials, installs plugin, and writes config automatically
+
+- ✨ **Device Authorization Flow** - 新增 `device-auth.ts` 和 `device-auth-config.ts` 模块，实现钉钉 Device Flow 授权（init → begin → poll），支持 QR 码终端渲染、指数退避轮询、2 分钟瞬时错误重试窗口  
+  **Device Authorization Flow** - Added `device-auth.ts` and `device-auth-config.ts` implementing DingTalk Device Flow (init → begin → poll) with terminal QR rendering, exponential backoff polling, and 2-minute transient error retry window
+
+- ✨ **Onboarding 扫码授权集成** - `onboarding.ts` 配置向导新增扫码授权路径，首选一键扫码，失败时自动降级为手动输入 Client ID / Client Secret  
+  **Onboarding QR auth integration** - Setup wizard now prefers one-click QR authorization, with automatic fallback to manual credential input on failure
+
+- ✨ **CLI 凭证暂存与恢复** - 当插件安装失败时，凭证保存到独立的 staging 文件（`.dingtalk-staging.json`），避免污染 `openclaw.json`；下次安装成功后自动恢复  
+  **CLI credential staging & recovery** - Credentials saved to separate staging file on plugin install failure, auto-recovered on next successful install
+
+- ✨ **CLI 安装前自动清理** - 安装前自动删除旧版插件目录，清理 `openclaw.json` 中的过期 channel/plugin/allow 配置，避免验证错误  
+  **CLI pre-install cleanup** - Auto-removes old plugin directory and stale config entries before install to prevent validation errors
+
+- ✨ **CLI 429 限流重试** - 插件安装遇到 ClawHub 429 限流时，使用 `Atomics.wait` 同步等待（15s/30s）后重试，最多 3 次  
+  **CLI 429 rate limit retry** - Plugin install retries up to 3 times with synchronous backoff (15s/30s) on ClawHub 429 rate limiting
+
+### 改进 / Improvements
+- ✅ **Prerelease 版本自动识别** - CLI `install` 命令自动检测当前 package 是否为 prerelease 版本（alpha/beta/rc/canary），若是则传递精确版本号给 `openclaw plugins install`，确保安装正确版本  
+  **Prerelease version auto-detection** - CLI auto-detects prerelease versions and passes exact version spec to `openclaw plugins install`
+
+- ✅ **手动配置文档拆分** - 将手动创建机器人和手动配置流程从 README 拆分到独立的 `docs/DINGTALK_MANUAL_SETUP.md`，README 精简为快速入门  
+  **Manual setup docs separation** - Extracted manual bot creation and config steps to `docs/DINGTALK_MANUAL_SETUP.md`, keeping README focused on quickstart
+
+- ✅ **README 全面重写** - 参考飞书 OpenClaw 插件风格重写中英文 README，精简结构，突出核心功能，FAQ 迁移到 `docs/TROUBLESHOOTING.md`  
+  **README overhaul** - Rewrote Chinese and English README following Lark plugin style, streamlined structure with FAQ moved to `docs/TROUBLESHOOTING.md`
+
+- ✅ **GitHub 索引优化** - 新增 `.gitattributes` 排除 `coverage/` 和 `docs/` 的语言统计；优化 `package.json` keywords、description、openclaw channel 元数据；`openclaw.plugin.json` 移除冗余字段  
+  **GitHub index optimization** - Added `.gitattributes` for language detection; optimized `package.json` keywords, description, openclaw channel metadata; cleaned `openclaw.plugin.json`
+
+### 文档 / Documentation
+- 📝 **新增 `docs/DINGTALK_MANUAL_SETUP.md`** - 完整的手动创建机器人和手动配置 OpenClaw 流程文档  
+  **Added `docs/DINGTALK_MANUAL_SETUP.md`** - Complete manual bot creation and OpenClaw configuration guide
+
+- 📝 **新增 `docs/TROUBLESHOOTING.md`** - 常见问题排查文档，涵盖机器人不回复、配置校验、HTTP 401/400、插件安装失败、国内网络等场景  
+  **Added `docs/TROUBLESHOOTING.md`** - Troubleshooting guide covering common issues like bot not responding, config validation, HTTP errors, install failures, and China network issues
+
 ## [0.8.13] - 2026-04-08
 
 ### 修复 / Fixes

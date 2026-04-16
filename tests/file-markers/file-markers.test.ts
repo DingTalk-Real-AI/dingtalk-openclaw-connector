@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { __testables } from '../../test';
+import { __testables } from '../test';
 
 const { extractFileMarkers, isAudioFile } = __testables as any;
 

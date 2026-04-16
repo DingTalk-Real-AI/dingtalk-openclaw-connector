@@ -36,28 +36,28 @@ describe('config & token helpers', () => {
 
   describe('getConfig / isConfigured', () => {
     it('should extract dingtalk-connector config from ClawdbotConfig', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getConfig } = __testables as any;
       const cfg = getConfig(baseCfg);
       expect(cfg).toEqual(baseCfg.channels['dingtalk-connector']);
     });
 
     it('should return empty object when channel not configured', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getConfig } = __testables as any;
       const cfg = getConfig({ channels: {} } as any);
       expect(cfg).toEqual({});
     });
 
     it('should return empty object when cfg is undefined or empty', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getConfig } = __testables as any;
       expect(getConfig(undefined as any)).toEqual({});
       expect(getConfig({} as any)).toEqual({});
     });
 
     it('should consider config valid only when clientId and clientSecret exist', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isConfigured } = __testables as any;
       expect(isConfigured(baseCfg)).toBe(true);
       expect(isConfigured({ channels: {} } as any)).toBe(false);

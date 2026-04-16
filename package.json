@@ -1,9 +1,12 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.13",
-  "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
+  "version": "0.8.16",
+  "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "main": "index.ts",
   "type": "module",
+  "bin": {
+    "dingtalk-connector": "./bin/dingtalk-connector.js"
+  },
   "scripts": {
     "build": "echo 'No build needed - jiti loads TS at runtime'",
     "lint": "echo 'Lint check skipped'",
@@ -26,11 +29,21 @@
     "validate": "npm run lint && npm run type-check && npm run version:check"
   },
   "keywords": [
+    "openclaw",
+    "openclaw-plugin",
     "dingtalk",
+    "dingtalk-bot",
+    "dingtalk-stream",
+    "钉钉",
+    "钉钉机器人",
     "channel",
-    "stream",
     "ai-card",
-    "connector"
+    "ai-agent",
+    "multi-agent",
+    "streaming",
+    "chatbot",
+    "connector",
+    "deap-agent"
   ],
   "author": "DingTalk Real Team",
   "license": "MIT",
@@ -41,6 +54,7 @@
   "homepage": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector#readme",
   "bugs": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues",
   "files": [
+    "bin/",
     "index.ts",
     "src/",
     "docs/*.md",
@@ -58,6 +72,7 @@
     "axios": "1.14.0",
     "dingtalk-stream": "2.1.4",
     "form-data": "^4.0.0",
+    "qrcode-terminal": "^0.12.0",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
@@ -71,6 +86,30 @@
       "optional": true
     }
   },
+  "openclaw": {
+    "channels": [
+      "dingtalk-connector"
+    ],
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "dingtalk-connector",
+      "label": "DingTalk",
+      "selectionLabel": "DingTalk (钉钉)",
+      "blurb": "Official DingTalk plugin with AI Card streaming & multi-agent routing | 钉钉官方插件，支持 AI Card 流式响应与多 Agent 路由",
+      "aliases": [
+        "dingtalk",
+        "钉钉"
+      ],
+      "order": 33,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@dingtalk-real-ai/dingtalk-connector"
+    },
+    "installDependencies": true
+  },
   "devDependencies": {
     "@types/node": "^20.19.37",
     "@vitest/coverage-v8": "^2.0.0",
@@ -78,14 +117,5 @@
     "openclaw": "^2026.3.23-2",
     "typescript": "^5.6.0",
     "vitest": "^2.1.9"
-  },
-  "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ],
-    "channels": [
-      "dingtalk-connector"
-    ],
-    "installDependencies": true
   }
 }

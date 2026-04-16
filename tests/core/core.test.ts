@@ -52,7 +52,7 @@ describe('core functionality', () => {
 
   describe('normalizeSlashCommand', () => {
     it('should return /new for new session commands', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { normalizeSlashCommand } = __testables as any;
 
       expect(normalizeSlashCommand('/new')).toBe('/new');
@@ -63,7 +63,7 @@ describe('core functionality', () => {
     });
 
     it('should return original text for non-command text', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { normalizeSlashCommand } = __testables as any;
 
       expect(normalizeSlashCommand('/help')).toBe('/help');
@@ -74,7 +74,7 @@ describe('core functionality', () => {
 
   describe('message deduplication', () => {
     it('should track processed messages', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isMessageProcessed, markMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -88,7 +88,7 @@ describe('core functionality', () => {
     });
 
     it('should handle empty message ID', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isMessageProcessed, markMessageProcessed } = __testables as any;
 
       expect(isMessageProcessed('')).toBe(false);
@@ -99,7 +99,7 @@ describe('core functionality', () => {
 
   describe('checkAndMarkDingtalkMessage', () => {
     it('should return false and mark both IDs on first call', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, isMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -113,7 +113,7 @@ describe('core functionality', () => {
     });
 
     it('should return true when protocol messageId is already processed (协议层重复)', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, markMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -126,7 +126,7 @@ describe('core functionality', () => {
     });
 
     it('should return true when business msgId is already processed (钉钉服务端重发)', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, markMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -140,7 +140,7 @@ describe('core functionality', () => {
     });
 
     it('should work with only protocolMessageId provided', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, isMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -153,7 +153,7 @@ describe('core functionality', () => {
     });
 
     it('should work with only businessMsgId provided', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, isMessageProcessed, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -166,7 +166,7 @@ describe('core functionality', () => {
     });
 
     it('should return false when both IDs are undefined', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { checkAndMarkDingtalkMessage, cleanupProcessedMessages } = __testables as any;
 
       cleanupProcessedMessages();
@@ -178,7 +178,7 @@ describe('core functionality', () => {
 
   describe('getConfig', () => {
     it('should extract config from ClawdbotConfig', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getConfig } = __testables as any;
 
       const cfg = {
@@ -197,7 +197,7 @@ describe('core functionality', () => {
     });
 
     it('should handle missing config', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getConfig } = __testables as any;
 
       const result = getConfig({});
@@ -208,7 +208,7 @@ describe('core functionality', () => {
 
   describe('isConfigured', () => {
     it('should return true when configured', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isConfigured } = __testables as any;
 
       const cfg = {
@@ -224,7 +224,7 @@ describe('core functionality', () => {
     });
 
     it('should return false when not configured', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isConfigured } = __testables as any;
 
       expect(isConfigured({})).toBe(false);
@@ -235,7 +235,7 @@ describe('core functionality', () => {
 
   describe('getAccessToken', () => {
     it('should get access token successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getAccessToken } = __testables as any;
 
       mockAxiosPost.mockResolvedValue({
@@ -254,7 +254,7 @@ describe('core functionality', () => {
     it('should throw on API error', async () => {
       // getAccessToken 在模块级别缓存 token，这里需要重置模块避免前一个用例的缓存影响断言
       vi.resetModules();
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getAccessToken } = __testables as any;
 
       mockAxiosPost.mockRejectedValue(new Error('Invalid credentials'));
@@ -272,7 +272,7 @@ describe('core functionality', () => {
     });
 
     it('should get OAPI access token successfully', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getOapiAccessToken } = __testables as any;
 
       mockAxiosGet.mockResolvedValue({
@@ -289,7 +289,7 @@ describe('core functionality', () => {
     });
 
     it('should return null on error', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getOapiAccessToken } = __testables as any;
 
       mockAxiosGet.mockResolvedValue({
@@ -306,7 +306,7 @@ describe('core functionality', () => {
     });
 
     it('should return null on network error', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getOapiAccessToken } = __testables as any;
 
       mockAxiosGet.mockRejectedValue(new Error('Network error'));
@@ -320,7 +320,7 @@ describe('core functionality', () => {
 
   describe('toLocalPath', () => {
     it('should convert URL to local path', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { toLocalPath } = __testables as any;
 
       const result = toLocalPath('https://example.com/image.png');
@@ -328,7 +328,7 @@ describe('core functionality', () => {
     });
 
     it('should handle local paths', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { toLocalPath } = __testables as any;
 
       const result = toLocalPath('/tmp/file.pdf');
@@ -338,7 +338,7 @@ describe('core functionality', () => {
 
   describe('buildMediaSystemPrompt', () => {
     it('should return media system prompt', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { buildMediaSystemPrompt } = __testables as any;
 
       const result = buildMediaSystemPrompt();
@@ -351,7 +351,7 @@ describe('core functionality', () => {
 
   describe('isAudioFile', () => {
     it('should detect audio file types', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { isAudioFile } = __testables as any;
 
       expect(isAudioFile('mp3')).toBe(true);
@@ -365,7 +365,7 @@ describe('core functionality', () => {
 
   describe('getFfprobePath', () => {
     it('should return ffprobe path', async () => {
-      const { __testables } = await import('../../test');
+      const { __testables } = await import('../test');
       const { getFfprobePath } = __testables as any;
 
       const result = getFfprobePath();

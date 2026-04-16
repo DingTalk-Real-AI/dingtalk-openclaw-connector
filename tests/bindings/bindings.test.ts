@@ -25,7 +25,7 @@ describe('resolveAgentIdByBindings', () => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
     vi.resetModules();
-    const { __testables } = await import('../../test');
+    const { __testables } = await import('../test');
     resolveAgentIdByBindings = (__testables as any).resolveAgentIdByBindings;
     (__testables as any).setRuntimeForTest({});
   });

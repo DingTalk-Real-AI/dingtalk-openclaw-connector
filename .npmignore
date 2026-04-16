@@ -61,6 +61,5 @@ yarn-error.log*
 Thumbs.db
 
 # Test files
-test.ts
 vitest.config.ts
 .gitignore
