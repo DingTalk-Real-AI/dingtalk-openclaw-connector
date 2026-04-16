@@ -1,5 +1,13 @@
 {
   "id": "dingtalk-connector",
+<<<<<<< HEAD
+=======
+  "name": "DingTalk Channel",
+  "version": "0.8.13",
+  "description": "DingTalk (钉钉) messaging channel via Stream mode with AI Card streaming",
+  "author": "DingTalk Real Team",
+  "main": "index.ts",
+>>>>>>> cd586b2223179c795f7e732d3a7fe1bd8ffcf1ce
   "channels": [
     "dingtalk-connector"
   ],

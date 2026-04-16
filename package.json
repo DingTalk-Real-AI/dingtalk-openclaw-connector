@@ -1,7 +1,12 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
+<<<<<<< HEAD
   "version": "0.8.15",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
+=======
+  "version": "0.8.13",
+  "description": "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
+>>>>>>> cd586b2223179c795f7e732d3a7fe1bd8ffcf1ce
   "main": "index.ts",
   "type": "module",
   "bin": {
@@ -54,7 +59,10 @@
   "homepage": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector#readme",
   "bugs": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues",
   "files": [
+<<<<<<< HEAD
     "bin/",
+=======
+>>>>>>> cd586b2223179c795f7e732d3a7fe1bd8ffcf1ce
     "index.ts",
     "src/",
     "docs/*.md",

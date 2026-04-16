@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<<<<<<< HEAD
 ## [0.8.15] - 2026-04-15
 
 ### 新增 / Added
@@ -46,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 📝 **新增 `docs/TROUBLESHOOTING.md`** - 常见问题排查文档，涵盖机器人不回复、配置校验、HTTP 401/400、插件安装失败、国内网络等场景  
   **Added `docs/TROUBLESHOOTING.md`** - Troubleshooting guide covering common issues like bot not responding, config validation, HTTP errors, install failures, and China network issues
 
+=======
+>>>>>>> cd586b2223179c795f7e732d3a7fe1bd8ffcf1ce
 ## [0.8.13] - 2026-04-08
 
 ### 修复 / Fixes
