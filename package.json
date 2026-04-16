@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.15-beta.1",
+  "version": "0.8.15-beta.2",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "main": "index.ts",
   "type": "module",
@@ -87,6 +87,9 @@
     }
   },
   "openclaw": {
+    "channels": [
+      "dingtalk-connector"
+    ],
     "extensions": [
       "./index.ts"
     ],
