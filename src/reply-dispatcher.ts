@@ -96,8 +96,10 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   let asyncModeFullResponse = "";
   
   // ✅ 节流控制：避免频繁调用钉钉 API 导致 QPS 限流
+  // 全局令牌桶限流器已在 streamAICard 内部实现（card.ts），此处的 updateInterval
+  // 作为单实例级别的前置过滤，减少不必要的 streamAICard 调用
   let lastUpdateTime = 0;
-  const updateInterval = 500; // 最小更新间隔 500ms（钉钉 QPS 限制：40 次/秒，保守起见设为 0.5 秒）
+  const updateInterval = 800; // 最小更新间隔 800ms（配合 card.ts 全局限流器，降低单实例发送频率）
 
   // ✅ 错误兜底：防止重复发送错误消息
   const deliveredErrorTypes = new Set<string>();
@@ -460,6 +462,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           if (currentCardTarget) {
             const now = Date.now();
             if (now - lastUpdateTime >= updateInterval) {
+              // ✅ 乐观更新：防止并发回调在 await 期间通过节流检查
+              lastUpdateTime = now;
               try {
                 await streamAICard(
                   currentCardTarget as any,
@@ -468,7 +472,6 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                   account.config as DingtalkConfig,
                   log
                 );
-                lastUpdateTime = now;
                 log.info(`[DingTalk][deliver] ✅ block 更新到 AI Card 成功`);
               } catch (streamErr: any) {
                 log.error(`[DingTalk][deliver] ❌ block 更新 AI Card 失败：${streamErr.message}`);
@@ -593,6 +596,10 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
             
             log.debug(`[DingTalk][onPartialReply] 更新 AI Card，显示文本长度=${displayContent.length}`);
             
+            // ✅ 乐观更新：在发起 HTTP 请求前立即更新 lastUpdateTime，
+            // 防止并发的 onPartialReply 回调在 await 期间通过节流检查，
+            // 导致多个请求同时打到同一张卡片触发服务端 403 并发保护
+            lastUpdateTime = now;
             try {
               await streamAICard(
                 currentCardTarget as any,
@@ -601,20 +608,12 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 account.config as DingtalkConfig,
                 log
               );
-              lastUpdateTime = now;
               log.debug(`[DingTalk][onPartialReply] ✅ AI Card 更新成功`);
             } catch (err: any) {
-              // 安全检查：确保 code 存在且为字符串
-              const errorCode = err.response?.data?.code;
-              if (err.response?.status === 403 && typeof errorCode === 'string' && errorCode.includes('QpsLimit')) {
-                // QPS 限流，跳过本次更新；同步更新节流时间，防止立即重试再次触发限流
-                lastUpdateTime = now;
-                log.warn(`[DingTalk][AICard] QPS 限流，跳过本次更新`);
-              } else {
-                log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-                // ✅ 发送兜底错误消息，但不抛出异常，避免中断后续处理
-                await sendFallbackErrorMessage('sendMessage', err.message);
-              }
+              // QPS 限流已在 streamAICard 内部处理（自动退避+重试），
+              // 到达此处说明重试也失败了，记录错误但不中断流式更新
+              log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
+              await sendFallbackErrorMessage('sendMessage', err.message);
             }
           } else {
             log.debug(`[DingTalk][onPartialReply] 节流控制，跳过本次更新（距离上次更新 ${now - lastUpdateTime}ms）`);

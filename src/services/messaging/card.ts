@@ -11,6 +11,109 @@ import { dingtalkHttp } from "../../utils/http-client.ts";
 
 const AI_CARD_TEMPLATE_ID = "02fcf2f4-5e02-4a85-b672-46d1f715543e.schema";
 
+/**
+ * 钉钉卡片 API 的最大 QPS（官方限制约 40 次/秒）。
+ * 保守取 20，为 createAICardForTarget / finishAICard 等非流式调用留余量。
+ */
+const CARD_API_MAX_QPS = 20;
+
+/** QPS 限流退避时长（ms），遇到 403 QpsLimit 后暂停发送 */
+const QPS_BACKOFF_DURATION_MS = 2_000;
+
+// ============ 全局令牌桶限流器 ============
+
+/**
+ * 全局令牌桶限流器，所有 streamAICard 调用共享。
+ *
+ * 解决的问题：每个 reply-dispatcher 实例有独立的 500ms 节流间隔，
+ * 但多个会话并发时总 QPS 会叠加超过钉钉 API 限制（40 次/秒），
+ * 导致频繁触发 403 QpsLimit 错误。
+ *
+ * 工作原理：
+ * - 令牌桶以 CARD_API_MAX_QPS 的速率补充令牌
+ * - 每次 API 调用前消耗一个令牌，无令牌时等待
+ * - 遇到 QpsLimit 错误时触发退避，暂停所有调用
+ */
+const cardRateLimiter = {
+  /** 当前可用令牌数 */
+  tokens: CARD_API_MAX_QPS,
+  /** 上次令牌补充时间 */
+  lastRefillTime: Date.now(),
+  /** QPS 退避截止时间（遇到限流错误后设置） */
+  backoffUntil: 0,
+
+  /**
+   * 补充令牌：按时间流逝恢复令牌数
+   */
+  refill(): void {
+    const now = Date.now();
+    const elapsedSeconds = (now - this.lastRefillTime) / 1000;
+    if (elapsedSeconds > 0) {
+      this.tokens = Math.min(
+        CARD_API_MAX_QPS,
+        this.tokens + elapsedSeconds * CARD_API_MAX_QPS,
+      );
+      this.lastRefillTime = now;
+    }
+  },
+
+  /**
+   * 等待直到有可用令牌，或退避期结束
+   * @returns 等待的毫秒数（0 表示无需等待）
+   */
+  async waitForToken(): Promise<number> {
+    let totalWaitMs = 0;
+
+    // 如果处于退避期，先等待退避结束
+    const now = Date.now();
+    if (now < this.backoffUntil) {
+      const backoffWaitMs = this.backoffUntil - now;
+      await sleep(backoffWaitMs);
+      totalWaitMs += backoffWaitMs;
+    }
+
+    this.refill();
+
+    // 如果没有可用令牌，等待直到有令牌
+    if (this.tokens < 1) {
+      const waitMs = Math.ceil((1 - this.tokens) / CARD_API_MAX_QPS * 1000);
+      await sleep(waitMs);
+      totalWaitMs += waitMs;
+      this.refill();
+    }
+
+    this.tokens -= 1;
+    return totalWaitMs;
+  },
+
+  /**
+   * 触发退避：遇到 QpsLimit 错误时调用
+   */
+  triggerBackoff(): void {
+    this.backoffUntil = Date.now() + QPS_BACKOFF_DURATION_MS;
+    // 清空令牌，退避期结束后重新补充
+    this.tokens = 0;
+    this.lastRefillTime = Date.now() + QPS_BACKOFF_DURATION_MS;
+  },
+};
+
+/** 简单的 sleep 工具函数 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 判断错误是否为钉钉 QPS 限流错误
+ */
+function isQpsLimitError(err: any): boolean {
+  const errorCode = err?.response?.data?.code;
+  return (
+    err?.response?.status === 403 &&
+    typeof errorCode === "string" &&
+    errorCode.includes("QpsLimit")
+  );
+}
+
 /** AI Card 状态 */
 const AICardStatus = {
   PROCESSING: "1",
@@ -204,6 +307,9 @@ async function ensureValidToken(
 
 /**
  * 流式更新 AI Card 内容
+ *
+ * 内置全局令牌桶限流：所有会话共享同一速率限制，
+ * 遇到 QpsLimit 错误时自动退避 2 秒后重试一次。
  */
 export async function streamAICard(
   card: AICardInstance,
@@ -212,11 +318,22 @@ export async function streamAICard(
   config?: DingtalkConfig,
   log?: any,
 ): Promise<void> {
+  // 防御 null card（createAICardForTarget 失败返回 null，调用方可能用 as any 绕过类型检查）
+  if (!card) {
+    log?.warn?.(`[DingTalk][AICard] streamAICard 收到 null card，跳过更新`);
+    return;
+  }
   // 确保 token 有效
   if (config) {
     await ensureValidToken(card, config);
   }
   if (!card.inputingStarted) {
+    // 等待全局限流令牌（INPUTING 状态切换也消耗 QPS）
+    const inputingWaitMs = await cardRateLimiter.waitForToken();
+    if (inputingWaitMs > 0) {
+      log?.debug?.(`[DingTalk][AICard] INPUTING 等待限流令牌 ${inputingWaitMs}ms`);
+    }
+
     const statusBody = {
       outTrackId: card.cardInstanceId,
       cardData: {
@@ -246,6 +363,10 @@ export async function streamAICard(
         `[DingTalk][AICard] INPUTING 响应：status=${statusResp.status}`,
       );
     } catch (err: any) {
+      if (isQpsLimitError(err)) {
+        cardRateLimiter.triggerBackoff();
+        log?.warn?.(`[DingTalk][AICard] INPUTING 触发 QPS 限流，退避 ${QPS_BACKOFF_DURATION_MS}ms`);
+      }
       log?.error?.(`[DingTalk][AICard] INPUTING 切换失败：${err.message}`);
       throw err;
     }
@@ -262,6 +383,12 @@ export async function streamAICard(
     isFinalize: finished,
     isError: false,
   };
+
+  // 等待全局限流令牌
+  const streamWaitMs = await cardRateLimiter.waitForToken();
+  if (streamWaitMs > 0) {
+    log?.debug?.(`[DingTalk][AICard] streaming 等待限流令牌 ${streamWaitMs}ms`);
+  }
 
   log?.info?.(
     `[DingTalk][AICard] PUT /v1.0/card/streaming contentLen=${content.length} isFinalize=${finished}`,
@@ -281,6 +408,31 @@ export async function streamAICard(
       `[DingTalk][AICard] streaming 响应：status=${streamResp.status}`,
     );
   } catch (err: any) {
+    if (isQpsLimitError(err)) {
+      // 触发退避后重试一次，确保 finalize 等关键更新不丢失
+      cardRateLimiter.triggerBackoff();
+      log?.warn?.(`[DingTalk][AICard] streaming 触发 QPS 限流，退避 ${QPS_BACKOFF_DURATION_MS}ms 后重试`);
+      await cardRateLimiter.waitForToken();
+      try {
+        // 重试时更新 guid 避免重复
+        body.guid = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await dingtalkHttp.put(
+          `${DINGTALK_API}/v1.0/card/streaming`,
+          body,
+          {
+            headers: {
+              "x-acs-dingtalk-access-token": card.accessToken,
+              "Content-Type": "application/json",
+            },
+          },
+        );
+        log?.info?.(`[DingTalk][AICard] streaming 重试成功`);
+        return;
+      } catch (retryErr: any) {
+        log?.error?.(`[DingTalk][AICard] streaming 重试失败：${retryErr.message}`);
+        throw retryErr;
+      }
+    }
     throw err;
   }
 }
