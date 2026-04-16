@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.15",
+  "version": "0.8.16",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "main": "index.ts",
   "type": "module",
@@ -87,6 +87,9 @@
     }
   },
   "openclaw": {
+    "channels": [
+      "dingtalk-connector"
+    ],
     "extensions": [
       "./index.ts"
     ],
@@ -95,7 +98,10 @@
       "label": "DingTalk",
       "selectionLabel": "DingTalk (钉钉)",
       "blurb": "Official DingTalk plugin with AI Card streaming & multi-agent routing | 钉钉官方插件，支持 AI Card 流式响应与多 Agent 路由",
-      "aliases": ["dingtalk", "钉钉"],
+      "aliases": [
+        "dingtalk",
+        "钉钉"
+      ],
       "order": 33,
       "quickstartAllowFrom": true
     },

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.16] - 2026-04-16
+
+### 修复 / Fixes
+- 🐛 **AI Card 流式更新 QPS 限流** - 新增全局令牌桶限流器（`cardRateLimiter`），所有会话共享 20 QPS 速率限制，避免多会话并发时总 QPS 叠加超过钉钉 API 限制；遇到 403 QpsLimit 自动退避 2s 后重试  
+  **AI Card streaming QPS rate limiting** - Added global token bucket rate limiter shared across all sessions (20 QPS cap) with automatic 2s backoff and retry on 403 QpsLimit
+
+- 🐛 **streamAICard null card 崩溃** - 修复 `createAICardForTarget` 返回 `null` 后调用方通过 `as any` 绕过类型检查导致 `Cannot read properties of null` 崩溃，添加 null 守卫  
+  **streamAICard null card crash** - Fixed crash when `createAICardForTarget` returns `null` and callers bypass type checking; added null guard
+
+- 🐛 **插件配置格式兼容性** - 修复 `package.json` 中缺少 `openclaw.channels` 数组导致旧版 OpenClaw 框架安装失败的问题，同时保留新版 `openclaw.channel` 对象格式  
+  **Plugin config format compatibility** - Fixed missing `openclaw.channels` array in `package.json` that caused installation failure on older OpenClaw framework versions; both old and new config formats are now present
+
+### 改进 / Improvements
+- ✅ **单实例节流间隔优化** - `reply-dispatcher.ts` 的 `updateInterval` 从 500ms 增大到 800ms，配合全局限流器降低单实例发送频率  
+  **Per-instance throttle interval** - Increased `updateInterval` from 500ms to 800ms to complement global rate limiter
+
 ## [0.8.15] - 2026-04-15
 
 ### 新增 / Added
