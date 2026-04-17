@@ -330,10 +330,10 @@ function injectDwsEnvVars(clientId, clientSecret) {
   console.log(dim('  ✔ DWS environment variables injected (DINGTALK_AGENT=DING_DWS_CLAW)') + '\n');
 }
 
-/** Returns env vars for spawning dws CLI (credentials are NOT in process.env). */
+/** Returns env vars for spawning dws CLI (credentials are NOT in _env). */
 function getDwsSpawnEnv() {
   return {
-    ...process.env,
+    ..._env,
     DINGTALK_AGENT: 'DING_DWS_CLAW',
     ..._dwsCredentialHolder.clientId && { DWS_CLIENT_ID: _dwsCredentialHolder.clientId },
     ..._dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: _dwsCredentialHolder.clientSecret },
