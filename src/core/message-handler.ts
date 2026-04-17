@@ -1391,7 +1391,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     // ✅ 使用 sessionContext.sessionPeerId 构建 sessionKey，确保会话隔离配置生效
     // ✅ 关键修复：传递 dmScope 参数，让 SDK 使用配置文件中的 session.dmScope 设置
     const dmScope = cfg.session?.dmScope || 'per-channel-peer';
-    log?.info?.(`🔍 构建 sessionKey 前的参数: agentId=${matchedAgentId}, channel=dingtalk-connector, accountId=${accountId}, chatType=${sessionContext.chatType}, sessionPeerId=${sessionContext.sessionPeerId}, dmScope=${dmScope}`);
+    log?.debug?.(`构建 sessionKey: agentId=${matchedAgentId}, chatType=${sessionContext.chatType}, dmScope=${dmScope}`);
     const sessionKey = core.channel.routing.buildAgentSessionKey({
       agentId: matchedAgentId,
       channel: 'dingtalk-connector',  // ✅ 使用 'dingtalk-connector' 而不是 'dingtalk'
@@ -1480,8 +1480,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
 
     const { queuedFinal, counts } = dispatchResult;
 
-    log.info?.(`[DingTalk][dispatch] 🔍 dispatchReplyFromConfig 返回结果: queuedFinal=${queuedFinal}, counts=${JSON.stringify(counts)}`);
-    log.info?.(`[DingTalk][dispatch] 🔍 dispatchResult 完整内容: ${JSON.stringify(dispatchResult, null, 2)}`);
+    log.info?.(`[DingTalk][dispatch] dispatchReplyFromConfig 完成: queuedFinal=${queuedFinal}, counts=${JSON.stringify(counts)}`);
 
     // ===== 异步模式：主动推送最终结果 =====
     if (asyncMode) {

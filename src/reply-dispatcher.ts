@@ -342,7 +342,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       }
 
       log.info(`[DingTalk][closeStreaming] 准备调用 finishAICard，文本长度=${finalText.length}`);
-      log.info(`[DingTalk][closeStreaming] 🔍 最终发送到钉钉的内容 (前1000字符): ${finalText.slice(0, 1000)}`);
+      log.debug(`[DingTalk][closeStreaming] 最终发送内容长度=${finalText.length}`);
       await finishAICard(
         cardSnapshot as any,
         finalText,
@@ -397,9 +397,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         let text = payload.text ?? "";
         
         log.info(`[DingTalk][deliver] 被调用：kind=${info?.kind}, textLength=${text.length}, hasText=${Boolean(text.trim())}`);
-        log.info(`[DingTalk][deliver] 🔍 payload 完整内容: ${JSON.stringify(payload, null, 2)}`);
-        log.info(`[DingTalk][deliver] 🔍 info 完整内容: ${JSON.stringify(info, null, 2)}`);
-        log.info(`[DingTalk][deliver] 🔍 text 原始内容 (前500字符): ${text.slice(0, 500)}`);
+        log.debug(`[DingTalk][deliver] payload keys=${Object.keys(payload).join(',')}, info.kind=${info?.kind}`);
         
         // ✅ 在 final 响应时，先处理裸露的文件路径
         if (info?.kind === "final" && text.trim()) {
@@ -510,7 +508,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 或者非流式模式：使用普通消息发送
         if (info?.kind === "final") {
           log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}`);
-          log.info(`[DingTalk][deliver] 🔍 非流式发送内容 (前1000字符): ${text.slice(0, 1000)}`);
+          log.debug(`[DingTalk][deliver] 非流式发送，文本长度=${text.length}`);
           try {
             for (const chunk of core.channel.text.chunkTextWithMode(
               text,
@@ -541,9 +539,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         }
       },
       onError: async (error, info) => {
-        log.error(`[DingTalk][onError] 🔍 ${info.kind} reply failed: ${String(error)}`);
-        log.error(`[DingTalk][onError] 🔍 error 详情: ${JSON.stringify(error, Object.getOwnPropertyNames(error || {}), 2)}`);
-        log.error(`[DingTalk][onError] 🔍 info 详情: ${JSON.stringify(info, null, 2)}`);
+        log.error(`[DingTalk][onError] ${info.kind} reply failed: ${String(error)}`);
         params.runtime.error?.(
           `dingtalk[${account.accountId}] ${info.kind} reply failed: ${String(error)}`
         );
@@ -571,7 +567,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       ...(streamingEnabled && {
         onPartialReply: async (payload: ReplyPayload) => {
         log.info(`[DingTalk][onPartialReply] 被调用，payload.text=${payload.text ? payload.text.length : 'null'}`);
-        log.info(`[DingTalk][onPartialReply] 🔍 partial payload 内容 (前500字符): ${payload.text?.slice(0, 500) ?? 'null'}`);
+        log.debug(`[DingTalk][onPartialReply] textLength=${payload.text?.length ?? 0}`);
         if (!payload.text) {
           log.debug(`[DingTalk][onPartialReply] 空文本，跳过`);
           return;

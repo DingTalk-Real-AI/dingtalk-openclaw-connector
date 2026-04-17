@@ -304,15 +304,31 @@ function installPlugin() {
 // ── DWS environment variables ────────────────────────────────────
 // dws CLI requires DINGTALK_AGENT, DWS_CLIENT_ID, and DWS_CLIENT_SECRET
 // to identify the calling context and the DingTalk app credentials.
+// Only DINGTALK_AGENT (non-sensitive) is written to the global env.
+// Credentials are stored in a private holder and injected locally when
+// spawning dws CLI, preventing child processes from reading the secret
+// via `env` / `printenv` commands.
+const _dwsCredentialHolder = { clientId: '', clientSecret: '' };
+
 function injectDwsEnvVars(clientId, clientSecret) {
   _env.DINGTALK_AGENT = 'openclaw';
   if (clientId) {
-    _env.DWS_CLIENT_ID = String(clientId);
+    _dwsCredentialHolder.clientId = String(clientId);
   }
   if (clientSecret) {
-    _env.DWS_CLIENT_SECRET = String(clientSecret);
+    _dwsCredentialHolder.clientSecret = String(clientSecret);
   }
   console.log(dim('  ✔ DWS environment variables injected (DINGTALK_AGENT=openclaw)') + '\n');
+}
+
+/** Returns env vars for spawning dws CLI (credentials are NOT in process.env). */
+function getDwsSpawnEnv() {
+  return {
+    ...process.env,
+    DINGTALK_AGENT: 'openclaw',
+    ..._dwsCredentialHolder.clientId && { DWS_CLIENT_ID: _dwsCredentialHolder.clientId },
+    ..._dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: _dwsCredentialHolder.clientSecret },
+  };
 }
 
 // ── dws CLI install ─────────────────────────────────────────────

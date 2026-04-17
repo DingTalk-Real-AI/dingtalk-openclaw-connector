@@ -33,6 +33,29 @@ import { monitorDingtalkProvider } from "./core/provider.ts";
 import { sendTextToDingTalk, sendMediaToDingTalk } from "./services/messaging/index.ts";
 import type { ResolvedDingtalkAccount, DingtalkConfig } from "./types/index.ts";
 
+/**
+ * Private holder for DWS credentials. Stored in module scope instead of
+ * process.env so that child processes (e.g. Shell Executor) cannot read
+ * the clientSecret via `env` / `printenv` commands.
+ */
+const dwsCredentialHolder: { clientId: string; clientSecret: string } = {
+  clientId: "",
+  clientSecret: "",
+};
+
+/**
+ * Returns environment variables for spawning dws CLI.
+ * Credentials are injected locally — they are NOT in process.env.
+ */
+export function getDwsSpawnEnv(): Record<string, string> {
+  return {
+    ...process.env as Record<string, string>,
+    DINGTALK_AGENT: "openclaw",
+    ...(dwsCredentialHolder.clientId && { DWS_CLIENT_ID: dwsCredentialHolder.clientId }),
+    ...(dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: dwsCredentialHolder.clientSecret }),
+  };
+}
+
 const meta = {
   id: "dingtalk-connector",
   label: "DingTalk",
@@ -440,16 +463,16 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
         }
       }
 
-      // Inject DWS environment variables so that openclaw Shell Executor
-      // passes them to dws CLI when agent generates shell commands.
-      // DINGTALK_AGENT identifies the calling context (openclaw connector).
-      // DWS_CLIENT_ID / DWS_CLIENT_SECRET provide the DingTalk app credentials.
+      // Set DINGTALK_AGENT to identify the calling context (non-sensitive).
+      // DWS credentials are stored in a private module-level holder instead of
+      // process.env to prevent child processes (e.g. Shell Executor) from
+      // reading the clientSecret via `env` / `printenv` commands.
       process.env.DINGTALK_AGENT = "openclaw";
       if (account.clientId) {
-        process.env.DWS_CLIENT_ID = String(account.clientId);
+        dwsCredentialHolder.clientId = String(account.clientId);
       }
       if (account.clientSecret) {
-        process.env.DWS_CLIENT_SECRET = String(account.clientSecret);
+        dwsCredentialHolder.clientSecret = String(account.clientSecret);
       }
 
       ctx.setStatus({ accountId: ctx.accountId, port: null });
