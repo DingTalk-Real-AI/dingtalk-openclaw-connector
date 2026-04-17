@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.16",
+  "version": "0.8.17-beta.0",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "main": "index.ts",
   "type": "module",
@@ -26,7 +26,9 @@
     "clean": "rm -rf node_modules package-lock.json",
     "install:fresh": "npm run clean && npm install",
     "dev": "echo 'Run: openclaw start'",
-    "validate": "npm run lint && npm run type-check && npm run version:check"
+    "validate": "npm run lint && npm run type-check && npm run version:check",
+    "prepack": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p._devDependencies=p.devDependencies;delete p.devDependencies;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "postpack": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p._devDependencies){p.devDependencies=p._devDependencies;delete p._devDependencies;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')}\""
   },
   "keywords": [
     "openclaw",
