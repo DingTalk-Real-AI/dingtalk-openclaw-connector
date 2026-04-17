@@ -346,7 +346,7 @@ Options:
     console.log(cyan('Please restart the gateway to apply changes:') + '\n');
     console.log(cyan('  openclaw gateway restart') + '\n');
     // Note: the ~3 min warm-up is an OpenClaw gateway behaviour, not plugin-specific.
-    console.log(green('⏳ After restart, allow ~3 minutes for the gateway to fully initialize — then you can chat with your bot!') + '\n');
+    console.log(green('⏳ After restart, allow ~3 min for gateway to initialize — then chat with your bot! (网关初始化约3分钟，完成即可对话)') + '\n');
     return;
   }
 
@@ -370,7 +370,7 @@ Options:
       console.log(cyan('Please restart the gateway to apply changes:') + '\n');
       console.log(cyan('  openclaw gateway restart') + '\n');
       // Note: the ~3 min warm-up is an OpenClaw gateway behaviour, not plugin-specific.
-      console.log(green('⏳ After restart, allow ~3 minutes for the gateway to fully initialize — then you can chat with your bot!') + '\n');
+      console.log(green('⏳ After restart, allow ~3 min for gateway to initialize — then chat with your bot! (网关初始化约3分钟，完成即可对话)') + '\n');
     }
   } catch (err) {
     console.error('\n' + red('❌ Authorization failed: ') + err.message + '\n');
