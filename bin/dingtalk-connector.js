@@ -319,21 +319,21 @@ function installPlugin() {
 const _dwsCredentialHolder = { clientId: '', clientSecret: '' };
 
 function injectDwsEnvVars(clientId, clientSecret) {
-  _env.DINGTALK_AGENT = 'openclaw';
+  _env.DINGTALK_AGENT = 'DING_DWS_CLAW';
   if (clientId) {
     _dwsCredentialHolder.clientId = String(clientId);
   }
   if (clientSecret) {
     _dwsCredentialHolder.clientSecret = String(clientSecret);
   }
-  console.log(dim('  ✔ DWS environment variables injected (DINGTALK_AGENT=openclaw)') + '\n');
+  console.log(dim('  ✔ DWS environment variables injected (DINGTALK_AGENT=DING_DWS_CLAW)') + '\n');
 }
 
 /** Returns env vars for spawning dws CLI (credentials are NOT in process.env). */
 function getDwsSpawnEnv() {
   return {
     ...process.env,
-    DINGTALK_AGENT: 'openclaw',
+    DINGTALK_AGENT: 'DING_DWS_CLAW',
     ..._dwsCredentialHolder.clientId && { DWS_CLIENT_ID: _dwsCredentialHolder.clientId },
     ..._dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: _dwsCredentialHolder.clientSecret },
   };

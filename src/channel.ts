@@ -53,7 +53,7 @@ const dwsCredentialHolder: { clientId: string; clientSecret: string } = {
 export function getDwsSpawnEnv(): Record<string, string> {
   return {
     ...process.env as Record<string, string>,
-    DINGTALK_AGENT: "openclaw",
+    DINGTALK_AGENT: "DING_DWS_CLAW",
     ...(dwsCredentialHolder.clientId && { DWS_CLIENT_ID: dwsCredentialHolder.clientId }),
     ...(dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: dwsCredentialHolder.clientSecret }),
   };
@@ -470,7 +470,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       // DWS credentials are stored in a private module-level holder instead of
       // process.env to prevent child processes (e.g. Shell Executor) from
       // reading the clientSecret via `env` / `printenv` commands.
-      process.env.DINGTALK_AGENT = "openclaw";
+      process.env.DINGTALK_AGENT = "DING_DWS_CLAW";
       if (account.clientId) {
         dwsCredentialHolder.clientId = String(account.clientId);
       }
@@ -480,7 +480,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
 
       ctx.setStatus({ accountId: ctx.accountId, port: null });
       ctx.log?.info(
-        `starting dingtalk-connector[${ctx.accountId}] (mode: stream, DINGTALK_AGENT=openclaw, DWS_CLIENT_ID=${account.clientId ? String(account.clientId).substring(0, 8) + '...' : 'N/A'})`,
+        `starting dingtalk-connector[${ctx.accountId}] (mode: stream, DINGTALK_AGENT=DING_DWS_CLAW, DWS_CLIENT_ID=${account.clientId ? String(account.clientId).substring(0, 8) + '...' : 'N/A'})`,
       );
 
       // 把 ctx.setStatus 包装成 onStatusChange 回调，传入连接层，

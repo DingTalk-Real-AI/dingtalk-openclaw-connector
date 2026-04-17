@@ -384,7 +384,7 @@ export async function monitorSingleAccount(
         const socketState = client.socket?.readyState;
         const timeSinceConnection = Date.now() - connectionEstablishedTime;
         logger.debug(
-          `🔍 心跳检测：socket 状态=${socketState}, elapsed=${Math.round(elapsed / 1000)}s, 连接已建立=${Math.round(timeSinceConnection / 1000)}s`,
+          `心跳检测：socket 状态=${socketState}, elapsed=${Math.round(elapsed / 1000)}s, 连接已建立=${Math.round(timeSinceConnection / 1000)}s`,
         );
 
         // 给新建立的连接 15 秒宽限期，避免在连接建立初期就触发重连
