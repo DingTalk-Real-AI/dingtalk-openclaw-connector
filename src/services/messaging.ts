@@ -698,8 +698,8 @@ export async function sendMediaToDingTalk(params: {
 
     if (!uploadResult) {
       // 上传失败，发送文本消息提示
-      log.error("上传失败，返回错误提示");
-      return sendProactive(config, targetParam, "⚠️ 媒体文件上传失败", {
+      log.error("上传失败，返回错误提示", { mediaUrl, mediaType });
+      return sendProactive(config, targetParam, "⚠️ 媒体文件上传失败或文件不存在", {
         msgType: "text",
         replyToId,
       });

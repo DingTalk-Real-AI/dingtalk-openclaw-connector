@@ -42,12 +42,14 @@ export async function processLocalImages(
     for (const match of mdMatches) {
       const [fullMatch, alt, rawPath] = match;
       const cleanPath = rawPath.replace(/\\ /g, ' ');
-      const {mediaId} = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log);
+      const mediaId = await uploadMediaToDingTalk(cleanPath, 'image', oapiToken, 20 * 1024 * 1024, log);
       if (mediaId) {
         // 使用标准 Markdown 图片语法：![文案](mediaId)
         const replacement = `![${alt}](${mediaId})`;
         result = result.replace(fullMatch, replacement);
         log?.info?.(`[DingTalk][Media] 图片已替换为 Markdown 格式: ${replacement}`);
+      } else {
+        log?.warn?.(`[DingTalk][Media] 图片上传失败，保留原始内容: ${cleanPath}`);
       }
     }
   }
