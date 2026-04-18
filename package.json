@@ -1,6 +1,6 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.17",
+  "version": "0.8.18",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "type": "module",
   "exports": {
@@ -99,7 +99,7 @@
     "mammoth": "^1.8.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.23"
+    "openclaw": ">=2026.4.9"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -138,7 +138,7 @@
     "@types/node": "^20.19.37",
     "@vitest/coverage-v8": "^2.0.0",
     "@vitest/ui": "^2.1.9",
-    "openclaw": "^2026.3.23-2",
+    "openclaw": "^2026.4.9",
     "tsdown": "^0.21.4",
     "typescript": "^5.6.0",
     "vitest": "^2.1.9"
