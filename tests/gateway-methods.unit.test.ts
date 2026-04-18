@@ -20,11 +20,6 @@ const mockConfig = {
   },
 };
 
-// Mock loadConfig：gateway-methods.ts 通过动态 import 获取配置
-vi.mock('openclaw/plugin-sdk/config-runtime', () => ({
-  loadConfig: () => mockConfig,
-}));
-
 const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
@@ -42,6 +37,7 @@ function createMockApi() {
   
   const api: Partial<OpenClawPluginApi> = {
     logger: mockLogger,
+    config: mockConfig as any,
     registerGatewayMethod: vi.fn((name: string, handler: Function) => {
       handlers.set(name, handler);
     }),
@@ -256,7 +252,7 @@ describe('Gateway Methods - 状态检查', () => {
 });
 
 describe('Gateway Methods - 配置读取', () => {
-  it('应该能通过 loadConfig 获取配置', async () => {
+  it('应该能通过 api.config 获取配置', async () => {
     const { api, handlers } = createMockApi();
     registerGatewayMethods(api);
 
@@ -270,7 +266,7 @@ describe('Gateway Methods - 配置读取', () => {
 
     await handler!({ context, params: {}, respond });
 
-    // 验证 respond 被调用且成功（loadConfig 已被 mock 返回 mockConfig）
+    // 验证 respond 被调用且成功（api.config 提供了 mockConfig）
     expect(respond).toHaveBeenCalled();
     expect(respond.mock.calls[0][0]).toBe(true);
   });

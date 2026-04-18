@@ -16,20 +16,15 @@ interface ReplyPayload {
   text?: string;
   [key: string]: any;
 }
-
-// ✅ 动态导入 channel-runtime 模块
-const channelRuntimeModule = await import("openclaw/plugin-sdk/channel-runtime") as any;
-
-const {
-  createReplyPrefixOptions,
-  createTypingCallbacks,
-  logTypingFailure,
-} = channelRuntimeModule;
-
 import { createLoggerFromConfig } from "./utils/logger.ts";
 import { CHANNEL_ID } from "./channel.ts";
 import { resolveDingtalkAccount } from "./config/accounts.ts";
 import { getDingtalkRuntime } from "./runtime.ts";
+import {
+  createReplyPrefixOptionsCompat,
+  createTypingCallbacksCompat,
+  logTypingFailureCompat,
+} from "./sdk/openclaw-compat.ts";
 import type { DingtalkConfig } from "./types/index.ts";
 import {
   createAICardForTarget,
@@ -78,7 +73,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   } = params;
 
   const account = resolveDingtalkAccount({ cfg, accountId });
-  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
+  const { onModelSelected, ...prefixOptions } = createReplyPrefixOptionsCompat({
     cfg,
     agentId,
     channel: CHANNEL_ID,
@@ -160,7 +155,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   };
 
   // 打字指示器回调（钉钉暂不支持，预留接口）
-  const typingCallbacks = createTypingCallbacks({
+  const typingCallbacks = createTypingCallbacksCompat({
     start: async () => {
       // 钉钉暂不支持打字指示器
     },
@@ -168,14 +163,14 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       // 钉钉暂不支持打字指示器
     },
     onStartError: (err: any) =>
-      logTypingFailure({
+      logTypingFailureCompat({
         log: (message: any) => params.runtime.log?.(message),
         channel: CHANNEL_ID,
         action: "start",
         error: err,
       }),
     onStopError: (err: any) =>
-      logTypingFailure({
+      logTypingFailureCompat({
         log: (message: any) => params.runtime.log?.(message),
         channel: CHANNEL_ID,
         action: "stop",

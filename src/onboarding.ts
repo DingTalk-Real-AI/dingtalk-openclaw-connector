@@ -3,18 +3,16 @@ import type {
   SecretInput,
   WizardPrompter,
 } from "openclaw/plugin-sdk";
+import { promptSingleChannelSecretInputCompat } from "./sdk/openclaw-compat.ts";
 import type {
-  ChannelSetupWizardAdapter,
-  ChannelSetupDmPolicy,
   DmPolicy,
-} from "openclaw/plugin-sdk/setup";
+} from "./sdk/types.ts";
 import {
   addWildcardAllowFrom,
   DEFAULT_ACCOUNT_ID,
   formatDocsLink,
   hasConfiguredSecretInput,
 } from "./sdk/helpers.ts";
-import { promptSingleChannelSecretInput } from "openclaw/plugin-sdk/setup";
 import { resolveDingtalkAccount, resolveDingtalkCredentials } from "./config/accounts.ts";
 import { probeDingtalk } from "./probe.ts";
 import type { DingtalkConfig } from "./types/index.ts";
@@ -282,19 +280,19 @@ function setDingtalkGroupAllowFrom(cfg: OpenClawConfig, groupAllowFrom: string[]
   };
 }
 
-const dmPolicy: ChannelSetupDmPolicy = {
+const dmPolicy = {
   label: "DingTalk",
   channel,
   policyKey: "channels.dingtalk-connector.dmPolicy",
   allowFromKey: "channels.dingtalk-connector.allowFrom",
   getCurrent: (cfg) => (cfg.channels?.["dingtalk-connector"] as DingtalkConfig | undefined)?.dmPolicy ?? "open",
-  setPolicy: (cfg, policy) => setDingtalkDmPolicy(cfg, policy),
+  setPolicy: (cfg: OpenClawConfig, policy: string) => setDingtalkDmPolicy(cfg, policy as DmPolicy),
   promptAllowFrom: promptDingtalkAllowFrom,
 };
 
-export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
+export const dingtalkOnboardingAdapter = {
   channel,
-  getStatus: async ({ cfg }) => {
+  getStatus: async ({ cfg }: { cfg: OpenClawConfig }) => {
     // Use resolveDingtalkAccount to correctly support pure multi-account configs
     // where credentials are only under accounts.<id>, not at the top level.
     const defaultAccount = resolveDingtalkAccount({ cfg });
@@ -332,7 +330,7 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
     };
   },
 
-  configure: async ({ cfg, prompter }) => {
+  configure: async ({ cfg, prompter }: { cfg: OpenClawConfig; prompter: WizardPrompter }) => {
     const dingtalkCfg = cfg.channels?.["dingtalk-connector"] as DingtalkConfig | undefined;
     const resolved = resolveDingtalkCredentials(dingtalkCfg, {
       allowUnresolvedSecretRef: true,
@@ -406,7 +404,7 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
                 normalizeString(dingtalkCfg?.clientId) ?? normalizeString(_env.DINGTALK_CLIENT_ID),
             });
 
-            const clientSecretResult = await promptSingleChannelSecretInput({
+            const clientSecretResult = await promptSingleChannelSecretInputCompat({
               cfg: next,
               prompter,
               providerHint: "dingtalk",
@@ -448,7 +446,7 @@ export const dingtalkOnboardingAdapter: ChannelSetupWizardAdapter = {
               normalizeString(dingtalkCfg?.clientId) ?? normalizeString(_env.DINGTALK_CLIENT_ID),
           });
 
-          const clientSecretResult = await promptSingleChannelSecretInput({
+          const clientSecretResult = await promptSingleChannelSecretInputCompat({
             cfg: next,
             prompter,
             providerHint: "dingtalk",

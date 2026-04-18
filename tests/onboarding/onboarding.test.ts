@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockPromptSingleChannelSecretInput = vi.hoisted(() => vi.fn());
+const mockPromptSingleChannelSecretInputCompat = vi.hoisted(() => vi.fn());
 const mockResolveDingtalkCredentials = vi.hoisted(() => vi.fn());
 const mockResolveDingtalkAccount = vi.hoisted(() => vi.fn());
 const mockProbeDingtalk = vi.hoisted(() => vi.fn());
 const mockHasConfiguredSecretInput = vi.hoisted(() => vi.fn());
 const mockAddWildcardAllowFrom = vi.hoisted(() => vi.fn());
 
-vi.mock("openclaw/plugin-sdk", () => ({}));
-
-vi.mock("openclaw/plugin-sdk/setup", () => ({
-  promptSingleChannelSecretInput: mockPromptSingleChannelSecretInput,
-}));
+vi.mock("../../src/sdk/openclaw-compat.ts", async () => {
+  const actual = await vi.importActual<typeof import("../../src/sdk/openclaw-compat")>(
+    "../../src/sdk/openclaw-compat.ts",
+  );
+  return {
+    ...actual,
+    promptSingleChannelSecretInputCompat: mockPromptSingleChannelSecretInputCompat,
+  };
+});
 
 vi.mock("../../src/config/accounts.ts", () => ({
   resolveDingtalkCredentials: mockResolveDingtalkCredentials,
@@ -105,7 +109,7 @@ describe("dingtalkOnboardingAdapter", () => {
   it("configure supports use-env + allowlist group config", async () => {
     process.env.DINGTALK_CLIENT_ID = "env-id";
     process.env.DINGTALK_CLIENT_SECRET = "env-secret";
-    mockPromptSingleChannelSecretInput.mockResolvedValue({ action: "use-env" });
+    mockPromptSingleChannelSecretInputCompat.mockResolvedValue({ action: "use-env" });
 
     const prompter = createPrompter({
       select: vi.fn(async () => "allowlist"),
@@ -127,7 +131,7 @@ describe("dingtalkOnboardingAdapter", () => {
   });
 
   it("configure supports set-secret flow and probe failure note", async () => {
-    mockPromptSingleChannelSecretInput.mockResolvedValue({
+    mockPromptSingleChannelSecretInputCompat.mockResolvedValue({
       action: "set",
       value: "secret-value",
       resolvedValue: "secret-value",

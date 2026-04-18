@@ -15,6 +15,7 @@ import { getUnionId } from "./utils/utils-legacy.ts";
  */
 export function registerGatewayMethods(api: OpenClawPluginApi) {
   const log = api.logger;
+  const getCfg = () => (api.config as any);
   
   // ============ 消息发送类 ============
 
@@ -29,13 +30,11 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    *   useAICard: true
    * });
    * ```
-   */
+  */
   api.registerGatewayMethod('dingtalk-connector.sendToUser', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
       }
@@ -80,13 +79,11 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    *   useAICard: true
    * });
    * ```
-   */
+  */
   api.registerGatewayMethod('dingtalk-connector.sendToGroup', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
       }
@@ -116,12 +113,10 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
   });
 
   api.registerGatewayMethod('dingtalk-connector.send', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { target, content, message, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
+      const { target, content, message, msgType, title, useAICard, fallbackToNormal, accountId } = (params as any) || {};
       const actualContent = content || message;
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
       log?.info?.(`[Gateway][send] 收到请求: target=${target}, contentLen=${actualContent?.length}`);
 
       if (!account.config?.clientId) {
@@ -166,11 +161,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
   // ============ 文档操作类 ============
 
   api.registerGatewayMethod('dingtalk-connector.docs.read', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { docId, operatorId: rawOperatorId, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { docId, operatorId: rawOperatorId, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -219,11 +212,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    * ```
    */
   api.registerGatewayMethod('dingtalk-connector.docs.create', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { spaceId, title, content, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { spaceId, title, content, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -259,11 +250,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    * ```
    */
   api.registerGatewayMethod('dingtalk-connector.docs.append', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { docId, content, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { docId, content, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -296,11 +285,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    * ```
    */
   api.registerGatewayMethod('dingtalk-connector.docs.search', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { keyword, spaceId, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { keyword, spaceId, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -333,11 +320,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
    * ```
    */
   api.registerGatewayMethod('dingtalk-connector.docs.list', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const { spaceId, parentId, accountId } = params || {};
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const { spaceId, parentId, accountId } = (params as any) || {};
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -360,11 +345,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
   // ============ 状态检查类 ============
 
   api.registerGatewayMethod('dingtalk-connector.status', async ({ context, params, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
       const accountId = (params as any)?.accountId as string | undefined;
-      const account = resolveDingtalkAccount({ cfg, accountId });
+      const account = resolveDingtalkAccount({ cfg: getCfg(), accountId });
       const hasClientId = !!account.config?.clientId;
       const hasClientSecret = !!account.config?.clientSecret;
 
@@ -381,10 +364,8 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
   });
 
   api.registerGatewayMethod('dingtalk-connector.probe', async ({ context, respond }) => {
-    const { loadConfig } = await import('openclaw/plugin-sdk/config-runtime');
-    const cfg = loadConfig();
     try {
-      const account = resolveDingtalkAccount({ cfg });
+      const account = resolveDingtalkAccount({ cfg: getCfg() });
       
       if (!account.config?.clientId || !account.config?.clientSecret) {
         return respond(false, { error: 'Not configured' });

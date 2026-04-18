@@ -3,14 +3,12 @@ import type {
   ClawdbotConfig,
 } from "openclaw/plugin-sdk";
 import {
-  buildChannelConfigSchema,
-} from "openclaw/plugin-sdk/core";
-import {
   createDefaultChannelRuntimeState,
   DEFAULT_ACCOUNT_ID,
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
 } from "./sdk/helpers.ts";
+import { buildChannelConfigSchemaCompat } from "./sdk/openclaw-compat.ts";
 import { DingtalkConfigBaseSchema } from "./config/schema.ts";
 import { createLogger } from "./utils/logger.ts";
 import {
@@ -113,7 +111,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     stripPatterns: () => ['@[^\\s]+'], // Strip @mentions
   },
   reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
-  configSchema: buildChannelConfigSchema(DingtalkConfigBaseSchema),
+  configSchema: buildChannelConfigSchemaCompat(DingtalkConfigBaseSchema),
   config: {
     listAccountIds: (cfg) => listDingtalkAccountIds(cfg),
     resolveAccount: (cfg, accountId) => resolveDingtalkAccount({ cfg, accountId }),
