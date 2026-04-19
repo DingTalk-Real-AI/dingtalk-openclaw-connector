@@ -27,6 +27,7 @@ const {
 } = channelRuntimeModule;
 
 import { createLoggerFromConfig } from "./utils/logger.ts";
+import { CHANNEL_ID } from "./channel.ts";
 import { resolveDingtalkAccount } from "./config/accounts.ts";
 import { getDingtalkRuntime } from "./runtime.ts";
 import type { DingtalkConfig } from "./types/index.ts";
@@ -80,7 +81,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
     cfg,
     agentId,
-    channel: "dingtalk-connector",
+    channel: CHANNEL_ID,
     accountId,
   });
 
@@ -169,14 +170,14 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     onStartError: (err: any) =>
       logTypingFailure({
         log: (message: any) => params.runtime.log?.(message),
-        channel: "dingtalk-connector",
+        channel: CHANNEL_ID,
         action: "start",
         error: err,
       }),
     onStopError: (err: any) =>
       logTypingFailure({
         log: (message: any) => params.runtime.log?.(message),
-        channel: "dingtalk-connector",
+        channel: CHANNEL_ID,
         action: "stop",
         error: err,
       }),
@@ -184,11 +185,11 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
 
   const textChunkLimit = core.channel.text.resolveTextChunkLimit(
     cfg,
-    "dingtalk-connector",
+    CHANNEL_ID,
     accountId,
     { fallbackLimit: 4000 }
   );
-  const chunkMode = core.channel.text.resolveChunkMode(cfg, "dingtalk-connector");
+  const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
 
   // 流式 AI Card 支持
   const streamingEnabled = (account.config as any)?.streaming !== false;
@@ -342,6 +343,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       }
 
       log.info(`[DingTalk][closeStreaming] 准备调用 finishAICard，文本长度=${finalText.length}`);
+      log.debug(`[DingTalk][closeStreaming] 最终发送内容长度=${finalText.length}`);
       await finishAICard(
         cardSnapshot as any,
         finalText,
@@ -396,6 +398,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         let text = payload.text ?? "";
         
         log.info(`[DingTalk][deliver] 被调用：kind=${info?.kind}, textLength=${text.length}, hasText=${Boolean(text.trim())}`);
+        log.debug(`[DingTalk][deliver] payload keys=${Object.keys(payload).join(',')}, info.kind=${info?.kind}`);
         
         // ✅ 在 final 响应时，先处理裸露的文件路径
         if (info?.kind === "final" && text.trim()) {
@@ -506,6 +509,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 或者非流式模式：使用普通消息发送
         if (info?.kind === "final") {
           log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}`);
+          log.debug(`[DingTalk][deliver] 非流式发送，文本长度=${text.length}`);
           try {
             for (const chunk of core.channel.text.chunkTextWithMode(
               text,
@@ -564,6 +568,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       ...(streamingEnabled && {
         onPartialReply: async (payload: ReplyPayload) => {
         log.info(`[DingTalk][onPartialReply] 被调用，payload.text=${payload.text ? payload.text.length : 'null'}`);
+        log.debug(`[DingTalk][onPartialReply] textLength=${payload.text?.length ?? 0}`);
         if (!payload.text) {
           log.debug(`[DingTalk][onPartialReply] 空文本，跳过`);
           return;

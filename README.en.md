@@ -35,17 +35,22 @@ Additionally, the plugin supports:
 - 🖼️ **Rich Media**: Receive images/audio/file attachments, auto-upload local images
 - 🔄 **Session Management**: Multi-turn conversation context, isolated sessions for DMs/groups
 
-> 🚧 **Coming Soon** — The following business capabilities are under active development and launching soon! 🎉
+> ✅ **Supported Business Capabilities**
 
 | Category | Capabilities |
 |----------|-------------|
-| 📄 Docs | Create, append, search, and list DingTalk documents |
-| 📅 Calendar | Create/query events, auto-attach DingTalk meeting links, DING reminders, free/busy queries |
+| ✅ Tasks | Create personal tasks, check status, set deadlines |
+| 🔔 DING | Send urgent DING reminders to users/groups |
 | 📊 AI Sheets | Create sheets, read/write rows, conditional queries |
-| ✅ Tasks | Create personal/group tasks, check status, set deadlines |
+
+> 🚧 **Coming Soon** — The following capabilities are under active development!
+
+| Category | Capabilities |
+|----------|-------------|
+| ✅ Tasks | Create group tasks, check status, set deadlines |
 | 📝 Reports | Submit daily/weekly reports, query history |
 | 📁 Drive | Upload/download files to DingTalk Drive |
-| 🔔 DING | Send urgent DING reminders to users/groups |
+| 📄 Docs | Create, append, search, and list DingTalk documents |
 
 ---
 

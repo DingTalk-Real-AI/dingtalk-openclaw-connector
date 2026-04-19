@@ -1,4 +1,5 @@
 import { raceWithTimeoutAndAbort } from "./utils/async.ts";
+import { dingtalkHttp } from "./utils/http-client.ts";
 import type { DingtalkProbeResult } from "./types/index.ts";
 
 /** LRU Cache for probe results to reduce repeated health-check calls. */
@@ -97,14 +98,10 @@ export async function probeDingtalk(
   try {
     // Get access token
     const tokenResponse = await raceWithTimeoutAndAbort(
-      fetch("https://api.dingtalk.com/v1.0/oauth2/accessToken", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          appKey: creds.clientId,
-          appSecret: creds.clientSecret,
-        }),
-      }),
+      dingtalkHttp.post<{ accessToken?: string }>(
+        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+        { appKey: creds.clientId, appSecret: creds.clientSecret },
+      ),
       { timeoutMs, abortSignal: options.abortSignal },
     );
 
@@ -127,7 +124,7 @@ export async function probeDingtalk(
       );
     }
 
-    const tokenData = await tokenResponse.value.json() as { accessToken?: string };
+    const tokenData = tokenResponse.value.data;
     if (!tokenData.accessToken) {
       return setCachedProbeResult(
         cacheKey,
@@ -142,13 +139,14 @@ export async function probeDingtalk(
 
     // Get bot info
     const botResponse = await raceWithTimeoutAndAbort(
-      fetch(`https://api.dingtalk.com/v1.0/contact/users/me`, {
-        method: "GET",
-        headers: {
-          "x-acs-dingtalk-access-token": tokenData.accessToken,
-          "Content-Type": "application/json",
+      dingtalkHttp.get<DingtalkBotInfoResponse>(
+        "https://api.dingtalk.com/v1.0/contact/users/me",
+        {
+          headers: {
+            "x-acs-dingtalk-access-token": tokenData.accessToken,
+          },
         },
-      }),
+      ),
       { timeoutMs, abortSignal: options.abortSignal },
     );
 
@@ -171,7 +169,7 @@ export async function probeDingtalk(
       );
     }
 
-    const botData = await botResponse.value.json() as DingtalkBotInfoResponse;
+    const botData = botResponse.value.data;
     if (botData.errcode && botData.errcode !== 0) {
       return setCachedProbeResult(
         cacheKey,

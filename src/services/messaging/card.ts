@@ -90,10 +90,11 @@ const cardRateLimiter = {
    * 触发退避：遇到 QpsLimit 错误时调用
    */
   triggerBackoff(): void {
-    this.backoffUntil = Date.now() + QPS_BACKOFF_DURATION_MS;
+    const backoffEnd = Date.now() + QPS_BACKOFF_DURATION_MS;
+    this.backoffUntil = backoffEnd;
     // 清空令牌，退避期结束后重新补充
     this.tokens = 0;
-    this.lastRefillTime = Date.now() + QPS_BACKOFF_DURATION_MS;
+    this.lastRefillTime = backoffEnd;
   },
 };
 
@@ -474,6 +475,9 @@ export async function finishAICard(
   };
 
   try {
+    // Wait for a rate-limiter token before the FINISHED PUT call to avoid
+    // exceeding QPS limits when multiple conversations finish concurrently.
+    await cardRateLimiter.waitForToken();
     const finishResp = await dingtalkHttp.put(
       `${DINGTALK_API}/v1.0/card/instances`,
       body,

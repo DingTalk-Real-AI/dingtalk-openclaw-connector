@@ -1482,6 +1482,8 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
 
     const { queuedFinal, counts } = dispatchResult;
 
+    log.info?.(`[DingTalk][dispatch] dispatchReplyFromConfig 完成: queuedFinal=${queuedFinal}, counts=${JSON.stringify(counts)}`);
+
     // ===== 异步模式：主动推送最终结果 =====
     if (asyncMode) {
       try {

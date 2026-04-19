@@ -1,14 +1,44 @@
 {
   "name": "@dingtalk-real-ai/dingtalk-connector",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
-  "main": "index.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./bundled": {
+      "import": {
+        "types": "./dist/entry-bundled.d.mts",
+        "default": "./dist/entry-bundled.mjs"
+      }
+    }
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "bin": {
     "dingtalk-connector": "./bin/dingtalk-connector.js"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "skills/",
+    "src/",
+    "index.ts",
+    "docs/*.md",
+    "openclaw.plugin.json",
+    "tsconfig.json",
+    "LICENSE",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
-    "build": "echo 'No build needed - jiti loads TS at runtime'",
+    "build": "tsdown",
+    "prepublishOnly": "npm run build",
     "lint": "echo 'Lint check skipped'",
     "lint:fix": "echo 'Lint fix skipped'",
     "test": "vitest run tests/gateway-methods.unit.test.ts",
@@ -26,7 +56,9 @@
     "clean": "rm -rf node_modules package-lock.json",
     "install:fresh": "npm run clean && npm install",
     "dev": "echo 'Run: openclaw start'",
-    "validate": "npm run lint && npm run type-check && npm run version:check"
+    "validate": "npm run lint && npm run type-check && npm run version:check",
+    "prepack": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p._devDependencies=p.devDependencies;delete p.devDependencies;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "postpack": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p._devDependencies){p.devDependencies=p._devDependencies;delete p._devDependencies;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')}\""
   },
   "keywords": [
     "openclaw",
@@ -53,33 +85,21 @@
   },
   "homepage": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector#readme",
   "bugs": "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues",
-  "files": [
-    "bin/",
-    "index.ts",
-    "src/",
-    "docs/*.md",
-    "openclaw.plugin.json",
-    "tsconfig.json",
-    "LICENSE",
-    "README.md",
-    "README.en.md",
-    "CHANGELOG.md"
-  ],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
     "axios": "1.14.0",
     "dingtalk-stream": "2.1.4",
-    "form-data": "^4.0.0",
-    "qrcode-terminal": "^0.12.0",
-    "zod": "^4.3.6"
+    "form-data": "4.0.0",
+    "qrcode-terminal": "0.12.0",
+    "zod": "4.3.6"
   },
   "optionalDependencies": {
     "mammoth": "^1.8.0"
   },
   "peerDependencies": {
-    "openclaw": "^2026.3.23-2"
+    "openclaw": ">=2026.3.23"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -91,22 +111,26 @@
       "dingtalk-connector"
     ],
     "extensions": [
-      "./index.ts"
+      "./dist/index.mjs"
     ],
     "channel": {
       "id": "dingtalk-connector",
       "label": "DingTalk",
       "selectionLabel": "DingTalk (钉钉)",
-      "blurb": "Official DingTalk plugin with AI Card streaming & multi-agent routing | 钉钉官方插件，支持 AI Card 流式响应与多 Agent 路由",
+      "docsPath": "/channels/dingtalk-connector",
+      "docsLabel": "dingtalk-connector",
+      "blurb": "钉钉企业内部机器人，使用 Stream 模式，无需公网 IP，支持 AI Card 流式响应。",
       "aliases": [
-        "dingtalk",
-        "钉钉"
+        "dd",
+        "ding"
       ],
-      "order": 33,
+      "order": 35,
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@dingtalk-real-ai/dingtalk-connector"
+      "npmSpec": "@dingtalk-real-ai/dingtalk-connector",
+      "localPath": "extensions/dingtalk",
+      "defaultChoice": "npm"
     },
     "installDependencies": true
   },
@@ -115,6 +139,7 @@
     "@vitest/coverage-v8": "^2.0.0",
     "@vitest/ui": "^2.1.9",
     "openclaw": "^2026.3.23-2",
+    "tsdown": "^0.21.4",
     "typescript": "^5.6.0",
     "vitest": "^2.1.9"
   }
