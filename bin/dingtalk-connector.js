@@ -169,6 +169,32 @@ function clearStaging() {
   } catch {}
 }
 
+/**
+ * Check if existing config has both dingtalk channels (with credentials) and bindings.
+ * In multi-Agent scenarios, overwriting would break the existing routing setup.
+ */
+ function hasExistingMultiAgentConfig(cfg) {
+  const dingtalkCfg = cfg?.channels?.[CHANNEL_ID];
+  if (!dingtalkCfg) return false;
+
+  // Check if channels already has credentials configured
+  const hasChannelCreds = Boolean(dingtalkCfg.clientId && dingtalkCfg.clientSecret);
+  // Also check accounts sub-keys for multi-account scenario
+  const hasAccountCreds = dingtalkCfg.accounts && Object.values(dingtalkCfg.accounts).some(
+    (acc) => acc && acc.clientId && acc.clientSecret
+  );
+  const hasCreds = hasChannelCreds || hasAccountCreds;
+  if (!hasCreds) return false;
+
+  // Check if bindings reference dingtalk-connector
+  const bindings = Array.isArray(cfg.bindings) ? cfg.bindings : [];
+  const hasDingtalkBindings = bindings.some(
+    (b) => !b?.match?.channel || String(b.match.channel) === CHANNEL_ID
+  );
+
+  return hasDingtalkBindings;
+}
+
 function saveCredentials(clientId, clientSecret, { isLocal = false, pluginInstalled = true } = {}) {
   const cfg = readConfig();
 
@@ -179,6 +205,20 @@ function saveCredentials(clientId, clientSecret, { isLocal = false, pluginInstal
   const writePluginEntries = pluginInstalled || isLocal;
 
   if (writePluginEntries) {
+    // ── Multi-Agent protection ──
+    // If existing config already has dingtalk channels+credentials AND bindings,
+    // overwriting could break multi-Agent routing. Show credentials and let user decide.
+    if (hasExistingMultiAgentConfig(cfg)) {
+      console.log('\n' + bold('⚠ 检测到已有钉钉 channels 和 bindings 配置（多 Agent 场景）'));
+      console.log(dim('  直接覆盖可能影响现有的多 Agent 路由配置，已跳过自动写入。') + '\n');
+      console.log(cyan('  本次选择/创建的机器人信息：'));
+      console.log(green(`    Client ID:     ${clientId}`));
+      console.log(green(`    Client Secret: ${clientSecret}`) + '\n');
+      console.log(dim('  请自行决定是否修改 ~/.openclaw/openclaw.json 中的配置。'));
+      console.log(dim('  如需新增账号，可在 channels.dingtalk-connector.accounts 下添加。') + '\n');
+      return;
+    }
+
     // ── channels.[CHANNEL_ID] ──
     if (!cfg.channels) cfg.channels = {};
     if (!cfg.channels[CHANNEL_ID]) cfg.channels[CHANNEL_ID] = {};
