@@ -44,25 +44,34 @@ export const CHANNEL_ID = "dingtalk-connector" as const;
 const _env = (globalThis as Record<string, unknown>)["proc" + "ess"] as NodeJS.Process;
 
 /**
- * Private holder for DWS credentials. Stored in module scope instead of
+ * Per-account holder for DWS credentials. Stored in module scope instead of
  * the global env so that child processes (e.g. Shell Executor) cannot read
  * the clientSecret via `env` / `printenv` commands.
+ *
+ * Keyed by accountId to avoid multi-account credential overwriting.
+ * Previously a single object — the last-started account would silently
+ * overwrite all earlier accounts, causing "agent cross-talk" (Issue #497).
  */
-const dwsCredentialHolder: { clientId: string; clientSecret: string } = {
-  clientId: "",
-  clientSecret: "",
-};
+const dwsCredentialsByAccount = new Map<string, { clientId: string; clientSecret: string }>();
 
 /**
  * Returns environment variables for spawning dws CLI.
  * Credentials are injected locally — they are NOT in process.env.
+ *
+ * @param accountId - The account whose credentials should be injected.
+ *   When omitted, falls back to the first (or only) stored entry for
+ *   backward compatibility with single-account setups.
  */
-export function getDwsSpawnEnv(): Record<string, string> {
+export function getDwsSpawnEnv(accountId?: string): Record<string, string> {
+  const creds = accountId
+    ? dwsCredentialsByAccount.get(accountId)
+    : dwsCredentialsByAccount.values().next().value;
+
   return {
     ..._env.env as Record<string, string>,
     DINGTALK_AGENT: "DING_DWS_CLAW",
-    ...(dwsCredentialHolder.clientId && { DWS_CLIENT_ID: dwsCredentialHolder.clientId }),
-    ...(dwsCredentialHolder.clientSecret && { DWS_CLIENT_SECRET: dwsCredentialHolder.clientSecret }),
+    ...(creds?.clientId && { DWS_CLIENT_ID: creds.clientId }),
+    ...(creds?.clientSecret && { DWS_CLIENT_SECRET: creds.clientSecret }),
   };
 }
 
@@ -474,15 +483,15 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
       }
 
       // Set DINGTALK_AGENT to identify the calling context (non-sensitive).
-      // DWS credentials are stored in a private module-level holder instead of
-      // the global env to prevent child processes (e.g. Shell Executor) from
-      // reading the clientSecret via `env` / `printenv` commands.
+      // DWS credentials are stored in a per-account Map instead of the global
+      // env to prevent child processes (e.g. Shell Executor) from reading the
+      // clientSecret via `env` / `printenv` commands.
       _env.env.DINGTALK_AGENT = "DING_DWS_CLAW";
-      if (account.clientId) {
-        dwsCredentialHolder.clientId = String(account.clientId);
-      }
-      if (account.clientSecret) {
-        dwsCredentialHolder.clientSecret = String(account.clientSecret);
+      if (account.clientId && account.clientSecret) {
+        dwsCredentialsByAccount.set(ctx.accountId, {
+          clientId: String(account.clientId),
+          clientSecret: String(account.clientSecret),
+        });
       }
 
       ctx.setStatus({ accountId: ctx.accountId, port: null });
