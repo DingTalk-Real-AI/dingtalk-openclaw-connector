@@ -403,10 +403,10 @@ export async function monitorSingleAccount(
           return;
         }
 
-        // 【发送原生 Ping】更新可用时间
+        // 【发送原生 Ping】仅发送，不刷新时间戳；
+        // 只有收到 pong 响应时才更新 lastSocketAvailableTime（见 setupPongListener）
         try {
           client.socket?.ping();
-          lastSocketAvailableTime = Date.now();
           logger.debug(`💓 发送 PING 心跳成功`);
         } catch (err: any) {
           logger.warn(`发送 PING 失败：${err.message}`);
