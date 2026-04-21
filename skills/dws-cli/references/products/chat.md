@@ -139,14 +139,17 @@ Flags:
 
 支持两种模式：群聊发送 和 批量单聊发送，通过 `--group` 和 `--users` 互斥区分。
 
+> ⚠️ **多机器人场景必须传 `--client-id`**：当配置了多个机器人账号时，必须通过 `--client-id` 显式指定使用哪个机器人的凭据发送消息。`--client-id` 的值就是当前对话机器人的 clientId（即 DingTalk AppKey），可从会话上下文的 `AccountId` 对应的配置中获取。**如果不传 `--client-id`，dws 会使用默认登录的机器人凭据，可能导致"串台"——用错误的机器人身份发送消息。**
+
 ### 群聊发送
 ```
 Usage:
   dws chat message send-by-bot [flags]
 Example:
-  dws chat message send-by-bot --robot-code <code> --group <openConversationId> \
+  dws chat message send-by-bot --client-id <clientId> --robot-code <code> --group <openConversationId> \
     --title "日报提醒" --text "请提交今日日报" --format json
 Flags:
+      --client-id string    机器人的 clientId / AppKey（多机器人场景必填，确保用正确的机器人身份发送）
       --robot-code string   机器人 code (必填)
       --group string        群会话 ID (必填，与 --users 互斥)
       --title string        消息标题 (必填)
@@ -158,9 +161,10 @@ Flags:
 Usage:
   dws chat message send-by-bot [flags]
 Example:
-  dws chat message send-by-bot --robot-code <code> --users "user1,user2" \
+  dws chat message send-by-bot --client-id <clientId> --robot-code <code> --users "user1,user2" \
     --title "通知" --text "会议已取消" --format json
 Flags:
+      --client-id string    机器人的 clientId / AppKey（多机器人场景必填，确保用正确的机器人身份发送）
       --robot-code string   机器人 code (必填)
       --users string        用户 ID 列表，逗号分隔，最多 20 个 (必填，与 --group 互斥)
       --title string        消息标题 (必填)
@@ -180,9 +184,10 @@ Flags:
 Usage:
   dws chat message recall-by-bot [flags]
 Example:
-  dws chat message recall-by-bot --robot-code <code> --group <openConversationId> \
+  dws chat message recall-by-bot --client-id <clientId> --robot-code <code> --group <openConversationId> \
     --keys "key1,key2" --format json
 Flags:
+      --client-id string    机器人的 clientId / AppKey（多机器人场景必填）
       --robot-code string   机器人 code (必填)
       --group string        群会话 ID (必填，与批量单聊互斥)
       --keys string         消息 key 列表，逗号分隔 (必填)
@@ -193,8 +198,9 @@ Flags:
 Usage:
   dws chat message recall-by-bot [flags]
 Example:
-  dws chat message recall-by-bot --robot-code <code> --keys "key1,key2" --format json
+  dws chat message recall-by-bot --client-id <clientId> --robot-code <code> --keys "key1,key2" --format json
 Flags:
+      --client-id string    机器人的 clientId / AppKey（多机器人场景必填）
       --robot-code string   机器人 code (必填)
       --keys string         消息 key 列表，逗号分隔 (必填)
 ```
@@ -263,8 +269,8 @@ dws chat group members add-bot --id <openConversationId> --robot-code <code> --f
 # 1. 搜索可用机器人
 dws chat bot search --format json
 
-# 2. 发送群消息
-dws chat message send-by-bot --robot-code <code> --group <groupId> \
+# 2. 发送群消息（多机器人场景必须加 --client-id，使用当前对话机器人的 clientId）
+dws chat message send-by-bot --client-id <clientId> --robot-code <code> --group <groupId> \
   --title "通知" --text "内容" --format json
 ```
 

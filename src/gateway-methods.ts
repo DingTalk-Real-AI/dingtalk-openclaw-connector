@@ -5,12 +5,33 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { resolveDingtalkAccount } from "./config/accounts.ts";
+import { resolveDingtalkAccount, listDingtalkAccountIds } from "./config/accounts.ts";
 import { DingtalkDocsClient } from "./docs.ts";
 import { sendProactive } from "./services/messaging.ts";
 import { getUnionId, recallEmotionReply } from "./utils/utils-legacy.ts";
 import { finishAICard } from "./services/messaging/card.ts";
 import type { AICardInstance } from "./services/messaging/card.ts";
+
+/**
+ * Warn when accountId is not explicitly provided and multiple accounts exist.
+ * Returns the resolved account (unchanged), but emits a log warning so that
+ * callers (typically AI agents) learn to pass accountId explicitly.
+ */
+function warnIfAccountIdMissing(
+  cfg: any,
+  accountId: unknown,
+  method: string,
+  log?: any,
+): void {
+  if (accountId) return;
+  const allIds = listDingtalkAccountIds(cfg);
+  if (allIds.length > 1) {
+    log?.warn?.(
+      `[Gateway][${method}] accountId not specified but ${allIds.length} accounts configured (${allIds.join(", ")}). ` +
+      `Falling back to default account. To use the correct bot, pass accountId explicitly.`,
+    );
+  }
+}
 
 /**
  * 注册所有 Gateway Methods
@@ -37,6 +58,7 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
     const cfg = loadConfig();
     try {
       const { userId, userIds, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
+      warnIfAccountIdMissing(cfg, accountId, 'sendToUser', log);
       const account = resolveDingtalkAccount({ cfg, accountId });
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -64,7 +86,7 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
         fallbackToNormal: fallbackToNormal !== false,
       });
 
-      respond(result.ok, result);
+      respond(result.ok, { ...result, usedAccountId: account.accountId });
     } catch (err: any) {
       log?.error?.(`[Gateway][sendToUser] 错误: ${err.message}`);
       respond(false, { error: err.message });
@@ -88,6 +110,7 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
     const cfg = loadConfig();
     try {
       const { openConversationId, content, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
+      warnIfAccountIdMissing(cfg, accountId, 'sendToGroup', log);
       const account = resolveDingtalkAccount({ cfg, accountId });
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
@@ -109,7 +132,7 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
         fallbackToNormal: fallbackToNormal !== false,
       });
 
-      respond(result.ok, result);
+      respond(result.ok, { ...result, usedAccountId: account.accountId });
     } catch (err: any) {
       log?.error?.(`[Gateway][sendToGroup] 错误: ${err.message}`);
       console.error(err);
@@ -123,8 +146,9 @@ export function registerGatewayMethods(api: OpenClawPluginApi) {
     try {
       const { target, content, message, msgType, title, useAICard, fallbackToNormal, accountId } = params || {};
       const actualContent = content || message;
+      warnIfAccountIdMissing(cfg, accountId, 'send', log);
       const account = resolveDingtalkAccount({ cfg, accountId });
-      log?.info?.(`[Gateway][send] 收到请求: target=${target}, contentLen=${actualContent?.length}`);
+      log?.info?.(`[Gateway][send] 收到请求: target=${target}, contentLen=${typeof actualContent === 'string' ? actualContent.length : 0}, accountId=${account.accountId}`);
 
       if (!account.config?.clientId) {
         return respond(false, { error: 'DingTalk not configured' });
