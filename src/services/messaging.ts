@@ -579,6 +579,8 @@ export async function sendMediaToDingTalk(params: {
   text?: string;
   mediaUrl: string;
   replyToId?: string;
+  /** 框架提供的文件搜索根目录列表，用于解析相对路径 */
+  mediaLocalRoots?: readonly string[];
 }): Promise<SendResult> {
   const log = createLoggerFromConfig(params.config, 'sendMediaToDingTalk');
   
@@ -593,7 +595,7 @@ export async function sendMediaToDingTalk(params: {
     }),
   );
 
-  const { config, target, text, mediaUrl, replyToId } = params;
+  const { config, target, text, mediaUrl, replyToId, mediaLocalRoots } = params;
 
   // 参数校验
   if (!target || typeof target !== "string") {
@@ -687,8 +689,24 @@ export async function sendMediaToDingTalk(params: {
         { msgType: "text", replyToId },
       );
     }
+    // 解析文件路径：如果是相对路径且直接不存在，尝试基于 mediaLocalRoots 查找
+    let resolvedMediaUrl = mediaUrl;
+    const { toLocalPath } = await import('./media.ts');
+    const _fs = await import('fs');
+    const _path = await import('path');
+    const directPath = toLocalPath(mediaUrl);
+    if (!_fs.existsSync(directPath) && mediaLocalRoots?.length && !_path.isAbsolute(directPath)) {
+      for (const root of mediaLocalRoots) {
+        const candidate = _path.resolve(root, directPath);
+        if (_fs.existsSync(candidate)) {
+          log.info(`相对路径解析成功：${mediaUrl} → ${candidate}（基于 mediaLocalRoots）`);
+          resolvedMediaUrl = candidate;
+          break;
+        }
+      }
+    }
     const uploadResult = await uploadMediaToDingTalk(
-      mediaUrl,
+      resolvedMediaUrl,
       mediaType,
       oapiToken,
       maxSize,

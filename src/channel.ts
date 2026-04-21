@@ -376,6 +376,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
         text,
         mediaUrl,
         replyToId,
+        mediaLocalRoots,
       });
       
       logger.info('sendMediaToDingTalk 返回结果:', JSON.stringify({
