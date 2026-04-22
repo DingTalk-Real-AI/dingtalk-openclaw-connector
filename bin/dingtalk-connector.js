@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 const cyan = (s) => `\x1b[36m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
+const orange = (s) => `\x1b[38;5;208m${s}\x1b[0m`;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 
@@ -210,13 +211,11 @@ function saveCredentials(clientId, clientSecret, { isLocal = false, pluginInstal
     // overwriting could break multi-Agent routing. Show credentials and let user decide.
     if (hasExistingMultiAgentConfig(cfg)) {
       console.log('\n' + bold('⚠ 检测到已有钉钉 channels 和 bindings 配置（多 Agent 场景）'));
-      console.log(dim('  直接覆盖可能影响现有的多 Agent 路由配置，已跳过自动写入。') + '\n');
+      console.log(orange('  直接覆盖可能影响现有的多 Agent 路由配置，已跳过自动写入。') + '\n');
       console.log(cyan('  本次选择/创建的机器人信息：'));
-      console.log(green(`    Client ID:     ${clientId}`));
-      console.log(green(`    Client Secret: ${clientSecret}`) + '\n');
-      console.log(dim('  请自行决定是否修改 ~/.openclaw/openclaw.json 中的配置。'));
-      console.log(dim('  如需新增账号，可在 channels.dingtalk-connector.accounts 下添加。') + '\n');
-      return;
+      console.log(`    Client ID:     ${clientId}`);
+      console.log(`    Client Secret: ${clientSecret}` + '\n');
+      return { skippedMultiAgent: true };
     }
 
     // ── channels.[CHANNEL_ID] ──
@@ -542,25 +541,31 @@ Options:
     console.log('\n' + dim('Saving local configuration... (正在进行本地配置...)') + '\n');
 
     // Step 5: Save config
-    saveCredentials(creds.clientId, creds.clientSecret, { isLocal, pluginInstalled });
+    const saveResult = saveCredentials(creds.clientId, creds.clientSecret, { isLocal, pluginInstalled });
 
     // Step 5.1: Inject DWS environment variables for dws CLI integration
     injectDwsEnvVars(creds.clientId, creds.clientSecret);
 
-    console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
-    console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
-
-    // Step 6: Post-install guidance
-    if (!pluginInstalled && !isLocal) {
-      console.log(red('⚠ Plugin was not installed.') + ' Credentials saved for later.\n');
-      console.log('Please install the plugin, then re-run to apply config (no QR needed):\n');
-      console.log(cyan('  openclaw plugins install ' + getInstallSpec()));
-      console.log(cyan('  npx -y ' + PKG_NAME + ' install') + '\n');
-    } else {
-      console.log(cyan('Please restart the gateway to apply changes:') + '\n');
+    if (saveResult?.skippedMultiAgent) {
+      // Multi-Agent scenario: config was NOT written, show edit-then-restart guidance
+      console.log(cyan('After editing the config, please restart the gateway to apply changes:') + '\n');
       console.log(cyan('  openclaw gateway restart') + '\n');
-      // Note: the ~3 min warm-up is an OpenClaw gateway behaviour, not plugin-specific.
-      console.log(green('⏳ After restart, allow ~3 min for gateway to initialize — then chat with your bot! (网关初始化约3分钟，完成即可对话)') + '\n');
+    } else {
+      console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
+      console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
+
+      // Step 6: Post-install guidance
+      if (!pluginInstalled && !isLocal) {
+        console.log(red('⚠ Plugin was not installed.') + ' Credentials saved for later.\n');
+        console.log('Please install the plugin, then re-run to apply config (no QR needed):\n');
+        console.log(cyan('  openclaw plugins install ' + getInstallSpec()));
+        console.log(cyan('  npx -y ' + PKG_NAME + ' install') + '\n');
+      } else {
+        console.log(cyan('Please restart the gateway to apply changes:') + '\n');
+        console.log(cyan('  openclaw gateway restart') + '\n');
+        // Note: the ~3 min warm-up is an OpenClaw gateway behaviour, not plugin-specific.
+        console.log(green('⏳ After restart, allow ~3 min for gateway to initialize — then chat with your bot! (网关初始化约3分钟，完成即可对话)') + '\n');
+      }
     }
   } catch (err) {
     console.error('\n' + red('❌ Authorization failed: ') + err.message + '\n');

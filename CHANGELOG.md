@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.18] - 2026-04-21
+
+### 修复 / Fixes
+- **AI Card 流式中断残留修复 (#463)** — Gateway 重启后 AI Card 卡在思考中动画、表情标签未撤回；新增 `fixStuckCards` Gateway Method 支持手动修复卡住的 AI Card 和撤回残留表情
+  **AI Card stuck state fix (#463)** — After gateway restart, AI Card stuck in thinking animation and emotion tag not recalled; added `fixStuckCards` Gateway Method for manual recovery
+
+- **多 Agent 配置覆盖保护** — 安装向导检测到已有钉钉 channels + bindings 配置时，跳过自动写入，展示凭证信息让用户自行决定，避免多 Agent 路由配置被意外覆盖
+  **Multi-Agent config overwrite protection** — Install wizard detects existing DingTalk channels + bindings config, skips auto-write and shows credentials for user to decide
+
+### 改进 / Improvements
+- **OpenClaw 版本兼容性** — peerDependency 从 >=2026.3.23 升级到 >=2026.4.9，兼容 OpenClaw 2026.4.15 中的 plugin-sdk 变更
+  **OpenClaw version compatibility** — peerDependency bumped from >=2026.3.23 to >=2026.4.9
+
+- **README 能力展示优化** — 已支持的业务能力（待办、AI 表格、日历日程）整合到主能力表，Coming Soon 区域更新
+  **README capability display** — Supported capabilities consolidated into main table; Coming Soon section updated
+
 ## [0.8.17] - 2026-04-16
 
 ### 新增 / Added
