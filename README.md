@@ -99,7 +99,7 @@ openclaw gateway restart
 
 - [手动配置指南](docs/DINGTALK_MANUAL_SETUP.md) — 手动填写凭证配置
 - [钉钉 DEAP Agent 集成](docs/DEAP_AGENT_GUIDE.md) — 本地设备操作能力
-- [多 Agent 路由配置](https://gist.github.com/smallnest/c5c13482740fd179e40070e620f66a52) — 多机器人绑定不同 Agent
+- [多 Agent 路由配置](docs/MULTI_AGENT_SETUP.md) — 多机器人绑定不同 Agent（从零配置、完整示例、协作模式）
 - [常见问题](docs/TROUBLESHOOTING.md) — 安装与使用问题排查
 
 ---
