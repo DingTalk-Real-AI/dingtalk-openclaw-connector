@@ -61,6 +61,7 @@ export interface ProactiveSendOptions {
 
 /**
  * 发送 Markdown 消息
+ * 支持 @用户（atUserId）和 @机器人（atDingtalkIds）
  */
 export async function sendMarkdownMessage(
   config: DingtalkConfig,
@@ -72,13 +73,29 @@ export async function sendMarkdownMessage(
   const token = await getAccessToken(config);
   let text = markdown;
   if (options.atUserId) text = `${text} @${options.atUserId}`;
+  // ✅ 支持 @机器人：在文本中嵌入 @chatbotUserId
+  if (options.atDingtalkIds?.length) {
+    for (const id of options.atDingtalkIds) {
+      if (!text.includes(`@${id}`)) {
+        text = `${text} @${id}`;
+      }
+    }
+  }
 
   const body: any = {
     msgtype: "markdown",
     markdown: { title: title || "Message", text },
   };
-  if (options.atUserId)
-    body.at = { atUserIds: [options.atUserId], isAtAll: false };
+  // 构建 at 字段（同时支持 atUserIds 和 atDingtalkIds）
+  const atUserIds = options.atUserId ? [options.atUserId] : [];
+  const atDingtalkIds = options.atDingtalkIds || [];
+  if (atUserIds.length > 0 || atDingtalkIds.length > 0) {
+    body.at = {
+      ...(atUserIds.length > 0 ? { atUserIds } : {}),
+      ...(atDingtalkIds.length > 0 ? { atDingtalkIds } : {}),
+      isAtAll: false,
+    };
+  }
 
   return (
     await dingtalkHttp.post(sessionWebhook, body, {
@@ -92,6 +109,7 @@ export async function sendMarkdownMessage(
 
 /**
  * 发送文本消息
+ * 支持 @用户（atUserId）和 @机器人（atDingtalkIds）
  */
 export async function sendTextMessage(
   config: DingtalkConfig,
@@ -100,9 +118,26 @@ export async function sendTextMessage(
   options: any = {},
 ): Promise<any> {
   const token = await getAccessToken(config);
-  const body: any = { msgtype: "text", text: { content: text } };
-  if (options.atUserId)
-    body.at = { atUserIds: [options.atUserId], isAtAll: false };
+  let content = text;
+  // ✅ 支持 @机器人：在文本中嵌入 @chatbotUserId
+  if (options.atDingtalkIds?.length) {
+    for (const id of options.atDingtalkIds) {
+      if (!content.includes(`@${id}`)) {
+        content = `${content} @${id}`;
+      }
+    }
+  }
+  const body: any = { msgtype: "text", text: { content } };
+  // 构建 at 字段（同时支持 atUserIds 和 atDingtalkIds）
+  const atUserIds = options.atUserId ? [options.atUserId] : [];
+  const atDingtalkIds = options.atDingtalkIds || [];
+  if (atUserIds.length > 0 || atDingtalkIds.length > 0) {
+    body.at = {
+      ...(atUserIds.length > 0 ? { atUserIds } : {}),
+      ...(atDingtalkIds.length > 0 ? { atDingtalkIds } : {}),
+      isAtAll: false,
+    };
+  }
 
   return (
     await dingtalkHttp.post(sessionWebhook, body, {

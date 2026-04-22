@@ -24,6 +24,22 @@ const GroupSessionScopeSchema = z
   .optional();
 
 /**
+ * Group reply mode for DingTalk group messages.
+ * - "aicard" (default): use AI Card with streaming support
+ * - "text": use plain text reply (supports @bot mentions, no AI Card)
+ * - "markdown": use markdown reply (supports @bot mentions, no AI Card)
+ *
+ * When set to "text" or "markdown", group messages will be sent as
+ * plain text/markdown instead of AI Card. This enables bots to @mention
+ * each other in multi-Agent group scenarios.
+ *
+ * ⚠️ Warning: enabling text/markdown mode disables AI Card in group chats.
+ */
+const GroupReplyModeSchema = z
+  .enum(["aicard", "text", "markdown"])
+  .optional();
+
+/**
  * Dingtalk tools configuration.
  * Controls which tool categories are enabled.
  */
@@ -68,6 +84,7 @@ const DingtalkSharedConfigShape = {
   debug: z.boolean().optional(), // DWClient debug mode
   enableMediaUpload: z.boolean().optional(),
   systemPrompt: z.string().optional(),
+  groupReplyMode: GroupReplyModeSchema,
 };
 
 /**

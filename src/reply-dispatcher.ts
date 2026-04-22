@@ -38,7 +38,7 @@ import {
   type AICardInstance,
   type AICardTarget,
 } from "./services/messaging/card.ts";
-import { sendMessage } from "./services/messaging.ts";
+import { sendMessage, sendTextMessage, sendMarkdownMessage } from "./services/messaging.ts";
 import { getOapiAccessToken } from "./utils/token.ts";
 import {
   processLocalImages,
@@ -191,8 +191,15 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   );
   const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
 
-  // 流式 AI Card 支持
-  const streamingEnabled = (account.config as any)?.streaming !== false;
+  // ✅ 群聊回复模式：当 groupReplyMode 为 text/markdown 时，群聊禁用 AI Card
+  const groupReplyMode = (account.config as any)?.groupReplyMode || 'aicard';
+  const isTextMode = !isDirect && (groupReplyMode === 'text' || groupReplyMode === 'markdown');
+  if (isTextMode) {
+    log.info(`[DingTalk] 群聊回复模式: ${groupReplyMode}，禁用 AI Card，使用 ${groupReplyMode} 发送`);
+  }
+
+  // 流式 AI Card 支持（text/markdown 模式强制禁用流式）
+  const streamingEnabled = !isTextMode && (account.config as any)?.streaming !== false;
   // 用 Promise 保存 AI Card 的创建过程，避免 final 消息到达时轮询等待
   let cardCreationPromise: Promise<void> | null = null;
 
@@ -508,23 +515,40 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 流式模式但没有 card target：降级到非流式发送
         // 或者非流式模式：使用普通消息发送
         if (info?.kind === "final") {
-          log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}`);
-          log.debug(`[DingTalk][deliver] 非流式发送，文本长度=${text.length}`);
+          log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}, isTextMode=${isTextMode}, groupReplyMode=${groupReplyMode}`);
           try {
             for (const chunk of core.channel.text.chunkTextWithMode(
               text,
               textChunkLimit,
               chunkMode
             )) {
-              await sendMessage(
-                account.config as DingtalkConfig,
-                sessionWebhook,
-                chunk,
-                {
-                  useMarkdown: true,
-                  log: params.runtime.log,
+              if (isTextMode) {
+                // text/markdown 模式：使用指定格式通过 sessionWebhook 发送
+                if (groupReplyMode === 'markdown') {
+                  await sendMarkdownMessage(
+                    account.config as DingtalkConfig,
+                    sessionWebhook,
+                    chunk.split('\n')[0]?.replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message',
+                    chunk,
+                  );
+                } else {
+                  await sendTextMessage(
+                    account.config as DingtalkConfig,
+                    sessionWebhook,
+                    chunk,
+                  );
                 }
-              );
+              } else {
+                await sendMessage(
+                  account.config as DingtalkConfig,
+                  sessionWebhook,
+                  chunk,
+                  {
+                    useMarkdown: true,
+                    log: params.runtime.log,
+                  }
+                );
+              }
             }
             log.info(`[DingTalk][deliver] ✅ 非流式发送成功`);
             deliveredFinalTexts.add(text);

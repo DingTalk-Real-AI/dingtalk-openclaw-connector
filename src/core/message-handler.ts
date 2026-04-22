@@ -1659,32 +1659,52 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     // 获取该会话+agent的上一个处理任务
     const previousTask = sessionQueues.get(queueKey) || Promise.resolve();
 
-    // 队列繁忙时：立即创建一个 AI Card 显示排队 ACK 文案，并将 Card 实例传入处理任务
-    // 处理完成后 reply-dispatcher 会复用此 Card 更新为最终结果，用户看到的是同一条消息的内容变化
+    // 队列繁忙时：根据 groupReplyMode 决定是创建 AI Card 还是发送普通文本 ACK
     let preCreatedCard: AICardInstance | undefined;
     if (isQueueBusy) {
       const ackPhrases = QUEUE_BUSY_ACK_PHRASES;
       const ackText = ackPhrases[Math.floor(Math.random() * ackPhrases.length)];
-      const cardTarget: AICardTarget = isDirect
-        ? { type: 'user', userId: senderId }
-        : { type: 'group', openConversationId: data.conversationId };
 
-      try {
-        const card = await createAICardForTarget(config, cardTarget, log);
-        if (card) {
-          // 用 streamAICard 把 ACK 文案写入 Card（INPUTING 状态，表示正在处理中）
-          await streamAICard(card, ackText, false, config, log);
-          preCreatedCard = card;
-          log?.info?.(`[队列] 队列繁忙，已创建排队 ACK Card，cardInstanceId=${card.cardInstanceId}`);
-        } else {
-          log?.warn?.(`[队列] 创建排队 ACK Card 失败（返回 null），跳过 ACK`);
+      // ✅ 检查 groupReplyMode：text/markdown 模式下不创建 AI Card，改用普通消息发送 ACK
+      const groupReplyMode = config.groupReplyMode || 'aicard';
+      const skipAICard = !isDirect && (groupReplyMode === 'text' || groupReplyMode === 'markdown');
+
+      if (skipAICard) {
+        // text/markdown 模式：使用普通消息发送 ACK，不创建 AI Card
+        try {
+          await sendProactive(config, { openConversationId: data.conversationId }, ackText, {
+            msgType: 'text',
+            useAICard: false,
+            fallbackToNormal: true,
+          });
+          log?.info?.(`[队列] 队列繁忙，已发送普通文本 ACK（groupReplyMode=${groupReplyMode}）`);
+        } catch (ackErr: any) {
+          log?.warn?.(`[队列] 发送普通 ACK 失败: ${ackErr?.message || ackErr}`);
         }
-        // 在发送 ACK 的同时立即贴上思考中表情，让用户知道消息已被接收
-        addEmotionReply(config, data, log).catch(err => {
-          log?.warn?.(`[队列] 贴排队表情失败: ${err.message}`);
-        });
-      } catch (ackErr: any) {
-        log?.warn?.(`[队列] 创建排队 ACK Card 异常: ${ackErr?.message || ackErr}`);
+        // text/markdown 模式不贴🤔表情（表情是 AI Card 场景的配套功能）
+      } else {
+        // aicard 模式：创建 AI Card 显示排队 ACK
+        const cardTarget: AICardTarget = isDirect
+          ? { type: 'user', userId: senderId }
+          : { type: 'group', openConversationId: data.conversationId };
+
+        try {
+          const card = await createAICardForTarget(config, cardTarget, log);
+          if (card) {
+            // 用 streamAICard 把 ACK 文案写入 Card（INPUTING 状态，表示正在处理中）
+            await streamAICard(card, ackText, false, config, log);
+            preCreatedCard = card;
+            log?.info?.(`[队列] 队列繁忙，已创建排队 ACK Card，cardInstanceId=${card.cardInstanceId}`);
+          } else {
+            log?.warn?.(`[队列] 创建排队 ACK Card 失败（返回 null），跳过 ACK`);
+          }
+          // 在发送 ACK 的同时立即贴上思考中表情，让用户知道消息已被接收
+          addEmotionReply(config, data, log).catch(err => {
+            log?.warn?.(`[队列] 贴排队表情失败: ${err.message}`);
+          });
+        } catch (ackErr: any) {
+          log?.warn?.(`[队列] 创建排队 ACK Card 异常: ${ackErr?.message || ackErr}`);
+        }
       }
     }
 
