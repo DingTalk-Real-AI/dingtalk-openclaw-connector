@@ -98,6 +98,7 @@ openclaw gateway restart
 ## Advanced Documentation
 
 - [Manual Setup Guide](docs/DINGTALK_MANUAL_SETUP.md) — Configure credentials manually
+- [Group Reply Mode Quick Start (Customer)](docs/GROUP_REPLY_MODE_QUICK_START.md) — Three reply modes and bot-to-bot @mention setup
 - [DingTalk DEAP Agent Integration](docs/DEAP_AGENT_GUIDE.en.md) — Local device operation capabilities
 - [Multi-Agent Routing](https://gist.github.com/smallnest/c5c13482740fd179e40070e620f66a52) — Bind multiple bots to different Agents
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — Installation and usage issue resolution

@@ -35,6 +35,7 @@ import {
   createAICardForTarget,
   finishAICard,
   streamAICard,
+  isQpsLimitError,
   type AICardInstance,
   type AICardTarget,
 } from "./services/messaging/card.ts";
@@ -639,10 +640,20 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               );
               log.debug(`[DingTalk][onPartialReply] ✅ AI Card 更新成功`);
             } catch (err: any) {
-              // QPS 限流已在 streamAICard 内部处理（自动退避+重试），
-              // 到达此处说明重试也失败了，记录错误但不中断流式更新
-              log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-              await sendFallbackErrorMessage('sendMessage', err.message);
+              // QPS 限流是瞬时错误：streamAICard 内部已自动退避+重试，
+              // 退避期过后下一次 partial 更新会把 AI Card 内容覆盖补齐，
+              // 因此不应把 QPS 限流展示为用户可见的「消息发送失败」提示，
+              // 否则用户会同时看到正常的 AI Card 回复和一条误报错误。
+              // 真正无法恢复的错误（finalize 仍失败）会在 closeStreaming
+              // 的降级路径里通过 sendFallbackErrorMessage 兜底。
+              if (isQpsLimitError(err)) {
+                log.warn(
+                  `[DingTalk][onPartialReply] AI Card 流式更新遇到 QPS 限流，已在内部退避重试；本次跳过，等待下一次 partial 更新补齐内容`,
+                );
+              } else {
+                log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
+                await sendFallbackErrorMessage('sendMessage', err.message);
+              }
             }
           } else {
             log.debug(`[DingTalk][onPartialReply] 节流控制，跳过本次更新（距离上次更新 ${now - lastUpdateTime}ms）`);
