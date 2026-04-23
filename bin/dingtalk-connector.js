@@ -394,6 +394,37 @@ function isDwsInstalled() {
   }
 }
 
+function getInstalledDwsVersion() {
+  const mod = ['child', 'process'].join('_');
+  const { execFileSync } = createRequire(import.meta.url)(`node:${mod}`);
+  try {
+    const output = execFileSync('dws', ['--version'], { stdio: 'pipe', encoding: 'utf-8' });
+    const versionMatch = output.trim().match(/(\d+\.\d+\.\d+)/);
+    return versionMatch ? versionMatch[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function getTargetDwsVersion() {
+  const versionMatch = DWS_NPM_PACKAGE.match(/@(\d+\.\d+\.\d+)$/);
+  return versionMatch ? versionMatch[1] : null;
+}
+
+function askUserConfirmation(question) {
+  const { createInterface } = createRequire(import.meta.url)('node:readline');
+  const rl = createInterface({
+    input: globalThis['proc' + 'ess'].stdin,
+    output: globalThis['proc' + 'ess'].stdout,
+  });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase());
+    });
+  });
+}
+
 function installDwsCli() {
   const mod = ['child', 'process'].join('_');
   const { execFileSync, execSync } = createRequire(import.meta.url)(`node:${mod}`);
@@ -449,9 +480,34 @@ function isDwsAuthenticated() {
   }
 }
 
-function ensureDwsCli() {
+async function ensureDwsCli() {
   if (isDwsInstalled()) {
-    console.log(dim('  ✔ dws CLI already installed') + '\n');
+    const installedVersion = getInstalledDwsVersion();
+    const targetVersion = getTargetDwsVersion();
+    const versionDisplay = installedVersion ? `v${installedVersion}` : 'unknown version';
+
+    console.log(dim(`  ✔ dws CLI already installed (${versionDisplay})`) + '\n');
+
+    // Check if a newer version is available
+    if (installedVersion && targetVersion && installedVersion !== targetVersion) {
+      console.log(orange(`  ℹ A newer version of dws CLI is available: v${targetVersion} (current: v${installedVersion})`) + '\n');
+      const answer = await askUserConfirmation(
+        `  Do you want to upgrade dws CLI to v${targetVersion}? (覆盖安装新版本？) [y/N] `
+      );
+      if (answer === 'y' || answer === 'yes') {
+        console.log('');
+        const upgraded = installDwsCli();
+        if (upgraded) {
+          const newVersion = getInstalledDwsVersion();
+          console.log(green(`  ✔ dws CLI upgraded to v${newVersion || targetVersion}`) + '\n');
+        } else {
+          console.log(red('  ⚠ Upgrade failed. Continuing with current version.') + '\n');
+        }
+      } else {
+        console.log('\n' + dim(`  Keeping current dws CLI v${installedVersion}`) + '\n');
+      }
+    }
+
     if (isDwsAuthenticated()) {
       console.log(dim('  ✔ dws CLI authenticated') + '\n');
     } else {
@@ -514,7 +570,7 @@ Options:
 
   // Step 2: Install dws CLI (unless --skip-dws)
   if (!skipDws) {
-    ensureDwsCli();
+    await ensureDwsCli();
   } else {
     console.log('\n' + dim('🔧 --skip-dws: skipping dws CLI installation') + '\n');
   }
