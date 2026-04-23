@@ -64,18 +64,117 @@ function normalizeStableOutboundId(value: unknown): string | undefined {
   return normalized;
 }
 
-export function extractStableDingtalkOutboundMessageId(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object') return undefined;
+function summarizeSupportCaseOutboundObjectKeys(value: unknown, maxKeys: number = 12): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  if (keys.length <= maxKeys) return keys;
+  return [...keys.slice(0, maxKeys), `...+${keys.length - maxKeys}`];
+}
+
+function appendSupportCaseOutboundIdCandidate(
+  candidates: Array<{ path: string; value: string }>,
+  seen: Set<string>,
+  path: string,
+  rawValue: unknown,
+) {
+  if (typeof rawValue === 'string') {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return;
+    const dedupeKey = `${path}=${trimmed}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    candidates.push({ path, value: trimmed });
+    return;
+  }
+
+  if (!Array.isArray(rawValue)) return;
+  for (let index = 0; index < rawValue.length; index += 1) {
+    appendSupportCaseOutboundIdCandidate(
+      candidates,
+      seen,
+      `${path}[${index}]`,
+      rawValue[index],
+    );
+  }
+}
+
+export function collectSupportCaseOutboundIdCandidates(value: unknown): Array<{ path: string; value: string }> {
+  if (!value || typeof value !== 'object') return [];
   const record = value as Record<string, any>;
-  const candidates = [
-    record.cardInstanceId,
-    record.outTrackId,
-    record.data?.cardInstanceId,
-    record.data?.outTrackId,
+  const entries: Array<[string, unknown]> = [
+    ['cardInstanceId', record.cardInstanceId],
+    ['outTrackId', record.outTrackId],
+    ['processQueryKey', record.processQueryKey],
+    ['messageId', record.messageId],
+    ['msgId', record.msgId],
+    ['data.cardInstanceId', record.data?.cardInstanceId],
+    ['data.outTrackId', record.data?.outTrackId],
+    ['data.processQueryKey', record.data?.processQueryKey],
+    ['data.messageId', record.data?.messageId],
+    ['data.msgId', record.data?.msgId],
+    ['deliverResultCarrierIds', record.deliverResultCarrierIds],
+    ['data.deliverResultCarrierIds', record.data?.deliverResultCarrierIds],
   ];
+  const seen = new Set<string>();
+  const candidates: Array<{ path: string; value: string }> = [];
+
+  for (const [path, rawValue] of entries) {
+    appendSupportCaseOutboundIdCandidate(candidates, seen, path, rawValue);
+  }
+
+  return candidates;
+}
+
+export function buildSupportCaseOutboundIdDiagnostics(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return {
+      rawOutboundIdFields: {},
+      outboundIdCandidates: [],
+      keyShapes: {
+        topLevel: [],
+        data: [],
+      },
+    };
+  }
+
+  const record = value as Record<string, any>;
+  return {
+    rawOutboundIdFields: {
+      cardInstanceId: typeof record.cardInstanceId === 'string' ? record.cardInstanceId : '',
+      outTrackId: typeof record.outTrackId === 'string' ? record.outTrackId : '',
+      processQueryKey: typeof record.processQueryKey === 'string' ? record.processQueryKey : '',
+      messageId: typeof record.messageId === 'string' ? record.messageId : '',
+      msgId: typeof record.msgId === 'string' ? record.msgId : '',
+      'data.cardInstanceId': typeof record.data?.cardInstanceId === 'string' ? record.data.cardInstanceId : '',
+      'data.outTrackId': typeof record.data?.outTrackId === 'string' ? record.data.outTrackId : '',
+      'data.processQueryKey': typeof record.data?.processQueryKey === 'string' ? record.data.processQueryKey : '',
+      'data.messageId': typeof record.data?.messageId === 'string' ? record.data.messageId : '',
+      'data.msgId': typeof record.data?.msgId === 'string' ? record.data.msgId : '',
+      deliverResultCarrierIds: Array.isArray(record.deliverResultCarrierIds)
+        ? record.deliverResultCarrierIds.filter((item: unknown): item is string => typeof item === 'string')
+        : [],
+      'data.deliverResultCarrierIds': Array.isArray(record.data?.deliverResultCarrierIds)
+        ? record.data.deliverResultCarrierIds.filter((item: unknown): item is string => typeof item === 'string')
+        : [],
+    },
+    outboundIdCandidates: collectSupportCaseOutboundIdCandidates(value),
+    keyShapes: {
+      topLevel: summarizeSupportCaseOutboundObjectKeys(record),
+      data: summarizeSupportCaseOutboundObjectKeys(record.data),
+    },
+  };
+}
+
+export function extractStableDingtalkOutboundMessageId(value: unknown): string | undefined {
+  const candidates = collectSupportCaseOutboundIdCandidates(value).filter((candidate) =>
+    candidate.path === 'cardInstanceId'
+    || candidate.path === 'outTrackId'
+    || candidate.path === 'data.cardInstanceId'
+    || candidate.path === 'data.outTrackId',
+  );
 
   for (const candidate of candidates) {
-    const stableId = normalizeStableOutboundId(candidate);
+    const stableId = normalizeStableOutboundId(candidate.value);
     if (stableId) return stableId;
   }
 
@@ -202,8 +301,21 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   const recordStableSupportCaseOutbound = async (candidate: unknown) => {
     if (!supportCase) return false;
 
+    const outboundDiagnostics = buildSupportCaseOutboundIdDiagnostics(candidate);
     const messageId = extractStableDingtalkOutboundMessageId(candidate);
-    if (!messageId || recordedSupportCaseOutboundIds.has(messageId)) return false;
+    log.info(
+      `[support-case-router] outbound-id-diagnostics: rawOutboundIdFields=${JSON.stringify(outboundDiagnostics.rawOutboundIdFields)}, outboundIdCandidates=${JSON.stringify(outboundDiagnostics.outboundIdCandidates.map((entry) => `${entry.path}=${entry.value}`))}, selectedReplyMapId=${JSON.stringify(messageId || '')}, keyShapes=${JSON.stringify(outboundDiagnostics.keyShapes)}`,
+    );
+    if (!messageId) {
+      log.info(
+        `[support-case-router] outbound-id-fallback: selectedReplyMapId=\"\", outboundIdCandidates=${JSON.stringify(outboundDiagnostics.outboundIdCandidates.map((entry) => `${entry.path}=${entry.value}`))}`,
+      );
+      return false;
+    }
+    if (recordedSupportCaseOutboundIds.has(messageId)) {
+      log.info(`[support-case-router] outbound-id-fallback: selectedReplyMapId=${JSON.stringify(messageId)}, duplicate=true`);
+      return false;
+    }
 
     recordedSupportCaseOutboundIds.add(messageId);
     try {
@@ -471,6 +583,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       );
       await recordStableSupportCaseOutbound({
         cardInstanceId: cardSnapshot.cardInstanceId,
+        deliverResultCarrierIds: cardSnapshot.deliverResultCarrierIds,
       });
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {

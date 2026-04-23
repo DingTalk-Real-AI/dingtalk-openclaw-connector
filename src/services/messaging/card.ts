@@ -130,12 +130,54 @@ export interface AICardInstance {
   accessToken: string;
   tokenExpireTime: number;
   inputingStarted: boolean;
+  deliverResultCarrierIds?: string[];
 }
 
 /** AI Card 投放目标类型 */
 export type AICardTarget =
   | { type: "user"; userId: string }
   | { type: "group"; openConversationId: string };
+
+function collectCardDeliverCarrierIds(value: unknown): string[] {
+  const carrierIds: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (rawValue: unknown) => {
+    if (typeof rawValue !== "string") return;
+    const trimmed = rawValue.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    carrierIds.push(trimmed);
+  };
+
+  const collectFromArray = (items: unknown[]) => {
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      push((item as Record<string, unknown>).carrierId);
+    }
+  };
+
+  if (!value || typeof value !== "object") return carrierIds;
+  const record = value as Record<string, unknown>;
+
+  push(record.carrierId);
+
+  if (Array.isArray(record.result)) {
+    collectFromArray(record.result);
+  } else if (record.result && typeof record.result === "object") {
+    const nestedResult = record.result as Record<string, unknown>;
+    push(nestedResult.carrierId);
+    if (Array.isArray(nestedResult.deliverResults)) {
+      collectFromArray(nestedResult.deliverResults);
+    }
+  }
+
+  if (Array.isArray(record.deliverResults)) {
+    collectFromArray(record.deliverResults);
+  }
+
+  return carrierIds;
+}
 
 // ============ Markdown 格式修正 ============
 
@@ -273,10 +315,21 @@ export async function createAICardForTarget(
       },
     );
 
+    const deliverResultCarrierIds = collectCardDeliverCarrierIds(deliverResp.data);
+    log?.info?.(
+      `[DingTalk][AICard] 投放响应：status=${deliverResp.status}, carrierIds=${JSON.stringify(deliverResultCarrierIds)}, success=${JSON.stringify(deliverResp.data?.success ?? null)}`,
+    );
+
     // 记录 token 过期时间（钉钉 token 有效期 2 小时）
     const tokenExpireTime = Date.now() + 2 * 60 * 60 * 1000;
     
-    return { cardInstanceId, accessToken: token, tokenExpireTime, inputingStarted: false };
+    return {
+      cardInstanceId,
+      accessToken: token,
+      tokenExpireTime,
+      inputingStarted: false,
+      deliverResultCarrierIds,
+    };
   } catch (err: any) {
     log?.error?.(
       `[DingTalk][AICard] 创建卡片失败 (${targetDesc}): ${err.message}`,

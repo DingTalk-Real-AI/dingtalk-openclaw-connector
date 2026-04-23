@@ -1066,6 +1066,189 @@ export function extractRepliedMessageIdForSupportCaseRouter(data: any): string |
   return contentReplyId ? String(contentReplyId) : undefined;
 }
 
+function resolveLooseObject(raw: any): Record<string, unknown> | null {
+  if (!raw) return null;
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {
+      // ignore non-JSON strings
+    }
+  }
+  return null;
+}
+
+function summarizeSupportCaseObjectKeys(value: unknown, maxKeys: number = 12): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  if (keys.length <= maxKeys) return keys;
+  return [...keys.slice(0, maxKeys), `...+${keys.length - maxKeys}`];
+}
+
+function collectSupportCaseReplyTargetCandidates(data: any): Array<{ path: string; value: string }> {
+  const content = resolveContent(data);
+  const repliedSources = [
+    { path: 'text.repliedMsg', value: data?.text?.repliedMsg },
+    { path: 'content.repliedMsg', value: content?.repliedMsg },
+    { path: 'repliedMsg', value: data?.repliedMsg },
+  ];
+  const seen = new Set<string>();
+  const candidates: Array<{ path: string; value: string }> = [];
+
+  for (const source of repliedSources) {
+    const repliedMsg = resolveLooseObject(source.value);
+    if (!repliedMsg) continue;
+    const repliedContent = resolveLooseObject(repliedMsg.content);
+    const entries: Array<[string, unknown]> = [
+      [`${source.path}.msgId`, repliedMsg.msgId],
+      [`${source.path}.cardInstanceId`, repliedMsg.cardInstanceId],
+      [`${source.path}.outTrackId`, repliedMsg.outTrackId],
+      [`${source.path}.content.msgId`, repliedContent?.msgId],
+      [`${source.path}.content.cardInstanceId`, repliedContent?.cardInstanceId],
+      [`${source.path}.content.outTrackId`, repliedContent?.outTrackId],
+    ];
+
+    for (const [path, rawValue] of entries) {
+      if (typeof rawValue !== 'string') continue;
+      const value = rawValue.trim();
+      if (!value) continue;
+      const dedupeKey = `${path}=${value}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      candidates.push({ path, value });
+    }
+  }
+
+  return candidates;
+}
+
+function collectSupportCaseDirectLinkageCandidates(data: any): Array<{ path: string; value: string }> {
+  const content = resolveContent(data);
+  const text = resolveLooseObject(data?.text);
+  const sources = [
+    { path: 'topLevel', value: data },
+    { path: 'text', value: text },
+    { path: 'content', value: content },
+  ];
+  const seen = new Set<string>();
+  const candidates: Array<{ path: string; value: string }> = [];
+
+  for (const source of sources) {
+    const record = resolveLooseObject(source.value);
+    if (!record) continue;
+    const entries: Array<[string, unknown]> = [
+      [`${source.path}.msgId`, record.msgId],
+      [`${source.path}.openThreadId`, record.openThreadId],
+      [`${source.path}.cardInstanceId`, record.cardInstanceId],
+      [`${source.path}.outTrackId`, record.outTrackId],
+      [`${source.path}.quoteMessageId`, record.quoteMessageId],
+      [`${source.path}.replyToMessageId`, record.replyToMessageId],
+      [`${source.path}.rootMessageId`, record.rootMessageId],
+      [`${source.path}.threadRootMessageId`, record.threadRootMessageId],
+    ];
+
+    for (const [path, rawValue] of entries) {
+      if (typeof rawValue !== 'string') continue;
+      const value = rawValue.trim();
+      if (!value) continue;
+      const dedupeKey = `${path}=${value}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      candidates.push({ path, value });
+    }
+  }
+
+  return candidates;
+}
+
+function buildSupportCaseReplyDiagnostics(params: {
+  data: any;
+  content: ExtractedMessage;
+  config: DingtalkConfig;
+}) {
+  const resolvedContent = resolveContent(params.data);
+  const textReplyContainer = resolveLooseObject(params.data?.text);
+  const contentReplyContainer = resolveLooseObject(resolvedContent);
+  const topLevelRepliedMsg = resolveLooseObject(params.data?.repliedMsg);
+  const textRepliedMsg = resolveLooseObject(params.data?.text?.repliedMsg);
+  const contentRepliedMsg = resolveLooseObject(resolvedContent?.repliedMsg);
+  const isMentioned = isMentioningDingtalkBotForSupportCaseRouter({
+    data: params.data,
+    content: params.content,
+    config: params.config,
+  });
+  const markerRef = extractPublicCaseRefForSupportCaseRouter(params.content.text || '');
+  const replyIntentSources = [
+    params.data?.text?.isReplyMsg === true ? 'text.isReplyMsg' : null,
+    resolvedContent?.isReplyMsg === true ? 'content.isReplyMsg' : null,
+    params.content.messageType === 'reply' ? 'extracted.messageType=reply' : null,
+  ].filter(Boolean) as string[];
+  const replyMsgTypes = [
+    typeof textRepliedMsg?.msgType === 'string' ? `text.repliedMsg:${textRepliedMsg.msgType}` : null,
+    typeof contentRepliedMsg?.msgType === 'string' ? `content.repliedMsg:${contentRepliedMsg.msgType}` : null,
+    typeof topLevelRepliedMsg?.msgType === 'string' ? `repliedMsg:${topLevelRepliedMsg.msgType}` : null,
+  ].filter(Boolean) as string[];
+  const replyTargetCandidates = collectSupportCaseReplyTargetCandidates(params.data);
+  const directLinkageCandidates = collectSupportCaseDirectLinkageCandidates(params.data);
+  const repliedMessageId = extractRepliedMessageIdForSupportCaseRouter(params.data);
+
+  return {
+    msgtype: String(params.data?.msgtype || ''),
+    extractedMessageType: String(params.content.messageType || ''),
+    isMentioned,
+    markerRef,
+    replyIntent: replyIntentSources.length > 0,
+    replyIntentSources,
+    repliedMessageId,
+    replyTargetCandidates,
+    directLinkageCandidates,
+    replyMsgTypes,
+    rawReplyFields: {
+      'text.isReplyMsg': params.data?.text?.isReplyMsg === true,
+      'text.repliedMsg.msgId': typeof textRepliedMsg?.msgId === 'string' ? textRepliedMsg.msgId : '',
+      'text.repliedMsg.cardInstanceId': typeof textRepliedMsg?.cardInstanceId === 'string' ? textRepliedMsg.cardInstanceId : '',
+      'text.repliedMsg.outTrackId': typeof textRepliedMsg?.outTrackId === 'string' ? textRepliedMsg.outTrackId : '',
+      'content.isReplyMsg': resolvedContent?.isReplyMsg === true,
+      'content.repliedMsg.msgId': typeof contentRepliedMsg?.msgId === 'string' ? contentRepliedMsg.msgId : '',
+      'content.repliedMsg.cardInstanceId': typeof contentRepliedMsg?.cardInstanceId === 'string' ? contentRepliedMsg.cardInstanceId : '',
+      'content.repliedMsg.outTrackId': typeof contentRepliedMsg?.outTrackId === 'string' ? contentRepliedMsg.outTrackId : '',
+      'repliedMsg.msgId': typeof topLevelRepliedMsg?.msgId === 'string' ? topLevelRepliedMsg.msgId : '',
+      'repliedMsg.cardInstanceId': typeof topLevelRepliedMsg?.cardInstanceId === 'string' ? topLevelRepliedMsg.cardInstanceId : '',
+      'repliedMsg.outTrackId': typeof topLevelRepliedMsg?.outTrackId === 'string' ? topLevelRepliedMsg.outTrackId : '',
+    },
+    rawLinkageFields: {
+      'topLevel.msgId': typeof params.data?.msgId === 'string' ? params.data.msgId : '',
+      'topLevel.openThreadId': typeof params.data?.openThreadId === 'string' ? params.data.openThreadId : '',
+      'topLevel.cardInstanceId': typeof params.data?.cardInstanceId === 'string' ? params.data.cardInstanceId : '',
+      'topLevel.outTrackId': typeof params.data?.outTrackId === 'string' ? params.data.outTrackId : '',
+      'topLevel.quoteMessageId': typeof params.data?.quoteMessageId === 'string' ? params.data.quoteMessageId : '',
+      'topLevel.replyToMessageId': typeof params.data?.replyToMessageId === 'string' ? params.data.replyToMessageId : '',
+      'topLevel.rootMessageId': typeof params.data?.rootMessageId === 'string' ? params.data.rootMessageId : '',
+      'topLevel.threadRootMessageId': typeof params.data?.threadRootMessageId === 'string' ? params.data.threadRootMessageId : '',
+      'text.msgId': typeof textReplyContainer?.msgId === 'string' ? textReplyContainer.msgId : '',
+      'text.openThreadId': typeof textReplyContainer?.openThreadId === 'string' ? textReplyContainer.openThreadId : '',
+      'text.cardInstanceId': typeof textReplyContainer?.cardInstanceId === 'string' ? textReplyContainer.cardInstanceId : '',
+      'text.outTrackId': typeof textReplyContainer?.outTrackId === 'string' ? textReplyContainer.outTrackId : '',
+      'content.msgId': typeof contentReplyContainer?.msgId === 'string' ? contentReplyContainer.msgId : '',
+      'content.openThreadId': typeof contentReplyContainer?.openThreadId === 'string' ? contentReplyContainer.openThreadId : '',
+      'content.cardInstanceId': typeof contentReplyContainer?.cardInstanceId === 'string' ? contentReplyContainer.cardInstanceId : '',
+      'content.outTrackId': typeof contentReplyContainer?.outTrackId === 'string' ? contentReplyContainer.outTrackId : '',
+      'content.quoteMessageId': typeof contentReplyContainer?.quoteMessageId === 'string' ? contentReplyContainer.quoteMessageId : '',
+      'content.replyToMessageId': typeof contentReplyContainer?.replyToMessageId === 'string' ? contentReplyContainer.replyToMessageId : '',
+    },
+    keyShapes: {
+      topLevel: summarizeSupportCaseObjectKeys(params.data),
+      text: summarizeSupportCaseObjectKeys(textReplyContainer),
+      content: summarizeSupportCaseObjectKeys(contentReplyContainer),
+      textRepliedMsg: summarizeSupportCaseObjectKeys(textRepliedMsg),
+      contentRepliedMsg: summarizeSupportCaseObjectKeys(contentRepliedMsg),
+      topLevelRepliedMsg: summarizeSupportCaseObjectKeys(topLevelRepliedMsg),
+    },
+  };
+}
+
 function normalizePublicCaseRef(value: string): string {
   return value.toUpperCase();
 }
@@ -1275,6 +1458,15 @@ export async function resolveSupportCaseRouteForMessage(params: {
     config: routerConfig,
     replyMap: runtime.replyMapStore,
   });
+  const replyDiagnostics = buildSupportCaseReplyDiagnostics({
+    data: params.data,
+    content: params.content,
+    config: params.config,
+  });
+
+  params.log?.info?.(
+    `[support-case-router] reply-diagnostics: msgtype=${JSON.stringify(replyDiagnostics.msgtype || 'unknown')}, extractedMessageType=${JSON.stringify(replyDiagnostics.extractedMessageType || 'unknown')}, isMentioned=${replyDiagnostics.isMentioned}, markerRef=${JSON.stringify(replyDiagnostics.markerRef || '')}, replyIntent=${replyDiagnostics.replyIntent}, replyIntentSources=${JSON.stringify(replyDiagnostics.replyIntentSources)}, rawReplyFields=${JSON.stringify(replyDiagnostics.rawReplyFields)}, rawLinkageFields=${JSON.stringify(replyDiagnostics.rawLinkageFields)}, repliedMessageId=${JSON.stringify(replyDiagnostics.repliedMessageId || '')}, replyTargetCandidates=${JSON.stringify(replyDiagnostics.replyTargetCandidates.map((entry) => `${entry.path}=${entry.value}`))}, directLinkageCandidates=${JSON.stringify(replyDiagnostics.directLinkageCandidates.map((entry) => `${entry.path}=${entry.value}`))}, replyMsgTypes=${JSON.stringify(replyDiagnostics.replyMsgTypes)}, keyShapes=${JSON.stringify(replyDiagnostics.keyShapes)}`,
+  );
 
   const result = await router.resolve({
     accountId: params.accountId,
@@ -1282,22 +1474,33 @@ export async function resolveSupportCaseRouteForMessage(params: {
     messageId: String(params.data.msgId || ''),
     senderId: String(params.data.senderStaffId || params.data.senderId || ''),
     isGroup: params.data.conversationType !== '1',
-    isMentioned: isMentioningDingtalkBotForSupportCaseRouter({
-      data: params.data,
-      content: params.content,
-      config: params.config,
-    }),
-    repliedMessageId: extractRepliedMessageIdForSupportCaseRouter(params.data),
-    markerRef: extractPublicCaseRefForSupportCaseRouter(params.content.text || ''),
+    isMentioned: replyDiagnostics.isMentioned,
+    repliedMessageId: replyDiagnostics.repliedMessageId,
+    markerRef: replyDiagnostics.markerRef,
   });
 
   if (!result.shouldRun) {
+    if (replyDiagnostics.replyIntent) {
+      params.log?.info?.(
+        `[support-case-router] reply-fallback: shouldRun=false, reason=${result.reason}, replyIntent=true, repliedMessageId=${JSON.stringify(replyDiagnostics.repliedMessageId || '')}, replyTargetCandidates=${JSON.stringify(replyDiagnostics.replyTargetCandidates.map((entry) => `${entry.path}=${entry.value}`))}, markerRef=${JSON.stringify(replyDiagnostics.markerRef || '')}, isMentioned=${replyDiagnostics.isMentioned}`,
+      );
+    }
     params.log?.info?.(`[support-case-router] dry-run result: shouldRun=false, reason=${result.reason}`);
     return {
       enabled: true,
       shouldRun: false,
       reason: result.reason,
     };
+  }
+
+  if (replyDiagnostics.replyIntent && result.matchedBy === 'new_root') {
+    params.log?.info?.(
+      `[support-case-router] reply-fallback: shouldRun=true, matchedBy=new_root, replyIntent=true, repliedMessageId=${JSON.stringify(replyDiagnostics.repliedMessageId || '')}, replyTargetCandidates=${JSON.stringify(replyDiagnostics.replyTargetCandidates.map((entry) => `${entry.path}=${entry.value}`))}, markerRef=${JSON.stringify(replyDiagnostics.markerRef || '')}, isMentioned=${replyDiagnostics.isMentioned}`,
+    );
+  } else if (replyDiagnostics.repliedMessageId && result.matchedBy !== 'reply_map') {
+    params.log?.info?.(
+      `[support-case-router] reply-fallback: repliedMessageId=${JSON.stringify(replyDiagnostics.repliedMessageId)}, matchedBy=${result.matchedBy}, markerRef=${JSON.stringify(replyDiagnostics.markerRef || '')}`,
+    );
   }
 
   params.log?.info?.(

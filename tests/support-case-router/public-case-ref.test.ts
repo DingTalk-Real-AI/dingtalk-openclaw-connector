@@ -51,6 +51,8 @@ vi.mock('../../src/services/media/index.ts', () => ({
 
 const {
   appendPublicCaseRefMarker,
+  buildSupportCaseOutboundIdDiagnostics,
+  collectSupportCaseOutboundIdCandidates,
   extractStableDingtalkOutboundMessageId,
 } = await import('../../src/reply-dispatcher.ts');
 
@@ -69,11 +71,61 @@ describe('public case ref outbound handling', () => {
   it('treats AI Card ids as stable and webhook process keys as unstable', () => {
     expect(extractStableDingtalkOutboundMessageId({ cardInstanceId: 'card_123' })).toBe('card_123');
     expect(extractStableDingtalkOutboundMessageId({ data: { outTrackId: 'card_456' } })).toBe('card_456');
+    expect(extractStableDingtalkOutboundMessageId({ deliverResultCarrierIds: ['msg_789'] })).toBeUndefined();
 
     expect(extractStableDingtalkOutboundMessageId({ processQueryKey: 'pq_123' })).toBeUndefined();
     expect(extractStableDingtalkOutboundMessageId({ data: { processQueryKey: 'pq_456' } })).toBeUndefined();
     expect(extractStableDingtalkOutboundMessageId({ messageId: 'webhook-msg-1' })).toBeUndefined();
     expect(extractStableDingtalkOutboundMessageId({})).toBeUndefined();
+  });
+
+  it('collects outbound id diagnostics without exposing message bodies', () => {
+    const candidate = {
+      processQueryKey: 'pq_123',
+      cardInstanceId: 'card_123',
+      deliverResultCarrierIds: ['msg_555'],
+      data: {
+        outTrackId: 'card_456',
+        msgId: 'msg_789',
+      },
+      text: 'reply body should never be logged by diagnostics',
+    };
+
+    expect(collectSupportCaseOutboundIdCandidates(candidate)).toEqual([
+      { path: 'cardInstanceId', value: 'card_123' },
+      { path: 'processQueryKey', value: 'pq_123' },
+      { path: 'data.outTrackId', value: 'card_456' },
+      { path: 'data.msgId', value: 'msg_789' },
+      { path: 'deliverResultCarrierIds[0]', value: 'msg_555' },
+    ]);
+
+    expect(buildSupportCaseOutboundIdDiagnostics(candidate)).toEqual({
+      rawOutboundIdFields: {
+        cardInstanceId: 'card_123',
+        outTrackId: '',
+        processQueryKey: 'pq_123',
+        messageId: '',
+        msgId: '',
+        'data.cardInstanceId': '',
+        'data.outTrackId': 'card_456',
+        'data.processQueryKey': '',
+        'data.messageId': '',
+        'data.msgId': 'msg_789',
+        deliverResultCarrierIds: ['msg_555'],
+        'data.deliverResultCarrierIds': [],
+      },
+      outboundIdCandidates: [
+        { path: 'cardInstanceId', value: 'card_123' },
+        { path: 'processQueryKey', value: 'pq_123' },
+        { path: 'data.outTrackId', value: 'card_456' },
+        { path: 'data.msgId', value: 'msg_789' },
+        { path: 'deliverResultCarrierIds[0]', value: 'msg_555' },
+      ],
+      keyShapes: {
+        topLevel: ['cardInstanceId', 'data', 'deliverResultCarrierIds', 'processQueryKey', 'text'],
+        data: ['msgId', 'outTrackId'],
+      },
+    });
   });
 });
 

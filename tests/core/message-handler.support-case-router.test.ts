@@ -129,6 +129,52 @@ describe('message-handler support case router wiring', () => {
     expect(joinedLogs).not.toContain('ACME');
   });
 
+  it('logs redacted reply diagnostics for interactiveCard replies without stable target ids', async () => {
+    const replyMapStorePath = await tempJsonlPath('reply-map.jsonl');
+    const logs: string[] = [];
+    const data = {
+      conversationType: '2',
+      conversationId: 'cid-1',
+      msgId: 'msg-card-reply',
+      msgtype: 'text',
+      robotCode: 'bot-code',
+      senderStaffId: 'user-a',
+      text: {
+        content: '@bot follow up on the card',
+        isReplyMsg: true,
+        at: { atDingtalkIds: ['bot-code'] },
+        repliedMsg: {
+          msgType: 'interactiveCard',
+          content: {},
+        },
+      },
+    };
+
+    const route = await resolveSupportCaseRouteForMessage({
+      accountId: 'acc-1',
+      config: supportCaseConfig(replyMapStorePath),
+      data,
+      content: extractMessageContent(data),
+      log: { info: (message: string) => logs.push(message) },
+    });
+
+    expect(route.enabled && route.shouldRun).toBe(true);
+    expect(route.matchedBy).toBe('new_root');
+
+    const joinedLogs = logs.join('\n');
+    expect(joinedLogs).toContain('[support-case-router] reply-diagnostics:');
+    expect(joinedLogs).toContain('"text.isReplyMsg":true');
+    expect(joinedLogs).toContain('"text.repliedMsg.msgId":""');
+    expect(joinedLogs).toContain('"content.isReplyMsg":false');
+    expect(joinedLogs).toContain('"content.repliedMsg.msgId":""');
+    expect(joinedLogs).toContain('"topLevel.msgId":"msg-card-reply"');
+    expect(joinedLogs).toContain('"topLevel.openThreadId":""');
+    expect(joinedLogs).toContain('directLinkageCandidates=["topLevel.msgId=msg-card-reply"]');
+    expect(joinedLogs).toContain('text.repliedMsg:interactiveCard');
+    expect(joinedLogs).toContain('[support-case-router] reply-fallback: shouldRun=true, matchedBy=new_root, replyIntent=true');
+    expect(joinedLogs).not.toContain('follow up on the card');
+  });
+
   it('allows reply_map and marker hits for existing cases without mention', async () => {
     const replyMapStorePath = await tempJsonlPath('reply-map.jsonl');
     await writeFile(replyMapStorePath, `${JSON.stringify({
