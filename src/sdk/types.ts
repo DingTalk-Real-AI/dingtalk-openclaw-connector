@@ -85,6 +85,12 @@ export interface DingtalkAccountConfig {
   name?: string;
   clientId?: string | number;
   clientSecret?: SecretInput;
+  /**
+   * 当前机器人的加密身份。多机器人协作时，其他 Agent 通过 atDingtalkIds=[chatbotUserId]
+   * 在群消息里 @ 该机器人。从 connector 启动后第一条群/单聊消息日志的 [BotIdentity] 行获取。
+   */
+  chatbotUserId?: string;
+  chatbotCorpId?: string;
   enableMediaUpload?: boolean;
   systemPrompt?: string;
   dmPolicy?: DmPolicy;

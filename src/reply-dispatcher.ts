@@ -35,10 +35,11 @@ import {
   createAICardForTarget,
   finishAICard,
   streamAICard,
+  isQpsLimitError,
   type AICardInstance,
   type AICardTarget,
 } from "./services/messaging/card.ts";
-import { sendMessage } from "./services/messaging.ts";
+import { sendMessage, sendTextMessage, sendMarkdownMessage } from "./services/messaging.ts";
 import { getOapiAccessToken } from "./utils/token.ts";
 import {
   processLocalImages,
@@ -198,8 +199,15 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   );
   const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
 
-  // 流式 AI Card 支持
-  const streamingEnabled = (account.config as any)?.streaming !== false;
+  // ✅ 群聊回复模式：当 groupReplyMode 为 text/markdown 时，群聊禁用 AI Card
+  const groupReplyMode = (account.config as any)?.groupReplyMode || 'aicard';
+  const isTextMode = !isDirect && (groupReplyMode === 'text' || groupReplyMode === 'markdown');
+  if (isTextMode) {
+    log.info(`[DingTalk] 群聊回复模式: ${groupReplyMode}，禁用 AI Card，使用 ${groupReplyMode} 发送`);
+  }
+
+  // 流式 AI Card 支持（text/markdown 模式强制禁用流式）
+  const streamingEnabled = !isTextMode && (account.config as any)?.streaming !== false;
   // 用 Promise 保存 AI Card 的创建过程，避免 final 消息到达时轮询等待
   let cardCreationPromise: Promise<void> | null = null;
 
@@ -552,23 +560,43 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 流式模式但没有 card target：降级到非流式发送
         // 或者非流式模式：使用普通消息发送
         if (info?.kind === "final") {
-          log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}`);
-          log.debug(`[DingTalk][deliver] 非流式发送，文本长度=${text.length}`);
+          log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}, isTextMode=${isTextMode}, groupReplyMode=${groupReplyMode}`);
           try {
             for (const chunk of core.channel.text.chunkTextWithMode(
               text,
               textChunkLimit,
               chunkMode
             )) {
-              await sendMessage(
-                account.config as DingtalkConfig,
-                sessionWebhook,
-                chunk,
-                {
-                  useMarkdown: true,
-                  log: params.runtime.log,
+              if (isTextMode) {
+                if (groupReplyMode === 'markdown') {
+                  await sendMarkdownMessage(
+                    account.config as DingtalkConfig,
+                    sessionWebhook,
+                    chunk.split('\n')[0]?.replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message',
+                    chunk,
+                    { cfg, detectBareAliases: true },
+                  );
+                } else {
+                  await sendTextMessage(
+                    account.config as DingtalkConfig,
+                    sessionWebhook,
+                    chunk,
+                    { cfg, detectBareAliases: true },
+                  );
                 }
-              );
+              } else {
+                await sendMessage(
+                  account.config as DingtalkConfig,
+                  sessionWebhook,
+                  chunk,
+                  {
+                    useMarkdown: true,
+                    log: params.runtime.log,
+                    cfg,
+                    detectBareAliases: true,
+                  }
+                );
+              }
             }
             log.info(`[DingTalk][deliver] ✅ 非流式发送成功`);
             deliveredFinalTexts.add(text);
@@ -659,10 +687,20 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               );
               log.debug(`[DingTalk][onPartialReply] ✅ AI Card 更新成功`);
             } catch (err: any) {
-              // QPS 限流已在 streamAICard 内部处理（自动退避+重试），
-              // 到达此处说明重试也失败了，记录错误但不中断流式更新
-              log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-              await sendFallbackErrorMessage('sendMessage', err.message);
+              // QPS 限流是瞬时错误：streamAICard 内部已自动退避+重试，
+              // 退避期过后下一次 partial 更新会把 AI Card 内容覆盖补齐，
+              // 因此不应把 QPS 限流展示为用户可见的「消息发送失败」提示，
+              // 否则用户会同时看到正常的 AI Card 回复和一条误报错误。
+              // 真正无法恢复的错误（finalize 仍失败）会在 closeStreaming
+              // 的降级路径里通过 sendFallbackErrorMessage 兜底。
+              if (isQpsLimitError(err)) {
+                log.warn(
+                  `[DingTalk][onPartialReply] AI Card 流式更新遇到 QPS 限流，已在内部退避重试；本次跳过，等待下一次 partial 更新补齐内容`,
+                );
+              } else {
+                log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
+                await sendFallbackErrorMessage('sendMessage', err.message);
+              }
             }
           } else {
             log.debug(`[DingTalk][onPartialReply] 节流控制，跳过本次更新（距离上次更新 ${now - lastUpdateTime}ms）`);

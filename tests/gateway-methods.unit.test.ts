@@ -95,9 +95,12 @@ describe('Gateway Methods - 注册', () => {
     expect(handlers.has('dingtalk-connector.docs.list')).toBe(true);
     expect(handlers.has('dingtalk-connector.status')).toBe(true);
     expect(handlers.has('dingtalk-connector.probe')).toBe(true);
+    expect(handlers.has('dingtalk-connector.fixStuckCards')).toBe(true);
+    expect(handlers.has('dingtalk-connector.listAccounts')).toBe(true);
+    expect(handlers.has('dingtalk-connector.bootstrapBotIdentity')).toBe(true);
 
-    // 验证注册了 10 个方法
-    expect(handlers.size).toBe(10);
+    // 10 原有 + fixStuckCards + listAccounts + bootstrapBotIdentity
+    expect(handlers.size).toBe(13);
   });
 });
 

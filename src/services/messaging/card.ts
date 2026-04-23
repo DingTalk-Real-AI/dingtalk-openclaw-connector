@@ -41,6 +41,12 @@ const cardRateLimiter = {
   lastRefillTime: Date.now(),
   /** QPS 退避截止时间（遇到限流错误后设置） */
   backoffUntil: 0,
+  /**
+   * 串行化锁：保证并发的 waitForToken 被一个一个处理。
+   * 否则多个并发调用会同时通过 `tokens < 1` 检查并各自扣减，
+   * 令牌桶会被并发击穿，导致实际 QPS 远超 CARD_API_MAX_QPS。
+   */
+  _queueTail: Promise.resolve() as Promise<unknown>,
 
   /**
    * 补充令牌：按时间流逝恢复令牌数
@@ -60,30 +66,47 @@ const cardRateLimiter = {
   /**
    * 等待直到有可用令牌，或退避期结束
    * @returns 等待的毫秒数（0 表示无需等待）
+   *
+   * 通过 `_queueTail` 将所有并发调用串行化，确保 token 扣减真正生效。
    */
   async waitForToken(): Promise<number> {
-    let totalWaitMs = 0;
-
-    // 如果处于退避期，先等待退避结束
-    const now = Date.now();
-    if (now < this.backoffUntil) {
-      const backoffWaitMs = this.backoffUntil - now;
-      await sleep(backoffWaitMs);
-      totalWaitMs += backoffWaitMs;
+    const prev = this._queueTail;
+    let release!: () => void;
+    this._queueTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      await prev;
+    } catch {
+      /* 忽略前序错误，只用于串行等待 */
     }
 
-    this.refill();
+    try {
+      let totalWaitMs = 0;
 
-    // 如果没有可用令牌，等待直到有令牌
-    if (this.tokens < 1) {
-      const waitMs = Math.ceil((1 - this.tokens) / CARD_API_MAX_QPS * 1000);
-      await sleep(waitMs);
-      totalWaitMs += waitMs;
+      // 如果处于退避期，先等待退避结束
+      const now = Date.now();
+      if (now < this.backoffUntil) {
+        const backoffWaitMs = this.backoffUntil - now;
+        await sleep(backoffWaitMs);
+        totalWaitMs += backoffWaitMs;
+      }
+
       this.refill();
-    }
 
-    this.tokens -= 1;
-    return totalWaitMs;
+      // 如果没有可用令牌，等待直到有令牌
+      if (this.tokens < 1) {
+        const waitMs = Math.ceil(((1 - this.tokens) / CARD_API_MAX_QPS) * 1000);
+        await sleep(waitMs);
+        totalWaitMs += waitMs;
+        this.refill();
+      }
+
+      this.tokens -= 1;
+      return totalWaitMs;
+    } finally {
+      release();
+    }
   },
 
   /**
@@ -104,9 +127,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 判断错误是否为钉钉 QPS 限流错误
+ * 判断错误是否为钉钉 QPS 限流错误。
+ *
+ * 导出给上层调用（如 reply-dispatcher），用于在错误处理时区分
+ * 「瞬时可恢复错误」与「真正的发送失败」，避免把 QPS 限流这种
+ * 内部已自动退避重试、后续会自动恢复的错误展示为用户可见的
+ * 「消息发送失败」提示。
  */
-function isQpsLimitError(err: any): boolean {
+export function isQpsLimitError(err: any): boolean {
   const errorCode = err?.response?.data?.code;
   return (
     err?.response?.status === 403 &&
@@ -349,27 +377,42 @@ export async function streamAICard(
         },
       },
     };
-    try {
-      const statusResp = await dingtalkHttp.put(
-        `${DINGTALK_API}/v1.0/card/instances`,
-        statusBody,
-        {
-          headers: {
-            "x-acs-dingtalk-access-token": card.accessToken,
-            "Content-Type": "application/json",
-          },
+    const putInputing = () =>
+      dingtalkHttp.put(`${DINGTALK_API}/v1.0/card/instances`, statusBody, {
+        headers: {
+          "x-acs-dingtalk-access-token": card.accessToken,
+          "Content-Type": "application/json",
         },
-      );
+      });
+    try {
+      const statusResp = await putInputing();
       log?.info?.(
         `[DingTalk][AICard] INPUTING 响应：status=${statusResp.status}`,
       );
     } catch (err: any) {
       if (isQpsLimitError(err)) {
+        // 与 streaming 分支一致：QPS 限流是瞬时错误，退避后重试一次，
+        // 避免首个 chunk 失败就向上抛错触发用户可见的兜底消息。
         cardRateLimiter.triggerBackoff();
-        log?.warn?.(`[DingTalk][AICard] INPUTING 触发 QPS 限流，退避 ${QPS_BACKOFF_DURATION_MS}ms`);
+        log?.warn?.(
+          `[DingTalk][AICard] INPUTING 触发 QPS 限流，退避 ${QPS_BACKOFF_DURATION_MS}ms 后重试`,
+        );
+        await cardRateLimiter.waitForToken();
+        try {
+          const retryResp = await putInputing();
+          log?.info?.(
+            `[DingTalk][AICard] INPUTING 重试成功：status=${retryResp.status}`,
+          );
+        } catch (retryErr: any) {
+          log?.error?.(
+            `[DingTalk][AICard] INPUTING 重试失败：${retryErr.message}`,
+          );
+          throw retryErr;
+        }
+      } else {
+        log?.error?.(`[DingTalk][AICard] INPUTING 切换失败：${err.message}`);
+        throw err;
       }
-      log?.error?.(`[DingTalk][AICard] INPUTING 切换失败：${err.message}`);
-      throw err;
     }
     card.inputingStarted = true;
   }
@@ -474,24 +517,44 @@ export async function finishAICard(
     cardUpdateOptions: { updateCardDataByKey: true },
   };
 
+  const putFinished = () =>
+    dingtalkHttp.put(`${DINGTALK_API}/v1.0/card/instances`, body, {
+      headers: {
+        "x-acs-dingtalk-access-token": card.accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
   try {
     // Wait for a rate-limiter token before the FINISHED PUT call to avoid
     // exceeding QPS limits when multiple conversations finish concurrently.
     await cardRateLimiter.waitForToken();
-    const finishResp = await dingtalkHttp.put(
-      `${DINGTALK_API}/v1.0/card/instances`,
-      body,
-      {
-        headers: {
-          "x-acs-dingtalk-access-token": card.accessToken,
-          "Content-Type": "application/json",
-        },
-      },
-    );
+    const finishResp = await putFinished();
     log?.info?.(
       `[DingTalk][AICard] FINISHED 响应：status=${finishResp.status}`,
     );
   } catch (err: any) {
-    log?.error?.(`[DingTalk][AICard] FINISHED 更新失败：${err.message}`);
+    if (isQpsLimitError(err)) {
+      // FINISHED 失败会让卡片卡在"思考中"状态（loading 动画不消失），
+      // 是最影响用户体验的失败路径，必须退避重试一次以兜底。
+      cardRateLimiter.triggerBackoff();
+      log?.warn?.(
+        `[DingTalk][AICard] FINISHED 触发 QPS 限流，退避 ${QPS_BACKOFF_DURATION_MS}ms 后重试`,
+      );
+      try {
+        await cardRateLimiter.waitForToken();
+        const retryResp = await putFinished();
+        log?.info?.(
+          `[DingTalk][AICard] FINISHED 重试成功：status=${retryResp.status}`,
+        );
+        return;
+      } catch (retryErr: any) {
+        log?.error?.(
+          `[DingTalk][AICard] FINISHED 重试失败：${retryErr.message}`,
+        );
+      }
+    } else {
+      log?.error?.(`[DingTalk][AICard] FINISHED 更新失败：${err.message}`);
+    }
   }
 }

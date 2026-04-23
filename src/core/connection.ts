@@ -565,6 +565,16 @@ export async function monitorSingleAccount(
         logger.info(
           `RobotCode: ${data.robotCode || account.config?.clientId || "N/A"}`,
         );
+        // 暴露当前机器人的加密身份（chatbotUserId / chatbotCorpId）
+        // 用途：多机器人协作时，把这两个值配进 openclaw.json 对应 account 的元数据下，
+        // 让其他 agent 能在群消息里通过 atDingtalkIds 写上对方的 chatbotUserId 触发 @ UI。
+        // 注意：这里**不**经过 logger.info（受 debug 开关控制），直接 console.log，
+        // 否则首次配置的用户在未开 debug 时永远看不到这两个 ID，无法完成多机器人协作配置。
+        if (data.chatbotUserId || data.chatbotCorpId) {
+          console.log(
+            `[DingTalk:${accountId}] [BotIdentity] accountId=${accountId} chatbotUserId=${data.chatbotUserId || "N/A"} chatbotCorpId=${data.chatbotCorpId || "N/A"}`,
+          );
+        }
 
         // ===== 业务层去重：补充 data.msgId，防止钉钉服务端重发穿透 =====
         // 协议层已标记了 headers.messageId，此处再补充标记 data.msgId。

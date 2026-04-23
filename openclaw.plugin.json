@@ -1,7 +1,7 @@
 {
   "id": "dingtalk-connector",
   "name": "DingTalk Channel",
-  "version": "0.8.18",
+  "version": "0.8.19-beta.3",
   "description": "Official OpenClaw DingTalk channel plugin | 钉钉官方 OpenClaw 插件",
   "author": "DingTalk Real Team",
   "main": "index.ts",
@@ -239,6 +239,14 @@
           "debug": {
             "type": "boolean"
           },
+          "groupReplyMode": {
+            "type": "string",
+            "enum": [
+              "aicard",
+              "text",
+              "markdown"
+            ]
+          },
           "accounts": {
             "type": "object",
             "additionalProperties": {
@@ -293,6 +301,12 @@
                       "additionalProperties": false
                     }
                   ]
+                },
+                "chatbotUserId": {
+                  "type": "string"
+                },
+                "chatbotCorpId": {
+                  "type": "string"
                 },
                 "dmPolicy": {
                   "type": "string",
@@ -449,6 +463,14 @@
                 },
                 "debug": {
                   "type": "boolean"
+                },
+                "groupReplyMode": {
+                  "type": "string",
+                  "enum": [
+                    "aicard",
+                    "text",
+                    "markdown"
+                  ]
                 }
               },
               "additionalProperties": false

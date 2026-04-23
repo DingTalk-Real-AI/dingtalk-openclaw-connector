@@ -23,6 +23,7 @@ import {
   type AICardInstance,
   type AICardTarget,
 } from "./messaging/card.ts";
+import { substituteBotMentions } from "./messaging/mentions.ts";
 
 // ============ 常量 ============
 // 注意：AI Card 相关的类型和函数已移至 ./messaging/card.ts，通过上方 import 引入
@@ -52,6 +53,16 @@ export interface ProactiveSendOptions {
   log?: any;
   useAICard?: boolean;
   fallbackToNormal?: boolean;
+  /**
+   * @人 / @机器人 列表。多机器人协作场景下，传入对方机器人的 chatbotUserId（加密 ID）
+   * 可在群消息中嵌入 @ 文字。注意：钉钉应用机器人不会因此触发对方的 stream 回调，
+   * 仅用于视觉展示与配合 OpenClaw sessions_send 的协作叙事。
+   */
+  atDingtalkIds?: string[];
+  /** @人列表（普通用户 staffId / userId） */
+  atUserIds?: string[];
+  /** 是否 @ 全员 */
+  atAll?: boolean;
 }
 
 // ============ AI Card 相关函数已移至 ./messaging/card.ts ============
@@ -61,6 +72,7 @@ export interface ProactiveSendOptions {
 
 /**
  * 发送 Markdown 消息
+ * 支持 @用户（atUserId）和 @机器人（atDingtalkIds）
  */
 export async function sendMarkdownMessage(
   config: DingtalkConfig,
@@ -71,14 +83,45 @@ export async function sendMarkdownMessage(
 ): Promise<any> {
   const token = await getAccessToken(config);
   let text = markdown;
+  let mergedAtDingtalkIds: string[] = Array.isArray(options.atDingtalkIds)
+    ? [...options.atDingtalkIds]
+    : [];
+
+  // 多机器人兜底：如果调用方传入全局 cfg（包含 channels.dingtalk-connector.accounts），
+  // 自动把文本里 `@<友好名/agentId/accountId>` 替换成 `@<chatbotUserId>`，
+  // 并合并被注入的加密 ID 到 atDingtalkIds，保证钉钉正确渲染蓝色 @ 并推送给被 @ 的 bot 的 stream。
+  if (options.cfg) {
+    const substituted = substituteBotMentions(text, options.cfg, {
+      detectBareAliases: Boolean(options.detectBareAliases),
+    });
+    text = substituted.text;
+    for (const id of substituted.injectedChatbotUserIds) {
+      if (!mergedAtDingtalkIds.includes(id)) mergedAtDingtalkIds.push(id);
+    }
+  }
+
   if (options.atUserId) text = `${text} @${options.atUserId}`;
+  if (mergedAtDingtalkIds.length) {
+    for (const id of mergedAtDingtalkIds) {
+      if (!text.includes(`@${id}`)) {
+        text = `${text} @${id}`;
+      }
+    }
+  }
 
   const body: any = {
     msgtype: "markdown",
     markdown: { title: title || "Message", text },
   };
-  if (options.atUserId)
-    body.at = { atUserIds: [options.atUserId], isAtAll: false };
+  const atUserIds = options.atUserId ? [options.atUserId] : [];
+  const atDingtalkIds = mergedAtDingtalkIds;
+  if (atUserIds.length > 0 || atDingtalkIds.length > 0) {
+    body.at = {
+      ...(atUserIds.length > 0 ? { atUserIds } : {}),
+      ...(atDingtalkIds.length > 0 ? { atDingtalkIds } : {}),
+      isAtAll: false,
+    };
+  }
 
   return (
     await dingtalkHttp.post(sessionWebhook, body, {
@@ -92,6 +135,7 @@ export async function sendMarkdownMessage(
 
 /**
  * 发送文本消息
+ * 支持 @用户（atUserId）和 @机器人（atDingtalkIds）
  */
 export async function sendTextMessage(
   config: DingtalkConfig,
@@ -100,9 +144,39 @@ export async function sendTextMessage(
   options: any = {},
 ): Promise<any> {
   const token = await getAccessToken(config);
-  const body: any = { msgtype: "text", text: { content: text } };
-  if (options.atUserId)
-    body.at = { atUserIds: [options.atUserId], isAtAll: false };
+  let content = text;
+  let mergedAtDingtalkIds: string[] = Array.isArray(options.atDingtalkIds)
+    ? [...options.atDingtalkIds]
+    : [];
+
+  // 多机器人兜底：见 sendMarkdownMessage 同样说明
+  if (options.cfg) {
+    const substituted = substituteBotMentions(content, options.cfg, {
+      detectBareAliases: Boolean(options.detectBareAliases),
+    });
+    content = substituted.text;
+    for (const id of substituted.injectedChatbotUserIds) {
+      if (!mergedAtDingtalkIds.includes(id)) mergedAtDingtalkIds.push(id);
+    }
+  }
+
+  if (mergedAtDingtalkIds.length) {
+    for (const id of mergedAtDingtalkIds) {
+      if (!content.includes(`@${id}`)) {
+        content = `${content} @${id}`;
+      }
+    }
+  }
+  const body: any = { msgtype: "text", text: { content } };
+  const atUserIds = options.atUserId ? [options.atUserId] : [];
+  const atDingtalkIds = mergedAtDingtalkIds;
+  if (atUserIds.length > 0 || atDingtalkIds.length > 0) {
+    body.at = {
+      ...(atUserIds.length > 0 ? { atUserIds } : {}),
+      ...(atDingtalkIds.length > 0 ? { atDingtalkIds } : {}),
+      isAtAll: false,
+    };
+  }
 
   return (
     await dingtalkHttp.post(sessionWebhook, body, {
@@ -123,37 +197,103 @@ export async function sendMessage(
   text: string,
   options: any = {},
 ): Promise<any> {
+  // 多机器人协作：自动从文本中提取 chatbotUserId 形式的加密 dingtalkId
+  // (格式固定为 `$:LWCP_v1:$<base64-like>`)，注入到 options.atDingtalkIds，
+  // 让钉钉 webhook 把它渲染成蓝色 @ 标签，并把这条消息推送给被 @ 的目标机器人。
+  // 参考钉钉文档：自定义机器人 webhook + at.atDingtalkIds 即可完成机器人间互相召唤。
+  const mergedOptions: any = { ...options };
+  let workingText = text;
+
+  // 多机器人兜底：先把文本里的 `@<友好名/agentId/accountId>` 替换成 `@<chatbotUserId>`，
+  // 再按原有规则扫描加密 ID 注入 atDingtalkIds。两步都依赖 options.cfg（全局配置）。
+  if (options.cfg && typeof workingText === "string" && workingText.length > 0) {
+    const substituted = substituteBotMentions(workingText, options.cfg, {
+      detectBareAliases: Boolean(options.detectBareAliases),
+    });
+    workingText = substituted.text;
+    if (substituted.injectedChatbotUserIds.length > 0) {
+      const existing = Array.isArray(mergedOptions.atDingtalkIds)
+        ? (mergedOptions.atDingtalkIds as string[])
+        : [];
+      mergedOptions.atDingtalkIds = Array.from(
+        new Set([...existing, ...substituted.injectedChatbotUserIds]),
+      );
+    }
+  }
+
+  if (typeof workingText === "string" && workingText.length > 0) {
+    const CHATBOT_ID_PATTERN = /\$:LWCP_v1:\$[A-Za-z0-9+/=]+/g;
+    const found = Array.from(new Set(workingText.match(CHATBOT_ID_PATTERN) || []));
+    if (found.length > 0) {
+      const existing = Array.isArray(mergedOptions.atDingtalkIds)
+        ? (mergedOptions.atDingtalkIds as string[])
+        : [];
+      const merged = Array.from(new Set([...existing, ...found]));
+      mergedOptions.atDingtalkIds = merged;
+    }
+  }
+
   const hasMarkdown =
-    /^[#*>-]|[*_`#\[\]]/.test(text) ||
-    (text && typeof text === "string" && text.includes("\n"));
+    /^[#*>-]|[*_`#\[\]]/.test(workingText) ||
+    (workingText && typeof workingText === "string" && workingText.includes("\n"));
   const useMarkdown =
-    options.useMarkdown !== false && (options.useMarkdown || hasMarkdown);
+    mergedOptions.useMarkdown !== false && (mergedOptions.useMarkdown || hasMarkdown);
+
+  // cfg 已在上方消费完毕，子函数不需要再次替换，剥除避免重复扫描
+  const downstreamOptions = { ...mergedOptions };
+  delete downstreamOptions.cfg;
 
   if (useMarkdown) {
     const title =
-      options.title ||
-      text
+      downstreamOptions.title ||
+      workingText
         .split("\n")[0]
         .replace(/^[#*\s\->]+/, "")
         .slice(0, 20) ||
       "Message";
-    return sendMarkdownMessage(config, sessionWebhook, title, text, options);
+    return sendMarkdownMessage(config, sessionWebhook, title, workingText, downstreamOptions);
   }
-  return sendTextMessage(config, sessionWebhook, text, options);
+  return sendTextMessage(config, sessionWebhook, workingText, downstreamOptions);
 }
 
 // ============ 主动发送消息 ============
 
 /**
  * 构建普通消息的 msgKey 和 msgParam
+ *
+ * 第四个参数可携带 at 信息：
+ * - atDingtalkIds：对方加密 dingtalkId / chatbotUserId（多机器人协作时使用）
+ * - atUserIds：普通成员 staffId
+ * 这些 ID 会以 `@${id}` 文本附加到 content 末尾（钉钉客户端会尝试将其渲染成 @ 标签）。
  */
 export function buildMsgPayload(
   msgType: DingTalkMsgType,
   content: string,
   title?: string,
+  atOptions?: { atDingtalkIds?: string[]; atUserIds?: string[]; atAll?: boolean },
 ): { msgKey: string; msgParam: Record<string, any> } | { error: string } {
+  // 在 text/markdown 末尾追加 @文本（其它消息类型如 link/actionCard/image 不处理）
+  const appendAtMentions = (raw: string): string => {
+    if (!atOptions) return raw;
+    let out = raw ?? "";
+    const ids = [
+      ...(atOptions.atDingtalkIds || []),
+      ...(atOptions.atUserIds || []),
+    ];
+    for (const id of ids) {
+      if (id && !out.includes(`@${id}`)) {
+        out = `${out} @${id}`;
+      }
+    }
+    if (atOptions.atAll && !out.includes("@all")) {
+      out = `${out} @all`;
+    }
+    return out;
+  };
+
   switch (msgType) {
-    case "markdown":
+    case "markdown": {
+      const text = appendAtMentions(content);
       return {
         msgKey: "sampleMarkdown",
         msgParam: {
@@ -164,9 +304,10 @@ export function buildMsgPayload(
               .replace(/^[#*\s\->]+/, "")
               .slice(0, 20) ||
             "Message",
-          text: content,
+          text,
         },
       };
+    }
     case "link":
       try {
         return {
@@ -191,11 +332,13 @@ export function buildMsgPayload(
         msgParam: { photoURL: content },
       };
     case "text":
-    default:
+    default: {
+      const finalContent = appendAtMentions(content);
       return {
         msgKey: "sampleText",
-        msgParam: { content },
+        msgParam: { content: finalContent },
       };
+    }
   }
 }
 
@@ -579,6 +722,8 @@ export async function sendMediaToDingTalk(params: {
   text?: string;
   mediaUrl: string;
   replyToId?: string;
+  /** 框架提供的文件搜索根目录列表，用于解析相对路径 */
+  mediaLocalRoots?: readonly string[];
 }): Promise<SendResult> {
   const log = createLoggerFromConfig(params.config, 'sendMediaToDingTalk');
   
@@ -593,7 +738,7 @@ export async function sendMediaToDingTalk(params: {
     }),
   );
 
-  const { config, target, text, mediaUrl, replyToId } = params;
+  const { config, target, text, mediaUrl, replyToId, mediaLocalRoots } = params;
 
   // 参数校验
   if (!target || typeof target !== "string") {
@@ -687,8 +832,24 @@ export async function sendMediaToDingTalk(params: {
         { msgType: "text", replyToId },
       );
     }
+    // 解析文件路径：如果是相对路径且直接不存在，尝试基于 mediaLocalRoots 查找
+    let resolvedMediaUrl = mediaUrl;
+    const { toLocalPath } = await import('./media.ts');
+    const _fs = await import('fs');
+    const _path = await import('path');
+    const directPath = toLocalPath(mediaUrl);
+    if (!_fs.existsSync(directPath) && mediaLocalRoots?.length && !_path.isAbsolute(directPath)) {
+      for (const root of mediaLocalRoots) {
+        const candidate = _path.resolve(root, directPath);
+        if (_fs.existsSync(candidate)) {
+          log.info(`相对路径解析成功：${mediaUrl} → ${candidate}（基于 mediaLocalRoots）`);
+          resolvedMediaUrl = candidate;
+          break;
+        }
+      }
+    }
     const uploadResult = await uploadMediaToDingTalk(
-      mediaUrl,
+      resolvedMediaUrl,
       mediaType,
       oapiToken,
       maxSize,
@@ -949,8 +1110,12 @@ async function sendProactiveInternal(
       ? `${DINGTALK_API}/v1.0/robot/oToMessages/batchSend`
       : `${DINGTALK_API}/v1.0/robot/groupMessages/send`;
 
-    // 使用 buildMsgPayload 构建消息体（支持所有消息类型）
-    const payload = buildMsgPayload(msgType, content, options.title);
+    // 使用 buildMsgPayload 构建消息体（支持所有消息类型 + 多机器人协作时的 @ 嵌入）
+    const payload = buildMsgPayload(msgType, content, options.title, {
+      atDingtalkIds: options.atDingtalkIds,
+      atUserIds: options.atUserIds,
+      atAll: options.atAll,
+    });
     if ("error" in payload) {
       log.error("构建消息失败:", payload.error);
       return { ok: false, error: payload.error, usedAICard: false };

@@ -238,6 +238,102 @@ describe('AI Card helpers', () => {
       await expect(streamAICard(card, 'Hello', false, undefined, log)).rejects.toThrow();
       // streamAICard no longer pre-logs errors; callers are responsible for error handling
     });
+
+    // 回归测试 (issue #510)：令牌桶 waitForToken 串行化验证。
+    // 修复前多个并发 streamAICard 会同时通过 `tokens < 1` 检查并各自扣减令牌，
+    // 令牌桶被并发击穿；修复后通过 _queueTail 串行化，所有并发调用都能
+    // 正常排队完成，不会死锁、不会抛错。
+    it('should serialize concurrent streamAICard calls without deadlock', async () => {
+      const { __testables } = await import('../test');
+      const { streamAICard } = __testables as any;
+
+      mockAxiosPut.mockResolvedValue({ status: 200, data: {} });
+
+      // 用 inputingStarted=true 跳过 INPUTING 分支，只测试 streaming + 令牌桶
+      const makeCard = (id: number) => ({
+        cardInstanceId: `card-concurrent-${id}`,
+        accessToken: 'token123',
+        inputingStarted: true,
+      });
+
+      // 并发 30 次（超过 CARD_API_MAX_QPS=20，触发排队等待）
+      const N = 30;
+      const results = await Promise.allSettled(
+        Array.from({ length: N }, (_, i) =>
+          streamAICard(makeCard(i), `content-${i}`, false, undefined, log),
+        ),
+      );
+
+      // 全部成功：验证串行化不会死锁、不会错误降级
+      const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+      expect(fulfilled).toBe(N);
+
+      // streaming PUT 至少被调用 N 次（每个并发 1 次）
+      const streamingCalls = (mockAxiosPut.mock.calls as any[][]).filter((c) =>
+        String(c[0]).includes('/card/streaming'),
+      );
+      expect(streamingCalls.length).toBe(N);
+    }, 15_000);
+
+    it('should retry INPUTING on QPS limit (403 QpsLimit) and succeed', async () => {
+      // Regression guard for issue #510: first INPUTING PUT may hit QpsLimit;
+      // streamAICard must back off and retry once instead of throwing, so the
+      // AI Card keeps updating and callers don't show a fake "消息发送失败".
+      const { __testables } = await import('../test');
+      const { streamAICard } = __testables as any;
+
+      const qpsError: any = new Error('Request failed with status code 403');
+      qpsError.response = {
+        status: 403,
+        data: { code: 'QpsLimit.ExceedRealQps', message: 'qps exceed' },
+      };
+
+      let inputingCall = 0;
+      mockAxiosPut.mockImplementation((url: string) => {
+        if (url.includes('/card/instances')) {
+          inputingCall += 1;
+          if (inputingCall === 1) {
+            return Promise.reject(qpsError);
+          }
+          return Promise.resolve({ status: 200, data: {} });
+        }
+        return Promise.resolve({ status: 200, data: {} });
+      });
+
+      const card = {
+        cardInstanceId: 'card-qps',
+        accessToken: 'token123',
+        inputingStarted: false,
+      };
+
+      await expect(
+        streamAICard(card, 'Hello', false, undefined, log),
+      ).resolves.toBeUndefined();
+
+      expect(inputingCall).toBeGreaterThanOrEqual(2);
+      expect(card.inputingStarted).toBe(true);
+    }, 10_000);
+  });
+
+  describe('isQpsLimitError', () => {
+    it('should identify 403 QpsLimit errors', async () => {
+      const { __testables } = await import('../test');
+      const { isQpsLimitError } = __testables as any;
+
+      const qpsErr: any = new Error('403');
+      qpsErr.response = { status: 403, data: { code: 'QpsLimit.Exceed' } };
+      expect(isQpsLimitError(qpsErr)).toBe(true);
+
+      const otherErr: any = new Error('400');
+      otherErr.response = { status: 400, data: { code: 'BadRequest' } };
+      expect(isQpsLimitError(otherErr)).toBe(false);
+
+      const forbiddenOther: any = new Error('403');
+      forbiddenOther.response = { status: 403, data: { code: 'Forbidden.NoPermission' } };
+      expect(isQpsLimitError(forbiddenOther)).toBe(false);
+
+      expect(isQpsLimitError(new Error('network'))).toBe(false);
+    });
   });
 
   describe('finishAICard', () => {
@@ -297,6 +393,50 @@ describe('AI Card helpers', () => {
 
       expect(log.error).toHaveBeenCalled();
     });
+
+    // 回归测试 (issue #510)：FINISHED PUT 遇到 QPS 限流时应退避重试，
+    // 避免卡片永远卡在"思考动画"状态（INPUTING 不结束）。
+    it('should retry FINISHED PUT on QPS limit and succeed', async () => {
+      const { __testables } = await import('../test');
+      const { finishAICard } = __testables as any;
+
+      const qpsError: any = new Error('Request failed with status code 403');
+      qpsError.response = {
+        status: 403,
+        data: { code: 'QpsLimit.ExceedRealQps' },
+      };
+
+      // 所有 PUT 都针对 /card/instances 或 /card/streaming。
+      // /streaming 始终成功；/instances（FINISHED PUT）第一次 QPS 失败，第二次成功。
+      let finishedCall = 0;
+      mockAxiosPut.mockImplementation((url: string) => {
+        if (url.includes('/card/streaming')) {
+          return Promise.resolve({ status: 200, data: {} });
+        }
+        // /card/instances，此处用于 FINISHED（因 inputingStarted=true 不会走 INPUTING）
+        finishedCall += 1;
+        if (finishedCall === 1) {
+          return Promise.reject(qpsError);
+        }
+        return Promise.resolve({ status: 200, data: {} });
+      });
+
+      const card = {
+        cardInstanceId: 'card-qps-finish',
+        accessToken: 'token123',
+        inputingStarted: true,
+      };
+
+      await finishAICard(card, 'Final content', undefined, log);
+
+      // 至少两次 FINISHED PUT：一次失败 + 一次重试成功
+      expect(finishedCall).toBeGreaterThanOrEqual(2);
+      // FINISHED 重试成功路径会打 info 日志，错误路径不该被触发
+      const errorCalls = (log.error.mock.calls as any[][]).filter((c) =>
+        String(c[0] ?? '').includes('FINISHED 更新失败'),
+      );
+      expect(errorCalls.length).toBe(0);
+    }, 10_000);
   });
 
   describe('sendAICardToUser', () => {
