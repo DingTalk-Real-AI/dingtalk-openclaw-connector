@@ -35,6 +35,29 @@ const DingtalkToolsConfigSchema = z
   .strict()
   .optional();
 
+const SupportCaseRouterToolPolicySchema = z
+  .object({
+    mode: z.literal("allowlist").optional().default("allowlist"),
+    allow: z.array(z.string()).min(1).optional(),
+    deny: z.array(z.string()).optional(),
+  })
+  .strict();
+
+const SupportCaseRouterSchema = z
+  .object({
+    enabled: z.boolean().optional().default(false),
+    allowedGroups: z.array(z.union([z.string(), z.number()])).optional(),
+    requireMentionForNewRoot: z.boolean().optional().default(true),
+    safeAgentId: z.string().trim().min(1).optional(),
+    replyMapStorePath: z.string().trim().min(1).optional(),
+    runLockStorePath: z.string().trim().min(1).optional(),
+    caseMarkerMode: z.enum(["short-ref", "none"]).optional().default("short-ref"),
+    staleAfterMs: z.number().int().positive().optional().default(5 * 60 * 1000),
+    doneTtlMs: z.number().int().positive().optional().default(24 * 60 * 60 * 1000),
+    toolPolicy: SupportCaseRouterToolPolicySchema.optional(),
+  })
+  .strict();
+
 export const DingtalkGroupSchema = z
   .object({
     requireMention: z.boolean().optional(),
@@ -68,6 +91,13 @@ const DingtalkSharedConfigShape = {
   debug: z.boolean().optional(), // DWClient debug mode
   enableMediaUpload: z.boolean().optional(),
   systemPrompt: z.string().optional(),
+  supportCaseRouter: SupportCaseRouterSchema.optional().default({
+    enabled: false,
+    requireMentionForNewRoot: true,
+    caseMarkerMode: "short-ref",
+    staleAfterMs: 5 * 60 * 1000,
+    doneTtlMs: 24 * 60 * 60 * 1000,
+  }),
 };
 
 /**
@@ -142,6 +172,37 @@ export const DingtalkConfigSchema = DingtalkConfigBaseSchema.superRefine((value,
           path: ["groupAllowFrom"],
           message:
             'channels.dingtalk-connector.groupPolicy="allowlist" requires channels.dingtalk-connector.groupAllowFrom to contain at least one entry',
+        });
+      }
+    }
+
+    if (value.supportCaseRouter?.enabled === true) {
+      const allowedGroups = value.supportCaseRouter.allowedGroups ?? [];
+      if (allowedGroups.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["supportCaseRouter", "allowedGroups"],
+          message:
+            'channels.dingtalk-connector.supportCaseRouter.enabled=true requires supportCaseRouter.allowedGroups to contain at least one entry',
+        });
+      }
+
+      if (!value.supportCaseRouter.safeAgentId?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["supportCaseRouter", "safeAgentId"],
+          message:
+            'channels.dingtalk-connector.supportCaseRouter.enabled=true requires supportCaseRouter.safeAgentId',
+        });
+      }
+
+      const toolPolicy = value.supportCaseRouter.toolPolicy;
+      if (!toolPolicy || (toolPolicy.allow?.length ?? 0) === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["supportCaseRouter", "toolPolicy"],
+          message:
+            'channels.dingtalk-connector.supportCaseRouter.enabled=true requires supportCaseRouter.toolPolicy.allow to define a safe allowlist',
         });
       }
     }

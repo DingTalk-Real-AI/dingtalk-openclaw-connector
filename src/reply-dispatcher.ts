@@ -17,6 +17,88 @@ interface ReplyPayload {
   [key: string]: any;
 }
 
+type SupportCaseRouteForReplyDispatcher = {
+  caseId: string;
+  rootMessageId: string;
+  publicCaseRef?: string;
+  matchedBy: 'reply_map' | 'marker' | 'new_root';
+  isNewCase: boolean;
+};
+
+type SupportCaseReplyMapStore = {
+  recordOutbound: (input: {
+    accountId: string;
+    conversationId: string;
+    messageId: string;
+    caseId: string;
+    rootMessageId: string;
+    publicCaseRef?: string;
+    source: 'outbound_ack';
+  }) => Promise<unknown>;
+};
+
+type SupportCaseReplyContext = {
+  route: SupportCaseRouteForReplyDispatcher;
+  replyMapStore: SupportCaseReplyMapStore;
+  markerMode?: 'short-ref' | 'none';
+};
+
+const PUBLIC_CASE_REF_PATTERN = /^#Q-[A-Z0-9]{4,16}$/i;
+const KNOWN_UNSTABLE_OUTBOUND_IDS = new Set([
+  'unknown',
+  'file-message-sent',
+  'image-message-sent',
+  'video-message-sent',
+  'video-text-sent',
+]);
+
+function normalizePublicCaseRef(publicCaseRef: string): string | undefined {
+  const normalized = publicCaseRef.trim().toUpperCase();
+  return PUBLIC_CASE_REF_PATTERN.test(normalized) ? normalized : undefined;
+}
+
+function normalizeStableOutboundId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  if (!normalized || KNOWN_UNSTABLE_OUTBOUND_IDS.has(normalized.toLowerCase())) return undefined;
+  return normalized;
+}
+
+export function extractStableDingtalkOutboundMessageId(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, any>;
+  const candidates = [
+    record.cardInstanceId,
+    record.outTrackId,
+    record.data?.cardInstanceId,
+    record.data?.outTrackId,
+  ];
+
+  for (const candidate of candidates) {
+    const stableId = normalizeStableOutboundId(candidate);
+    if (stableId) return stableId;
+  }
+
+  return undefined;
+}
+
+export function appendPublicCaseRefMarker(
+  text: string,
+  publicCaseRef: string | undefined,
+  markerMode: 'short-ref' | 'none' = 'short-ref',
+): string {
+  if (markerMode === 'none' || !publicCaseRef) return text;
+
+  const marker = normalizePublicCaseRef(publicCaseRef);
+  if (!marker) return text;
+
+  const markerInText = new RegExp(`${marker.replace('-', '\\-')}\\b`, 'i');
+  if (markerInText.test(text)) return text;
+
+  const trimmedRight = text.trimEnd();
+  return trimmedRight ? `${trimmedRight}\n\n${marker}` : marker;
+}
+
 // ✅ 动态导入 channel-runtime 模块
 const channelRuntimeModule = await import("openclaw/plugin-sdk/channel-runtime") as any;
 
@@ -61,6 +143,7 @@ export type CreateDingtalkReplyDispatcherParams = {
   asyncMode?: boolean;
   /** 队列繁忙时预先创建的 AI Card，startStreaming 时直接复用而非新建 */
   preCreatedCard?: AICardInstance;
+  supportCase?: SupportCaseReplyContext;
 };
 
 export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatcherParams) {
@@ -75,6 +158,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     sessionWebhook,
     asyncMode = false,
     preCreatedCard,
+    supportCase,
   } = params;
 
   const account = resolveDingtalkAccount({ cfg, accountId });
@@ -89,19 +173,12 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   const log = createLoggerFromConfig(account.config, `DingTalk:${accountId}`);
 
   // AI Card 状态管理
-  let currentCardTarget: AICardTarget | null = null;
+  let currentCardTarget: AICardInstance | null = null;
   let accumulatedText = "";
   const deliveredFinalTexts = new Set<string>();
   
   // 异步模式：累积完整响应
   let asyncModeFullResponse = "";
-
-  // ===== 养成系统: 通过 onCommandOutput 监听 dws 命令执行 =====
-  // 记录当前回复周期内 onCommandOutput 回调检测到的 dws 产品名（如 "aitable"、"calendar"），
-  // 在 closeStreaming 时用于触发降妖逻辑，每轮结束后清空。
-  const detectedDwsProducts = new Set<string>();
-  // 匹配 shell 命令中的 dws 子命令（如 `dws aitable list`），提取产品名用于养成系统掉落判定。
-  const DWS_PRODUCT_PATTERN = /\bdws\s+(aitable|calendar|chat|contact|todo|approval|attendance|report|ding|workbench|devdoc)\b/;
   
   // ✅ 节流控制：避免频繁调用钉钉 API 导致 QPS 限流
   // 全局令牌桶限流器已在 streamAICard 内部实现（card.ts），此处的 updateInterval
@@ -113,6 +190,40 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   const deliveredErrorTypes = new Set<string>();
   let lastErrorTime = 0;
   const ERROR_COOLDOWN = 60000; // 错误消息冷却时间 1 分钟
+  const recordedSupportCaseOutboundIds = new Set<string>();
+
+  const addSupportCaseMarkerForUnstableOutbound = (text: string) =>
+    appendPublicCaseRefMarker(
+      text,
+      supportCase?.route.publicCaseRef,
+      supportCase?.markerMode ?? 'short-ref',
+    );
+
+  const recordStableSupportCaseOutbound = async (candidate: unknown) => {
+    if (!supportCase) return false;
+
+    const messageId = extractStableDingtalkOutboundMessageId(candidate);
+    if (!messageId || recordedSupportCaseOutboundIds.has(messageId)) return false;
+
+    recordedSupportCaseOutboundIds.add(messageId);
+    try {
+      await supportCase.replyMapStore.recordOutbound({
+        accountId: account.accountId,
+        conversationId: String(conversationId || ''),
+        messageId,
+        caseId: supportCase.route.caseId,
+        rootMessageId: supportCase.route.rootMessageId,
+        publicCaseRef: supportCase.route.publicCaseRef,
+        source: 'outbound_ack',
+      });
+      log.info(`[support-case-router] recorded outbound reply_map id=${messageId}`);
+      return true;
+    } catch (err: any) {
+      recordedSupportCaseOutboundIds.delete(messageId);
+      log.warn(`[support-case-router] failed to record outbound reply_map: ${err?.message || String(err)}`);
+      return false;
+    }
+  };
 
   // ============ 错误兜底函数 ============
 
@@ -145,11 +256,11 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       unknown: '⚠️ 抱歉，处理您的请求时出错，请稍后重试',
     };
     
-    const errorMessage = errorMessages[errorType];
+    const errorMessage = addSupportCaseMarkerForUnstableOutbound(errorMessages[errorType]);
     log.warn(`[DingTalk][Fallback] ${errorMessage}, error: ${originalError}`);
     
     try {
-      await sendMessage(
+      const result = await sendMessage(
         account.config as DingtalkConfig,
         sessionWebhook,
         errorMessage,
@@ -158,6 +269,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           log: params.runtime.log,
         }
       );
+      await recordStableSupportCaseOutbound(result);
       deliveredErrorTypes.add(errorKey);
       lastErrorTime = now;
       log.info(`[DingTalk][Fallback] ✅ 错误消息发送成功`);
@@ -228,7 +340,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       // 这样用户看到的是同一条消息从 ACK 文案更新为最终结果，而不是多出一条消息
       if (preCreatedCard) {
         log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
-        currentCardTarget = preCreatedCard as any;
+        currentCardTarget = preCreatedCard;
         accumulatedText = "";
         return;
       }
@@ -247,7 +359,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           target,
           log
         );
-        currentCardTarget = card as any;
+        currentCardTarget = card;
         accumulatedText = "";
 
         if (card) {
@@ -349,51 +461,17 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         log.warn(`[DingTalk][closeStreaming] oapiToken 为空，跳过媒体处理`);
       }
 
-      // ===== 养成系统：基于 onCommandOutput 检测到的 dws 产品触发降妖 =====
-      // 优先使用 onCommandOutput 监听到的产品（精准），兜底用正则匹配回复文本
-      try {
-        const productsToProcess = new Set<string>(detectedDwsProducts);
-
-        // 兜底：如果 onCommandOutput 没捕获到，尝试从回复文本中正则匹配
-        if (productsToProcess.size === 0) {
-          const dwsProductMatch = finalText.match(/(?:^|\n)\s*(?:>?\s*)?(?:`\s*)?dws\s+(aitable|calendar|chat|contact|todo|approval|attendance|report|ding|workbench|devdoc)\b/m);
-          if (dwsProductMatch && !finalText.includes('command not found: dws') && !finalText.includes('请先执行 dws login')) {
-            productsToProcess.add(dwsProductMatch[1]);
-            log.info(`[DingTalk][closeStreaming] 养成系统：正则兜底匹配到产品=${dwsProductMatch[1]}`);
-          }
-        } else {
-          log.info(`[DingTalk][closeStreaming] 养成系统：onCommandOutput 监听到 ${productsToProcess.size} 个 dws 产品: ${[...productsToProcess].join(', ')}`);
-        }
-
-        if (productsToProcess.size > 0) {
-          const { GamificationEngine } = await import('./game-xiyou/index.ts');
-          const engine = GamificationEngine.getInstanceForUser(senderId);
-          if (engine.isEnabled()) {
-            // 一次任务只触发一次降妖，取第一个产品作为代表
-            const primaryProduct = [...productsToProcess][0];
-            const allProducts = [...productsToProcess].join('+');
-            const gamificationBlock = engine.onDwsCommandResult(primaryProduct, true, `dws ${allProducts}`);
-            if (gamificationBlock) {
-              finalText += '\n' + gamificationBlock;
-              log.info(`[DingTalk][closeStreaming] ✅ 养成系统渲染已追加，主产品=${primaryProduct}，涉及产品=${allProducts}`);
-            }
-          }
-        }
-
-        // 清空本轮检测记录
-        detectedDwsProducts.clear();
-      } catch (gamErr: any) {
-        log.warn(`[DingTalk][closeStreaming] 养成系统处理失败（不影响主流程）: ${gamErr?.message || gamErr}`);
-      }
-
       log.info(`[DingTalk][closeStreaming] 准备调用 finishAICard，文本长度=${finalText.length}`);
       log.debug(`[DingTalk][closeStreaming] 最终发送内容长度=${finalText.length}`);
       await finishAICard(
-        cardSnapshot as any,
+        cardSnapshot,
         finalText,
         account.config as DingtalkConfig,
         log
       );
+      await recordStableSupportCaseOutbound({
+        cardInstanceId: cardSnapshot.cardInstanceId,
+      });
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {
       log.error(`[DingTalk][closeStreaming] ❌ AI Card 关闭失败：${error?.message || String(error)}`);
@@ -404,15 +482,17 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       if (accumulatedText.trim()) {
         try {
           log.info(`[DingTalk][closeStreaming] 降级发送普通消息`);
-          await sendMessage(
+          const fallbackText = addSupportCaseMarkerForUnstableOutbound(accumulatedText);
+          const result = await sendMessage(
             account.config as DingtalkConfig,
             sessionWebhook,
-            accumulatedText,
+            fallbackText,
             {
               useMarkdown: true,
               log: params.runtime.log,
             }
           );
+          await recordStableSupportCaseOutbound(result);
           log.info(`[DingTalk][closeStreaming] ✅ 降级发送成功`);
         } catch (sendErr: any) {
           log.error(`[DingTalk][closeStreaming] ❌ 降级发送失败：${sendErr.message}`);
@@ -489,7 +569,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 异步模式：只累积响应，不发送
         if (asyncMode) {
           log.info(`[DingTalk][deliver] 异步模式，累积响应`);
-          asyncModeFullResponse = text;
+          asyncModeFullResponse = addSupportCaseMarkerForUnstableOutbound(text);
           return;
         }
 
@@ -513,7 +593,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               lastUpdateTime = now;
               try {
                 await streamAICard(
-                  currentCardTarget as any,
+                  currentCardTarget,
                   text,
                   false,
                   account.config as DingtalkConfig,
@@ -555,12 +635,13 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           log.info(`[DingTalk][deliver] 降级到非流式发送，文本长度=${text.length}`);
           log.debug(`[DingTalk][deliver] 非流式发送，文本长度=${text.length}`);
           try {
-            for (const chunk of core.channel.text.chunkTextWithMode(
+            for (const rawChunk of core.channel.text.chunkTextWithMode(
               text,
               textChunkLimit,
               chunkMode
             )) {
-              await sendMessage(
+              const chunk = addSupportCaseMarkerForUnstableOutbound(rawChunk);
+              const result = await sendMessage(
                 account.config as DingtalkConfig,
                 sessionWebhook,
                 chunk,
@@ -569,6 +650,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                   log: params.runtime.log,
                 }
               );
+              await recordStableSupportCaseOutbound(result);
             }
             log.info(`[DingTalk][deliver] ✅ 非流式发送成功`);
             deliveredFinalTexts.add(text);
@@ -623,7 +705,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         // 异步模式下禁用流式更新
         if (asyncMode) {
           log.debug(`[DingTalk][onPartialReply] 异步模式，累积响应`);
-          asyncModeFullResponse = payload.text;
+          asyncModeFullResponse = addSupportCaseMarkerForUnstableOutbound(payload.text);
           return;
         }
         
@@ -651,7 +733,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
             lastUpdateTime = now;
             try {
               await streamAICard(
-                currentCardTarget as any,
+                currentCardTarget,
                 displayContent,
                 false,
                 account.config as DingtalkConfig,
@@ -672,33 +754,6 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         }
       },
       }),
-      // ===== 养成系统：监听 dws 命令执行 =====
-      onCommandOutput: (payload: {
-        itemId?: string;
-        phase?: string;
-        title?: string;
-        toolCallId?: string;
-        name?: string;
-        output?: string;
-        status?: string;
-        exitCode?: number | null;
-        durationMs?: number;
-        cwd?: string;
-      }) => {
-        const commandText = payload.title || payload.name || '';
-        const dwsMatch = commandText.match(DWS_PRODUCT_PATTERN) || payload.output?.match(DWS_PRODUCT_PATTERN);
-        if (dwsMatch) {
-          const product = dwsMatch[1];
-          // 只记录成功执行的命令（exitCode 为 0 或 phase 不是 end 时还不知道结果）
-          const isFailure = payload.phase === 'end' && payload.exitCode !== null && payload.exitCode !== 0;
-          if (!isFailure) {
-            detectedDwsProducts.add(product);
-            log.info(`[DingTalk][onCommandOutput] 检测到 dws 产品: ${product}，phase=${payload.phase}, exitCode=${payload.exitCode}`);
-          } else {
-            log.info(`[DingTalk][onCommandOutput] dws 命令执行失败，跳过: ${product}，exitCode=${payload.exitCode}`);
-          }
-        }
-      },
     },
     markDispatchIdle,
     getAsyncModeResponse: () => asyncModeFullResponse,

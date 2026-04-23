@@ -16,6 +16,7 @@ import type {
 export type DingtalkConfig = z.infer<typeof DingtalkConfigSchema>;
 export type DingtalkGroupConfig = z.infer<typeof DingtalkGroupSchema>;
 export type DingtalkAccountConfig = z.infer<typeof DingtalkAccountConfigSchema>;
+export type DingtalkSupportCaseRouterConfig = NonNullable<DingtalkConfig["supportCaseRouter"]>;
 
 export type DingtalkConnectionMode = "stream";
 

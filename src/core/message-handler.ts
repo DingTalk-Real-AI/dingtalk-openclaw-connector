@@ -59,6 +59,10 @@ import { normalizeSlashCommand } from "../utils/session.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
 import { createLoggerFromConfig } from '../utils/index.ts';
+import { createSupportCaseRouter } from '../support-case-router/router.ts';
+import { createReplyMapStore, type ReplyMapSource } from '../support-case-router/reply-map-store.ts';
+import { buildSupportCaseSessionKey } from '../support-case-router/session-key.ts';
+import { createRunLockStore } from '../support-case-router/run-lock.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -969,6 +973,347 @@ interface HandleMessageParams {
   preCreatedCard?: AICardInstance;
   /** 队列繁忙时已在入队阶段提前贴上了思考中表情，内部处理时跳过重复贴表情 */
   emotionAlreadyAdded?: boolean;
+  /** support-case-router 预解析结果；由队列入口传入，避免内部重复解析导致不一致 */
+  supportCaseRoute?: SupportCaseRouteDecision;
+  /** support-case-router reply map；由队列入口传入，供 dispatcher 记录 outbound 映射 */
+  supportCaseReplyMapStore?: ReturnType<typeof createReplyMapStore>;
+  /** support-case-router run-lock dedupe key；由队列入口持久化 accepted 后传入 */
+  supportCaseRunLockDedupeKey?: string;
+}
+
+export type SupportCaseRouteDecision =
+  | { enabled: false }
+  | {
+      enabled: true;
+      shouldRun: false;
+      reason: string;
+    }
+  | {
+      enabled: true;
+      shouldRun: true;
+      agentId: string;
+      caseId: string;
+      rootMessageId: string;
+      matchedBy: 'reply_map' | 'marker' | 'new_root';
+      isNewCase: boolean;
+      publicCaseRef?: string;
+    };
+
+type SupportCaseRuntime = {
+  replyMapStore: ReturnType<typeof createReplyMapStore>;
+  runLockStore: ReturnType<typeof createRunLockStore>;
+};
+
+const supportCaseRuntimes = new Map<string, Promise<SupportCaseRuntime>>();
+
+function createJsonlWriter(storePath?: string) {
+  return {
+    async append(entry: unknown) {
+      if (!storePath) return;
+      await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
+      await fs.promises.appendFile(storePath, `${JSON.stringify(entry)}\n`, 'utf8');
+    },
+  };
+}
+
+async function readJsonlLinesIfExists(storePath?: string): Promise<string[]> {
+  if (!storePath) return [];
+  try {
+    const raw = await fs.promises.readFile(storePath, 'utf8');
+    return raw.split(/\r?\n/).filter(Boolean);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+function getSupportCaseRuntimeCacheKey(accountId: string, config: DingtalkConfig): string {
+  const routerConfig = config.supportCaseRouter;
+  return [
+    accountId,
+    routerConfig?.replyMapStorePath || '<memory-reply-map>',
+    routerConfig?.runLockStorePath || '<memory-run-lock>',
+  ].join('|');
+}
+
+async function getSupportCaseRuntime(accountId: string, config: DingtalkConfig): Promise<SupportCaseRuntime> {
+  const cacheKey = getSupportCaseRuntimeCacheKey(accountId, config);
+  let runtimePromise = supportCaseRuntimes.get(cacheKey);
+  if (!runtimePromise) {
+    runtimePromise = (async () => {
+      const replyMapStore = createReplyMapStore({
+        writer: createJsonlWriter(config.supportCaseRouter?.replyMapStorePath),
+      });
+      await replyMapStore.rebuildFromLines(await readJsonlLinesIfExists(config.supportCaseRouter?.replyMapStorePath));
+      const runLockStore = createRunLockStore({
+        staleAfterMs: config.supportCaseRouter?.staleAfterMs ?? 5 * 60 * 1000,
+        doneTtlMs: config.supportCaseRouter?.doneTtlMs ?? 24 * 60 * 60 * 1000,
+        writer: createJsonlWriter(config.supportCaseRouter?.runLockStorePath),
+      });
+      return { replyMapStore, runLockStore };
+    })();
+    supportCaseRuntimes.set(cacheKey, runtimePromise);
+  }
+  return runtimePromise;
+}
+
+export function extractRepliedMessageIdForSupportCaseRouter(data: any): string | undefined {
+  const textReplyId = data?.text?.repliedMsg?.msgId;
+  if (textReplyId) return String(textReplyId);
+
+  const content = resolveContent(data);
+  const contentReplyId = content?.repliedMsg?.msgId;
+  return contentReplyId ? String(contentReplyId) : undefined;
+}
+
+function normalizePublicCaseRef(value: string): string {
+  return value.toUpperCase();
+}
+
+function normalizeSupportGroupId(value: string | number | undefined | null): string {
+  return String(value ?? '').trim();
+}
+
+export function extractPublicCaseRefForSupportCaseRouter(text: string): string | undefined {
+  const match = text.match(/#Q-[A-Z0-9]{4,16}\b/i);
+  return match ? normalizePublicCaseRef(match[0]) : undefined;
+}
+
+export function isMentioningDingtalkBotForSupportCaseRouter(params: {
+  data: any;
+  content: ExtractedMessage;
+  config: DingtalkConfig;
+}): boolean {
+  if (params.data?.isInAtList === true) return true;
+
+  const botIds = [params.data?.robotCode, params.config.clientId]
+    .filter((value) => value != null && String(value).trim())
+    .map((value) => String(value));
+  if (botIds.length === 0) return false;
+
+  const mentionedIds = [
+    ...params.content.atDingtalkIds,
+    ...(params.data?.text?.at?.atUserIds || []),
+  ].map((value) => String(value));
+
+  return mentionedIds.some((id) => botIds.includes(id));
+}
+
+function getSupportCaseAuditSource(route: Extract<SupportCaseRouteDecision, { shouldRun: true }>): ReplyMapSource {
+  if (route.matchedBy === 'new_root') return 'root';
+  if (route.matchedBy === 'marker') return 'marker';
+  return 'reply';
+}
+
+export function shouldAttemptSupportCaseRouterForMessage(params: {
+  config: DingtalkConfig;
+  data: any;
+}): boolean {
+  const { config, data } = params;
+  const routerConfig = config.supportCaseRouter;
+  if (routerConfig?.enabled !== true) return false;
+  if (data.conversationType === '1') return false;
+
+  const conversationId = normalizeSupportGroupId(data.conversationId || '');
+  const allowedGroups = (routerConfig.allowedGroups ?? []).map((value) => normalizeSupportGroupId(value));
+  if (!conversationId || !allowedGroups.includes(conversationId)) return false;
+
+  const groupPolicy = config.groupPolicy || 'open';
+  if (groupPolicy === 'disabled') return false;
+  if (groupPolicy === 'allowlist') {
+    const allowedByExistingPolicy = (config.groupAllowFrom || []).map((value) => normalizeSupportGroupId(value));
+    return allowedByExistingPolicy.includes(conversationId);
+  }
+
+  return true;
+}
+
+export function explainSupportCaseRouterAttempt(params: {
+  config: DingtalkConfig;
+  data: any;
+}): {
+  shouldAttempt: boolean;
+  reason:
+    | 'router_disabled'
+    | 'direct_message'
+    | 'missing_or_unmatched_allowed_group'
+    | 'group_policy_disabled'
+    | 'blocked_by_group_allowlist'
+    | 'ok';
+  conversationType: string;
+  conversationIdPresent: boolean;
+  allowedGroupMatched: boolean;
+  groupPolicy: string;
+  normalizedConversationId: string;
+  normalizedAllowedGroups: string[];
+} {
+  const { config, data } = params;
+  const routerConfig = config.supportCaseRouter;
+  const conversationType = String(data?.conversationType ?? '');
+  if (routerConfig?.enabled !== true) {
+    return {
+      shouldAttempt: false,
+      reason: 'router_disabled',
+      conversationType,
+      conversationIdPresent: Boolean(data?.conversationId),
+      allowedGroupMatched: false,
+      groupPolicy: String(config.groupPolicy || 'open'),
+      normalizedConversationId: normalizeSupportGroupId(data?.conversationId),
+      normalizedAllowedGroups: [],
+    };
+  }
+
+  if (data.conversationType === '1') {
+    return {
+      shouldAttempt: false,
+      reason: 'direct_message',
+      conversationType,
+      conversationIdPresent: Boolean(data?.conversationId),
+      allowedGroupMatched: false,
+      groupPolicy: String(config.groupPolicy || 'open'),
+      normalizedConversationId: normalizeSupportGroupId(data?.conversationId),
+      normalizedAllowedGroups: [],
+    };
+  }
+
+  const conversationId = normalizeSupportGroupId(data.conversationId || '');
+  const allowedGroups = (routerConfig.allowedGroups ?? []).map((value) => normalizeSupportGroupId(value));
+  const allowedGroupMatched = Boolean(conversationId) && allowedGroups.includes(conversationId);
+  const groupPolicy = String(config.groupPolicy || 'open');
+
+  if (!allowedGroupMatched) {
+    return {
+      shouldAttempt: false,
+      reason: 'missing_or_unmatched_allowed_group',
+      conversationType,
+      conversationIdPresent: Boolean(conversationId),
+      allowedGroupMatched,
+      groupPolicy,
+      normalizedConversationId: conversationId,
+      normalizedAllowedGroups: allowedGroups,
+    };
+  }
+
+  if (groupPolicy === 'disabled') {
+    return {
+      shouldAttempt: false,
+      reason: 'group_policy_disabled',
+      conversationType,
+      conversationIdPresent: true,
+      allowedGroupMatched,
+      groupPolicy,
+      normalizedConversationId: conversationId,
+      normalizedAllowedGroups: allowedGroups,
+    };
+  }
+
+  if (groupPolicy === 'allowlist') {
+    const allowedByExistingPolicy = (config.groupAllowFrom || []).map((value) => normalizeSupportGroupId(value));
+    const shouldAttempt = allowedByExistingPolicy.includes(conversationId);
+    return {
+      shouldAttempt,
+      reason: shouldAttempt ? 'ok' : 'blocked_by_group_allowlist',
+      conversationType,
+      conversationIdPresent: true,
+      allowedGroupMatched,
+      groupPolicy,
+      normalizedConversationId: conversationId,
+      normalizedAllowedGroups: allowedGroups,
+    };
+  }
+
+  return {
+    shouldAttempt: true,
+    reason: 'ok',
+    conversationType,
+    conversationIdPresent: true,
+    allowedGroupMatched,
+    groupPolicy,
+    normalizedConversationId: conversationId,
+    normalizedAllowedGroups: allowedGroups,
+  };
+}
+
+export function buildSupportCaseQueueIdentity(params: {
+  supportCaseRoute?: SupportCaseRouteDecision;
+  accountId: string;
+  conversationId: string;
+  baseSessionId: string;
+  matchedAgentId: string;
+}): { finalSessionKey: string; queueKey: string } {
+  if (params.supportCaseRoute?.enabled && params.supportCaseRoute.shouldRun) {
+    const finalSessionKey = buildSupportCaseSessionKey({
+      agentId: params.matchedAgentId,
+      accountId: params.accountId,
+      conversationId: params.conversationId,
+      caseId: params.supportCaseRoute.caseId,
+    });
+    return {
+      finalSessionKey,
+      queueKey: `${finalSessionKey}:${params.matchedAgentId}`,
+    };
+  }
+
+  return {
+    finalSessionKey: params.baseSessionId,
+    queueKey: `${params.baseSessionId}:${params.matchedAgentId}`,
+  };
+}
+
+export async function resolveSupportCaseRouteForMessage(params: {
+  accountId: string;
+  config: DingtalkConfig;
+  data: any;
+  content: ExtractedMessage;
+  log?: any;
+}): Promise<SupportCaseRouteDecision> {
+  const routerConfig = params.config.supportCaseRouter;
+  if (routerConfig?.enabled !== true) return { enabled: false };
+
+  const runtime = await getSupportCaseRuntime(params.accountId, params.config);
+  const router = createSupportCaseRouter({
+    config: routerConfig,
+    replyMap: runtime.replyMapStore,
+  });
+
+  const result = await router.resolve({
+    accountId: params.accountId,
+    conversationId: String(params.data.conversationId || ''),
+    messageId: String(params.data.msgId || ''),
+    senderId: String(params.data.senderStaffId || params.data.senderId || ''),
+    isGroup: params.data.conversationType !== '1',
+    isMentioned: isMentioningDingtalkBotForSupportCaseRouter({
+      data: params.data,
+      content: params.content,
+      config: params.config,
+    }),
+    repliedMessageId: extractRepliedMessageIdForSupportCaseRouter(params.data),
+    markerRef: extractPublicCaseRefForSupportCaseRouter(params.content.text || ''),
+  });
+
+  if (!result.shouldRun) {
+    params.log?.info?.(`[support-case-router] dry-run result: shouldRun=false, reason=${result.reason}`);
+    return {
+      enabled: true,
+      shouldRun: false,
+      reason: result.reason,
+    };
+  }
+
+  params.log?.info?.(
+    `[support-case-router] dry-run result: shouldRun=true, matchedBy=${result.matchedBy}, isNewCase=${result.isNewCase}`,
+  );
+
+  return {
+    enabled: true,
+    shouldRun: true,
+    agentId: result.agentId || routerConfig.safeAgentId || 'main',
+    caseId: result.caseId,
+    rootMessageId: result.rootMessageId,
+    matchedBy: result.matchedBy,
+    isNewCase: result.isNewCase,
+    publicCaseRef: result.publicCaseRef,
+  };
 }
 
 /**
@@ -977,10 +1322,28 @@ interface HandleMessageParams {
 export async function handleDingTalkMessageInternal(params: HandleMessageParams): Promise<void> {
   const { accountId, config, data, sessionWebhook, runtime, cfg } = params;
 
-  const log = createLoggerFromConfig(config, `DingTalk:${accountId}`);
+  const loggerName = config.supportCaseRouter?.enabled === true
+    ? 'DingTalk:support-case'
+    : `DingTalk:${accountId}`;
+  const log = createLoggerFromConfig(config, loggerName);
 
   const content = extractMessageContent(data);
   if (!content.text && content.imageUrls.length === 0 && content.downloadCodes.length === 0) return;
+
+  const shouldAttemptSupportCaseRouter = shouldAttemptSupportCaseRouterForMessage({ config, data });
+  const supportCaseRoute = shouldAttemptSupportCaseRouter
+    ? params.supportCaseRoute ?? await resolveSupportCaseRouteForMessage({
+        accountId,
+        config,
+        data,
+        content,
+        log,
+      })
+    : { enabled: false } as SupportCaseRouteDecision;
+  if (shouldAttemptSupportCaseRouter && supportCaseRoute.enabled && !supportCaseRoute.shouldRun) return;
+  const supportCaseReplyMapStore = supportCaseRoute.enabled && supportCaseRoute.shouldRun
+    ? params.supportCaseReplyMapStore ?? (await getSupportCaseRuntime(accountId, config)).replyMapStore
+    : undefined;
 
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
@@ -1152,6 +1515,9 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
   if (!matchedAgentId) {
     matchedAgentId = cfg.defaultAgent || 'main';
   }
+  if (supportCaseRoute.enabled && supportCaseRoute.shouldRun) {
+    matchedAgentId = supportCaseRoute.agentId;
+  }
 
   // 获取 Agent 工作空间路径
   const agentWorkspaceDir = resolveAgentWorkspaceDir(cfg, matchedAgentId);
@@ -1165,34 +1531,16 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
   const normalizedText = normalizeSlashCommand(rawText);
   let userContent = normalizedText || (content.imageUrls.length > 0 ? '请描述这张图片' : '');
 
-  // ===== 养成系统命令拦截 =====
-  try {
-    const { GamificationEngine, isGamificationCommand } = await import('../game-xiyou/index.ts');
-    if (isGamificationCommand(rawText)) {
-      const engine = GamificationEngine.getInstanceForUser(senderId);
-      // /西游 命令始终可用（用于开关切换），其他命令需要 enabled
-      const isToggleCommand = rawText.trim().startsWith('/西游');
-      if (isToggleCommand || engine.isEnabled()) {
-        const response = engine.handleCommand(rawText);
-        if (response) {
-          log?.info?.(`[DingTalk][Gamification] 处理养成系统命令: ${rawText.slice(0, 20)}`);
-          await sendProactive(config, isDirect ? { userId: senderId } : { openConversationId: data.conversationId }, response, {
-            useAICard: true,
-            fallbackToNormal: true,
-            log,
-          });
-          return;
-        }
-      }
-    }
-  } catch (gamErr: any) {
-    log?.warn?.(`[DingTalk][Gamification] 命令处理失败: ${gamErr?.message || gamErr}`);
-  }
-
   // ===== 图片下载到本地文件 =====
   const imageLocalPaths: string[] = [];
   
-  log?.info?.(`处理消息: accountId=${accountId}, data= ${JSON.stringify(data, null, 2)}, sender=${senderName}, text=${content.text.slice(0, 50)}...`);
+  if (config.supportCaseRouter?.enabled === true) {
+    log?.info?.(
+      `处理消息: supportCaseRouter=enabled, msgType=${data.msgtype || 'unknown'}, msgId=${data.msgId || 'N/A'}, media=${content.imageUrls.length + content.downloadCodes.length}`,
+    );
+  } else {
+    log?.info?.(`处理消息: accountId=${accountId}, data= ${JSON.stringify(data, null, 2)}, sender=${senderName}, text=${content.text.slice(0, 50)}...`);
+  }
   
   // 处理 imageUrls（来自富文本消息）
   for (let i = 0; i < content.imageUrls.length; i++) {
@@ -1415,17 +1763,28 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     // ✅ 使用 sessionContext.sessionPeerId 构建 sessionKey，确保会话隔离配置生效
     // ✅ 关键修复：传递 dmScope 参数，让 SDK 使用配置文件中的 session.dmScope 设置
     const dmScope = cfg.session?.dmScope || 'per-channel-peer';
-    log?.info?.(`🔍 构建 sessionKey 前的参数: agentId=${matchedAgentId}, channel=dingtalk-connector, accountId=${accountId}, chatType=${sessionContext.chatType}, sessionPeerId=${sessionContext.sessionPeerId}, dmScope=${dmScope}`);
-    const sessionKey = core.channel.routing.buildAgentSessionKey({
-      agentId: matchedAgentId,
-      channel: 'dingtalk-connector',  // ✅ 使用 'dingtalk-connector' 而不是 'dingtalk'
-      accountId: accountId,
-      peer: {
-        kind: sessionContext.chatType,       // ✅ 使用 sessionContext.chatType
-        id: sessionContext.sessionPeerId,    // ✅ 使用 sessionContext.sessionPeerId（包含会话隔离逻辑）
-      },
-      dmScope: dmScope,  // ✅ 传递 dmScope 参数，确保生成完整格式的 sessionKey
-    });
+    if (config.supportCaseRouter?.enabled === true) {
+      log?.info?.(`🔍 构建 sessionKey 前的参数: agentId=${matchedAgentId}, channel=dingtalk-connector, chatType=${sessionContext.chatType}, supportCase=${supportCaseRoute.enabled && supportCaseRoute.shouldRun ? 'active' : 'inactive'}`);
+    } else {
+      log?.info?.(`🔍 构建 sessionKey 前的参数: agentId=${matchedAgentId}, channel=dingtalk-connector, accountId=${accountId}, chatType=${sessionContext.chatType}, sessionPeerId=${sessionContext.sessionPeerId}, dmScope=${dmScope}`);
+    }
+    const sessionKey = supportCaseRoute.enabled && supportCaseRoute.shouldRun
+      ? buildSupportCaseSessionKey({
+          agentId: matchedAgentId,
+          accountId,
+          conversationId: String(data.conversationId || ''),
+          caseId: supportCaseRoute.caseId,
+        })
+      : core.channel.routing.buildAgentSessionKey({
+          agentId: matchedAgentId,
+          channel: 'dingtalk-connector',  // ✅ 使用 'dingtalk-connector' 而不是 'dingtalk'
+          accountId: accountId,
+          peer: {
+            kind: sessionContext.chatType,       // ✅ 使用 sessionContext.chatType
+            id: sessionContext.sessionPeerId,    // ✅ 使用 sessionContext.sessionPeerId（包含会话隔离逻辑）
+          },
+          dmScope: dmScope,  // ✅ 传递 dmScope 参数，确保生成完整格式的 sessionKey
+        });
     log?.info?.(`路由解析完成: agentId=${matchedAgentId}, sessionKey=${sessionKey}, matchedBy=${matchedBy}`);
     
     // 构建 inbound context，使用解析后的 sessionKey
@@ -1433,7 +1792,11 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
     
     // ✅ 计算正确的 To 字段
     const toField = isDirect ? senderId : data.conversationId;
-    log?.info?.(`构建 inbound context: isDirect=${isDirect}, senderId=${senderId}, conversationId=${data.conversationId}, To=${toField}`);
+    if (config.supportCaseRouter?.enabled === true) {
+      log?.info?.(`构建 inbound context: isDirect=${isDirect}, supportCase=${supportCaseRoute.enabled && supportCaseRoute.shouldRun ? 'active' : 'inactive'}`);
+    } else {
+      log?.info?.(`构建 inbound context: isDirect=${isDirect}, senderId=${senderId}, conversationId=${data.conversationId}, To=${toField}`);
+    }
 
     const ctxPayload = core.channel.reply.finalizeInboundContext({
       Body: body,
@@ -1470,17 +1833,16 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
       sessionWebhook: data.sessionWebhook,
       asyncMode,
       preCreatedCard: params.preCreatedCard,
+      ...(supportCaseReplyMapStore && supportCaseRoute.enabled && supportCaseRoute.shouldRun
+        ? {
+            supportCase: {
+              route: supportCaseRoute,
+              replyMapStore: supportCaseReplyMapStore,
+              markerMode: config.supportCaseRouter?.caseMarkerMode ?? 'short-ref',
+            },
+          }
+        : {}),
     });
-
-    // ===== 注入当前 bot 的 clientId（用于 dws CLI --client-id 参数） =====
-    // 多 bot 场景下，AI 需要知道当前对话属于哪个 bot，以便在调用
-    // dws chat message send-by-bot 时传入正确的 --client-id，避免消息串台。
-    if (config.clientId) {
-      const botIdentityHint = `[DingTalk Bot Context] Current bot clientId: ${String(config.clientId)}. When executing \`dws chat message send-by-bot\`, always pass \`--client-id ${String(config.clientId)}\` to ensure messages are sent from the correct bot.`;
-      finalContent = finalContent
-        ? `${finalContent}\n\n${botIdentityHint}`
-        : botIdentityHint;
-    }
 
     // ===== 构建卡片链接路由指令（对齐 Rust agent_support.rs build_link_routing_prompt）=====
     // 识别 interactiveCard / actionCard 消息中的 URL，根据 host 注入不同的 AI 指令：
@@ -1630,12 +1992,36 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
  */
 export async function handleDingTalkMessage(params: HandleMessageParams): Promise<void> {
   const { accountId, config, data, log, cfg } = params;
+  const entryLog = createLoggerFromConfig(
+    config,
+    config.supportCaseRouter?.enabled === true ? 'DingTalk:support-case-entry' : `DingTalk:${accountId}`,
+  );
 
   // 使用 buildSessionContext 构建会话标识，与 handleDingTalkMessageInternal 保持一致
   // 确保 queueKey 的隔离策略（groupSessionScope、sharedMemoryAcrossConversations）与 sessionKey 一致
   const isDirect = data.conversationType === '1';
   const senderId = data.senderStaffId || data.senderId;
   const conversationId = data.conversationId;
+
+  const supportCaseAttempt = explainSupportCaseRouterAttempt({ config, data });
+  if (config.supportCaseRouter?.enabled === true) {
+    entryLog?.info?.(
+      `[support-case-router] precheck: shouldAttempt=${supportCaseAttempt.shouldAttempt}, reason=${supportCaseAttempt.reason}, conversationType=${supportCaseAttempt.conversationType || 'unknown'}, conversationIdPresent=${supportCaseAttempt.conversationIdPresent}, allowedGroupMatched=${supportCaseAttempt.allowedGroupMatched}, groupPolicy=${supportCaseAttempt.groupPolicy}, conversationId=${JSON.stringify(supportCaseAttempt.normalizedConversationId)}, allowedGroups=${JSON.stringify(supportCaseAttempt.normalizedAllowedGroups)}`,
+    );
+  }
+
+  let supportCaseRoute: SupportCaseRouteDecision | undefined;
+  if (supportCaseAttempt.shouldAttempt) {
+    const content = extractMessageContent(data);
+    supportCaseRoute = await resolveSupportCaseRouteForMessage({
+      accountId,
+      config,
+      data,
+      content,
+      log: entryLog,
+    });
+    if (!supportCaseRoute.enabled || !supportCaseRoute.shouldRun) return;
+  }
 
   const queueSessionContext = buildSessionContext({
     accountId,
@@ -1675,12 +2061,58 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
   if (!matchedAgentId) {
     matchedAgentId = cfg.defaultAgent || 'main';
   }
+  if (supportCaseRoute?.enabled && supportCaseRoute.shouldRun) {
+    matchedAgentId = supportCaseRoute.agentId;
+  }
 
   // 构建队列标识：会话 peerId + agentId
   // queueKey 与 sessionKey 使用相同的 peerId，确保隔离策略一致：
   // - groupSessionScope: 'group_sender' 时，同群不同用户的消息可并行处理
   // - sharedMemoryAcrossConversations: true 时，所有消息共享同一队列
-  const queueKey = `${baseSessionId}:${matchedAgentId}`;
+  const { finalSessionKey, queueKey } = buildSupportCaseQueueIdentity({
+    supportCaseRoute,
+    accountId,
+    conversationId: String(conversationId || ''),
+    baseSessionId,
+    matchedAgentId,
+  });
+
+  let supportCaseRuntime: SupportCaseRuntime | undefined;
+  let supportCaseRunLockDedupeKey: string | undefined;
+  if (supportCaseRoute?.enabled && supportCaseRoute.shouldRun) {
+    supportCaseRuntime = await getSupportCaseRuntime(accountId, config);
+    await supportCaseRuntime.replyMapStore.recordInbound({
+      accountId,
+      conversationId: String(conversationId || ''),
+      messageId: String(data.msgId || ''),
+      caseId: supportCaseRoute.caseId,
+      rootMessageId: supportCaseRoute.rootMessageId,
+      senderId: String(senderId || ''),
+      publicCaseRef: supportCaseRoute.publicCaseRef,
+      source: getSupportCaseAuditSource(supportCaseRoute),
+    });
+
+    supportCaseRunLockDedupeKey = [
+      accountId,
+      conversationId || '',
+      data.msgId || '',
+      supportCaseRoute.caseId,
+    ].map((value) => encodeURIComponent(String(value))).join(':');
+
+    await supportCaseRuntime.runLockStore.accept({
+      dedupeKey: supportCaseRunLockDedupeKey,
+      payload: {
+        rawEvent: data,
+        caseId: supportCaseRoute.caseId,
+        sessionKey: finalSessionKey,
+        agentId: matchedAgentId,
+        replyTarget: isDirect
+          ? { userId: senderId }
+          : { openConversationId: conversationId },
+      },
+    });
+    log?.info?.(`[support-case-router] accepted run-lock and inbound audit: matchedBy=${supportCaseRoute.matchedBy}`);
+  }
 
   try {
 
@@ -1726,8 +2158,28 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     const currentTask = previousTask
       .then(async () => {
         log?.info?.(`[队列] 开始处理消息，queueKey=${queueKey}`);
-        await handleDingTalkMessageInternal({ ...params, preCreatedCard, emotionAlreadyAdded: isQueueBusy });
-        log?.info?.(`[队列] 消息处理完成，queueKey=${queueKey}`);
+        try {
+          if (supportCaseRuntime && supportCaseRunLockDedupeKey) {
+            await supportCaseRuntime.runLockStore.markRunning(supportCaseRunLockDedupeKey);
+          }
+          await handleDingTalkMessageInternal({
+            ...params,
+            preCreatedCard,
+            emotionAlreadyAdded: isQueueBusy,
+            supportCaseRoute,
+            supportCaseReplyMapStore: supportCaseRuntime?.replyMapStore,
+            supportCaseRunLockDedupeKey,
+          });
+          if (supportCaseRuntime && supportCaseRunLockDedupeKey) {
+            await supportCaseRuntime.runLockStore.markDone(supportCaseRunLockDedupeKey);
+          }
+          log?.info?.(`[队列] 消息处理完成，queueKey=${queueKey}`);
+        } catch (err: any) {
+          if (supportCaseRuntime && supportCaseRunLockDedupeKey) {
+            await supportCaseRuntime.runLockStore.markFailed(supportCaseRunLockDedupeKey, err?.message || String(err));
+          }
+          throw err;
+        }
       })
       .catch((err: any) => {
         log?.error?.(`[队列] 消息处理异常，queueKey=${queueKey}, error=${err.message}`);
@@ -1748,6 +2200,10 @@ export async function handleDingTalkMessage(params: HandleMessageParams): Promis
     // 消息处理在后台异步执行，队列保证同一会话+agent的消息串行处理
   } catch (err: any) {
     log?.error?.(`[队列] 队列管理异常，直接处理: ${err.message}`);
+    if (supportCaseRuntime && supportCaseRunLockDedupeKey) {
+      await supportCaseRuntime.runLockStore.markFailed(supportCaseRunLockDedupeKey, err?.message || String(err));
+      return;
+    }
     // 如果队列管理失败，直接调用内部处理函数（不阻塞）
     void handleDingTalkMessageInternal(params);
   }
