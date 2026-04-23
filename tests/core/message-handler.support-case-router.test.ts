@@ -175,7 +175,7 @@ describe('message-handler support case router wiring', () => {
     expect(joinedLogs).not.toContain('follow up on the card');
   });
 
-  it('allows reply_map and marker hits for existing cases without mention', async () => {
+  it('ignores reply_map and marker context without mention', async () => {
     const replyMapStorePath = await tempJsonlPath('reply-map.jsonl');
     await writeFile(replyMapStorePath, `${JSON.stringify({
       accountId: 'acc-1',
@@ -211,8 +211,11 @@ describe('message-handler support case router wiring', () => {
       content: extractMessageContent(replyData),
     });
 
-    expect(replyRoute.enabled && replyRoute.shouldRun).toBe(true);
-    expect(replyRoute.matchedBy).toBe('reply_map');
+    expect(replyRoute).toEqual({
+      enabled: true,
+      shouldRun: false,
+      reason: 'not_mentioned_for_new_root',
+    });
 
     const markerData = {
       conversationType: '2',
@@ -228,8 +231,11 @@ describe('message-handler support case router wiring', () => {
       content: extractMessageContent(markerData),
     });
 
-    expect(markerRoute.enabled && markerRoute.shouldRun).toBe(true);
-    expect(markerRoute.matchedBy).toBe('marker');
+    expect(markerRoute).toEqual({
+      enabled: true,
+      shouldRun: false,
+      reason: 'not_mentioned_for_new_root',
+    });
   });
 
   it('aligns queue key with final support-case session key plus agent id', () => {
@@ -255,7 +261,7 @@ describe('message-handler support case router wiring', () => {
     expect(identity.queueKey).toBe(`${identity.finalSessionKey}:safe-agent`);
   });
 
-  it('keeps A/B/X isolated and routes replies back to the original case', async () => {
+  it('keeps A/B isolated while ignoring non-mentioned follow-up replies', async () => {
     const replyMapStorePath = await tempJsonlPath('reply-map.jsonl');
     const accountId = 'acc-1';
     const conversationId = 'cid-1';
@@ -482,12 +488,16 @@ describe('message-handler support case router wiring', () => {
     expect(routeA.caseId).not.toBe(routeB.caseId);
     expect(routeA2.caseId).not.toBe(routeB.caseId);
 
-    expect(replyToRootA.enabled && replyToRootA.shouldRun).toBe(true);
-    expect(replyToRootA.matchedBy).toBe('reply_map');
-    expect(replyToRootA.caseId).toBe(caseAId);
-    expect(replyToBotA.enabled && replyToBotA.shouldRun).toBe(true);
-    expect(replyToBotA.matchedBy).toBe('reply_map');
-    expect(replyToBotA.caseId).toBe(caseAId);
+    expect(replyToRootA).toEqual({
+      enabled: true,
+      shouldRun: false,
+      reason: 'not_mentioned_for_new_root',
+    });
+    expect(replyToBotA).toEqual({
+      enabled: true,
+      shouldRun: false,
+      reason: 'not_mentioned_for_new_root',
+    });
 
     expect(identityA.finalSessionKey).toContain(`support-case/${conversationId}/${caseAId}`);
     expect(identityA2.finalSessionKey).toContain(`support-case/${conversationId}/${caseA2Id}`);
@@ -497,8 +507,10 @@ describe('message-handler support case router wiring', () => {
     expect(identityA.queueKey).toBe(`${identityA.finalSessionKey}:safe-agent`);
     expect(identityA2.queueKey).toBe(`${identityA2.finalSessionKey}:safe-agent`);
     expect(identityB.queueKey).toBe(`${identityB.finalSessionKey}:safe-agent`);
-    expect(identityReplyRootA.finalSessionKey).toBe(identityA.finalSessionKey);
-    expect(identityReplyBotA.finalSessionKey).toBe(identityA.finalSessionKey);
+    expect(identityReplyRootA.finalSessionKey).toBe(conversationId);
+    expect(identityReplyBotA.finalSessionKey).toBe(conversationId);
+    expect(identityReplyRootA.queueKey).toBe(`${conversationId}:safe-agent`);
+    expect(identityReplyBotA.queueKey).toBe(`${conversationId}:safe-agent`);
   });
 
   it('only attempts support routing after existing group admission and support allowedGroups pass', () => {

@@ -138,7 +138,7 @@ describe('public case ref routing fallback', () => {
     caseMarkerMode: 'short-ref' as const,
   };
 
-  it('prefers reply_map over marker when both are present', async () => {
+  it('ignores reply_map and marker context when the message is not mentioned', async () => {
     const findByPublicCaseRef = vi.fn(async () => ({
       caseId: 'case-marker',
       rootMessageId: 'root-marker',
@@ -168,17 +168,14 @@ describe('public case ref routing fallback', () => {
       markerRef: '#Q-MARK',
     });
 
-    expect(result).toMatchObject({
-      shouldRun: true,
-      caseId: 'case-map',
-      rootMessageId: 'root-map',
-      matchedBy: 'reply_map',
-      isNewCase: false,
+    expect(result).toEqual({
+      shouldRun: false,
+      reason: 'not_mentioned_for_new_root',
     });
     expect(findByPublicCaseRef).not.toHaveBeenCalled();
   });
 
-  it('falls back to marker lookup when reply_map misses', async () => {
+  it('creates a new root when the message is mentioned even if reply context exists', async () => {
     const router = createSupportCaseRouter({
       config,
       replyMap: {
@@ -197,17 +194,16 @@ describe('public case ref routing fallback', () => {
       messageId: 'msg-2',
       senderId: 'user-1',
       isGroup: true,
-      isMentioned: false,
+      isMentioned: true,
       repliedMessageId: 'unknown-bot-msg',
       markerRef: '#Q-MARK',
     });
 
     expect(result).toMatchObject({
       shouldRun: true,
-      caseId: 'case-marker',
-      rootMessageId: 'root-marker',
-      matchedBy: 'marker',
-      isNewCase: false,
+      rootMessageId: 'msg-2',
+      matchedBy: 'new_root',
+      isNewCase: true,
     });
   });
 });

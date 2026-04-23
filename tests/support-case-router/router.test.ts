@@ -34,7 +34,7 @@ describe('support case router', () => {
     expect(result.reason).toBe('not_mentioned_for_new_root');
   });
 
-  it('allows existing case reply without mention when reply_map hits', async () => {
+  it('ignores reply messages without mention even when reply_map hits', async () => {
     const router = createSupportCaseRouter({
       config: baseConfig,
       replyMap: {
@@ -59,10 +59,8 @@ describe('support case router', () => {
       repliedMessageId: 'root-msg',
     });
 
-    expect(result.shouldRun).toBe(true);
-    expect(result.caseId).toBe('case-1');
-    expect(result.matchedBy).toBe('reply_map');
-    expect(result.isNewCase).toBe(false);
+    expect(result.shouldRun).toBe(false);
+    expect(result.reason).toBe('not_mentioned_for_new_root');
   });
 
   it('fails closed when group is not allowlisted', async () => {

@@ -58,36 +58,6 @@ export function createSupportCaseRouter(params: {
         return { shouldRun: false, reason: 'not_allowlisted_group' as const };
       }
 
-      if (input.repliedMessageId) {
-        const matched = await params.replyMap.findByMessageId(input.repliedMessageId);
-        if (matched) {
-          return {
-            shouldRun: true,
-            agentId: params.config.safeAgentId,
-            caseId: matched.caseId,
-            rootMessageId: matched.rootMessageId,
-            publicCaseRef: matched.publicCaseRef,
-            matchedBy: 'reply_map' as const,
-            isNewCase: false,
-          };
-        }
-      }
-
-      if (input.markerRef && params.config.caseMarkerMode !== 'none' && params.replyMap.findByPublicCaseRef) {
-        const matched = await params.replyMap.findByPublicCaseRef(input.markerRef);
-        if (matched) {
-          return {
-            shouldRun: true,
-            agentId: params.config.safeAgentId,
-            caseId: matched.caseId,
-            rootMessageId: matched.rootMessageId,
-            publicCaseRef: matched.publicCaseRef,
-            matchedBy: 'marker' as const,
-            isNewCase: false,
-          };
-        }
-      }
-
       if (!input.isMentioned) {
         return { shouldRun: false, reason: 'not_mentioned_for_new_root' as const };
       }
