@@ -53,7 +53,7 @@ export function verifyChecksum(profile: UserProfile): boolean {
 
 function createDefaultProfile(uidHash: string): UserProfile {
   const defaultSettings: GamificationSettings = {
-    enabled: true,
+    enabled: false,
     showDropAnimation: true,
     muteNormalDrops: false,
   };
