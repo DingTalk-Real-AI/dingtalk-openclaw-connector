@@ -206,7 +206,7 @@ function saveCredentials(clientId, clientSecret, { isLocal = false, pluginInstal
     // If existing config already has dingtalk channels+credentials AND bindings,
     // overwriting could break multi-Agent routing. Show credentials and let user decide.
     if (hasExistingMultiAgentConfig(cfg)) {
-      console.log('\n' + bold('⚠ Multi-Agent config detected — auto-write skipped (已跳过自动写入)'));
+      console.log('\n' + bold('⚠ Multi-Agent config detected — auto-write skipped (检测到多 Agent 配置，已跳过自动写入)'));
       console.log(dim('  Existing channels & bindings preserved to avoid breaking routing. (已保留现有路由配置)'));
       console.log(cyan('  You can manually edit (可手动编辑): ') + dim(getConfigPath()) + '\n');
       console.log(cyan('  Bot credentials for this session (本次机器人凭据):'));
