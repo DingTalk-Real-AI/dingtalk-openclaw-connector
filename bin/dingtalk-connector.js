@@ -594,24 +594,26 @@ Options:
 
   // Step 3: Check for staged credentials from a previous failed install
   const staged = readStaging();
+  let creds;
   if (staged?.clientId && staged?.clientSecret && pluginInstalled) {
-    console.log('\n' + dim('Found staged credentials from previous authorization.') + '\n');
-    console.log(dim('Saving local configuration... (正在进行本地配置...)') + '\n');
-    saveCredentials(staged.clientId, staged.clientSecret, { isLocal, pluginInstalled });
-    injectDwsEnvVars(staged.clientId, staged.clientSecret);
-    console.log(green('✔ Success! Bot configured. (机器人配置成功!)'));
-    console.log(dim(`  Configuration saved to ${getConfigPath()}`) + '\n');
-    console.log(cyan('Please restart the gateway to apply changes:') + '\n');
-    console.log(cyan('  openclaw gateway restart') + '\n');
-    // Note: the ~3 min warm-up is an OpenClaw gateway behaviour, not plugin-specific.
-    console.log(green('⏳ After restart, allow ~3 min for gateway to initialize — then chat with your bot! (网关初始化约3分钟，完成即可对话)') + '\n');
-    return;
+    console.log('\n' + dim('Found staged credentials from previous authorization (发现上次授权的凭据):'));
+    console.log(dim(`  Client ID: ${staged.clientId}`) + '\n');
+    const reuse = await askUserConfirmation('  Use these credentials? (使用该凭据？) [Y/n] ');
+    if (reuse !== 'n' && reuse !== 'no') {
+      creds = staged;
+      console.log('');
+    } else {
+      clearStaging();
+      console.log(dim('  Staged credentials cleared, starting fresh QR auth...\n'));
+    }
   }
 
-  // Step 4: QR authorization
+  // Step 4: QR authorization (skip if reusing staged credentials)
   try {
-    const creds = await deviceAuthFlow();
-    console.log('\n' + dim('Saving local configuration... (正在进行本地配置...)') + '\n');
+    if (!creds) {
+      creds = await deviceAuthFlow();
+    }
+    console.log(dim('Saving local configuration... (正在进行本地配置...)') + '\n');
 
     // Step 5: Save config
     const saveResult = saveCredentials(creds.clientId, creds.clientSecret, { isLocal, pluginInstalled });
