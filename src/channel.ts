@@ -1,10 +1,8 @@
+import { createRequire as nodeCreateRequire } from "node:module";
 import type {
   ChannelPlugin,
   ClawdbotConfig,
 } from "openclaw/plugin-sdk";
-import {
-  buildChannelConfigSchema,
-} from "openclaw/plugin-sdk/core";
 import {
   createDefaultChannelRuntimeState,
   DEFAULT_ACCOUNT_ID,
@@ -122,7 +120,7 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     stripPatterns: () => ['@[^\\s]+'], // Strip @mentions
   },
   reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
-  configSchema: buildChannelConfigSchema(DingtalkConfigBaseSchema),
+  configSchema: undefined as any, // Initialized lazily by initDingtalkPluginConfigSchema()
   config: {
     listAccountIds: (cfg) => listDingtalkAccountIds(cfg),
     resolveAccount: (cfg, accountId) => resolveDingtalkAccount({ cfg, accountId }),
@@ -534,3 +532,22 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingtalkAccount> = {
     },
   },
 };
+
+/**
+ * Synchronously initializes `dingtalkPlugin.configSchema` using `createRequire`.
+ *
+ * Static `import ... from "openclaw/plugin-sdk/core"` causes
+ * "Cannot find package 'openclaw'" when the plugin is installed to
+ * `~/.openclaw/extensions/` (Issue #527) because the ESM loader resolves
+ * bare specifiers at parse time before the gateway's jiti alias map is active.
+ *
+ * By deferring the resolve to `register()` time and using `createRequire`
+ * (which searches the gateway's own `node_modules`), we avoid the crash
+ * while keeping the call synchronous as required by the plugin API.
+ */
+export function initDingtalkPluginConfigSchema(): void {
+  if (dingtalkPlugin.configSchema != null) return;
+  const require_ = nodeCreateRequire(import.meta.url);
+  const { buildChannelConfigSchema } = require_("openclaw/plugin-sdk/core");
+  (dingtalkPlugin as any).configSchema = buildChannelConfigSchema(DingtalkConfigBaseSchema);
+}

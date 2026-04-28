@@ -15,11 +15,11 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { dingtalkPlugin } from "./src/channel.ts";
+import { dingtalkPlugin, initDingtalkPluginConfigSchema } from "./src/channel.ts";
 import { setDingtalkRuntime } from "./src/runtime.ts";
 import { registerGatewayMethods } from "./src/gateway-methods.ts";
 
-export { dingtalkPlugin } from "./src/channel.ts";
+export { dingtalkPlugin, initDingtalkPluginConfigSchema } from "./src/channel.ts";
 export { setDingtalkRuntime } from "./src/runtime.ts";
 export { registerGatewayMethods } from "./src/gateway-methods.ts";
 
@@ -71,6 +71,7 @@ function recordAndCheckLoadPath(api: OpenClawPluginApi): void {
 export default function register(api: OpenClawPluginApi) {
   recordAndCheckLoadPath(api);
   setDingtalkRuntime(api.runtime);
+  initDingtalkPluginConfigSchema();
   api.registerChannel({ plugin: dingtalkPlugin });
   registerGatewayMethods(api);
 }
