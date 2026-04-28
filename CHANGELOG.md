@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.20] - 2026-04-28
+
+### 修复 / Fixes
+- 🐛 **OpenClaw 插件加载兼容性 (Issue #527)** — `configSchema` 改为延迟初始化，通过 `createRequire` 解析 `openclaw/plugin-sdk/core`，修复插件安装到 `~/.openclaw/extensions/` 时 ESM 裸说明符解析失败导致的 "Cannot find package 'openclaw'" 崩溃  
+  **OpenClaw plugin load compatibility (Issue #527)** — `configSchema` deferred to lazy init via `createRequire`, fixing "Cannot find package 'openclaw'" crash when plugin is installed to `~/.openclaw/extensions/`
+
+- 🐛 **Onboarding 动态导入** — `promptSingleChannelSecretInput` 从静态 import 改为动态 `import()`，避免在 ESM 加载阶段触发同样的裸说明符解析错误  
+  **Onboarding dynamic import** — `promptSingleChannelSecretInput` switched from static to dynamic `import()` to avoid bare specifier resolution error during ESM loading
+
+### 改进 / Improvements
+- ✅ **DWS CLI 版本管理重构** — `ensureDwsCli()` 新增 `compareVersions()` 语义版本比较，支持四种场景：目标版本更高时自动升级、本地版本更高时询问是否覆盖、版本一致时跳过、全新安装时显示已安装版本号  
+  **DWS CLI version management refactor** — `ensureDwsCli()` now uses `compareVersions()` for semver comparison with four scenarios: auto-upgrade when target is newer, prompt before downgrade, skip when equal, show version on fresh install
+
 ## [0.8.19] - 2026-04-25
 
 ### 新增 / Added
