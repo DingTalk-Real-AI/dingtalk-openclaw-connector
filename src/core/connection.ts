@@ -629,6 +629,89 @@ export async function monitorSingleAccount(
       }
     });
 
+    // Register card callback handler (handles card interactions like thumbs up/down)
+    const TOPIC_CARD = dingtalkStreamModule.TOPIC_CARD;
+    if (TOPIC_CARD) {
+      client.registerCallbackListener(TOPIC_CARD, async (res: any) => {
+        const messageId = res.headers?.messageId;
+        logger.info(`[DingTalk][CardCallback] 收到卡片回调，messageId=${messageId || "N/A"}`);
+
+        // 解析回调数据
+        let callbackData: any = {};
+        try {
+          callbackData = JSON.parse(res.data);
+        } catch (err: any) {
+          logger.error(`[DingTalk][CardCallback] ❌ 解析回调数据失败：${err.message}`);
+          if (messageId) {
+            client.socketCallBackResponse(messageId, {});
+          }
+          return;
+        }
+
+        // callbackData.content 是 JSON 字符串，需要二次解析
+        let parsedContent: any = {};
+        try {
+          const rawContent = callbackData?.content;
+          parsedContent = typeof rawContent === "string" ? JSON.parse(rawContent) : (rawContent ?? {});
+        } catch (contentErr: any) {
+          logger.warn(`[DingTalk][CardCallback] ⚠️ content 二次解析失败，降级为空对象：${contentErr.message}`);
+          parsedContent = {};
+        }
+
+        const actionIds: string[] = Array.isArray(parsedContent?.cardPrivateData?.actionIds)
+          ? parsedContent.cardPrivateData.actionIds
+          : [];
+        const params = parsedContent?.cardPrivateData?.params ?? {};
+        const userId = callbackData.userId ?? "";
+        const outTrackId = callbackData.outTrackId ?? "";
+        logger.info(`[DingTalk][CardCallback] outTrackId=${outTrackId}, userId=${userId}, actionIds=${JSON.stringify(actionIds)}`);
+        logger.debug(`[DingTalk][CardCallback] 回调数据：${JSON.stringify(callbackData).substring(0, 500)}`);
+
+        // 从配置读取回调 actionId 和变量名（支持自定义模板）
+        const likeActionId = account.config.cardLikeActionId || "ai_res_like";
+        const dislikeActionId = account.config.cardDislikeActionId || "ai_res_dislike";
+        const likeVar = account.config.cardLikeVar || "like";
+
+        // 构造响应（参考官方 card_callback_handler 示例格式）
+        const response: Record<string, any> = {
+          cardUpdateOptions: {
+            updateCardDataByKey: true,
+            updatePrivateDataByKey: true,
+          },
+          cardData: { cardParamMap: {} },
+          userPrivateData: { cardParamMap: {} },
+        };
+
+        try {
+          if (actionIds.includes(likeActionId)) {
+            logger.info(`[DingTalk][CardCallback] 👍 用户 ${userId} 点赞了 ${outTrackId}`);
+            response.cardData.cardParamMap[likeVar] = 1;
+          } else if (actionIds.includes(dislikeActionId)) {
+            const reasons = Array.isArray(params.dislike_reason)
+              ? params.dislike_reason.join("、")
+              : String(params.dislike_reason ?? "");
+            const custom = params.custom_dislike_reason ?? "";
+            logger.info(`[DingTalk][CardCallback] 👎 用户 ${userId} 点踩了 ${outTrackId}，原因：${reasons}${custom ? `，补充：${custom}` : ""}`);
+            response.cardData.cardParamMap[likeVar] = -1;
+            response.cardData.cardParamMap.submitted = "true";
+          } else {
+            logger.info(`[DingTalk][CardCallback] 未知 actionIds=${JSON.stringify(actionIds)}，按默认处理`);
+          }
+        } catch (bizErr: any) {
+          logger.error(`[DingTalk][CardCallback] ❌ 处理业务逻辑异常：${bizErr.message}`);
+        } finally {
+          // 确保无论业务逻辑是否异常，都响应回调（避免钉钉侧超时重试）
+          if (messageId) {
+            client.socketCallBackResponse(messageId, response);
+            logger.info(`[DingTalk][CardCallback] ✅ 已响应卡片回调`);
+          }
+        }
+      });
+      logger.info(`[DingTalk] ✅ 已注册 TOPIC_CARD 卡片回调监听器`);
+    } else {
+      logger.warn(`[DingTalk] ⚠️ dingtalk-stream 模块未导出 TOPIC_CARD，卡片回调不可用`);
+    }
+
     // 清理定时器
     const cleanup = () => {
       clearInterval(statsInterval);

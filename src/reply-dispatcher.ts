@@ -253,7 +253,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         const card = await createAICardForTarget(
           account.config as DingtalkConfig,
           target,
-          log
+          log,
         );
         currentCardTarget = card as any;
         accumulatedText = "";
@@ -699,7 +699,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 );
               } else {
                 log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-                await sendFallbackErrorMessage('sendMessage', err.message);
+                // 非 QPS 错误也不立即降级，等待下一次 partial 更新重试，
+                // 最终回复通过 closeStreaming / finishAICard 兜底。
               }
             }
           } else {
