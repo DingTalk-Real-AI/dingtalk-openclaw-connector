@@ -47,6 +47,7 @@ import {
   processAudioMarkers,
   uploadAndReplaceFileMarkers,
 } from "./services/media/index.ts";
+import { registerCardSession } from "./services/card-session-registry.ts";
 
 
 export type CreateDingtalkReplyDispatcherParams = {
@@ -62,6 +63,8 @@ export type CreateDingtalkReplyDispatcherParams = {
   asyncMode?: boolean;
   /** 队列繁忙时预先创建的 AI Card，startStreaming 时直接复用而非新建 */
   preCreatedCard?: AICardInstance;
+  /** OpenClaw session key，用于卡片反馈追溯到 session */
+  sessionKey?: string;
 };
 
 export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatcherParams) {
@@ -238,6 +241,10 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
         currentCardTarget = preCreatedCard as any;
         accumulatedText = "";
+        // 注册 card → session 映射，供卡片回调追溯反馈
+        if (params.sessionKey) {
+          registerCardSession(preCreatedCard.cardInstanceId, { sessionKey: params.sessionKey, agentId, createdAt: Date.now() });
+        }
         return;
       }
 
@@ -260,6 +267,10 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
 
         if (card) {
           log.info(`[DingTalk][startStreaming] ✅ AI Card 创建成功`);
+          // 注册 card → session 映射，供卡片回调追溯反馈
+          if (params.sessionKey) {
+            registerCardSession(card.cardInstanceId, { sessionKey: params.sessionKey, agentId, createdAt: Date.now() });
+          }
         } else {
           log.warn(`[DingTalk][startStreaming] AI Card 创建返回 null，静默降级到普通消息模式`);
         }

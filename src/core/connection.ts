@@ -18,6 +18,7 @@ import type { ResolvedDingtalkAccount } from "../types/index.ts";
 import {
   checkAndMarkDingtalkMessage,
 } from "../utils/utils-legacy.ts";
+import { recordFeedbackToSession } from "../services/card-session-registry.ts";
 
 // ============ 类型定义 ============
 
@@ -686,6 +687,10 @@ export async function monitorSingleAccount(
           if (actionIds.includes(likeActionId)) {
             logger.info(`[DingTalk][CardCallback] 👍 用户 ${userId} 点赞了 ${outTrackId}`);
             response.cardData.cardParamMap[likeVar] = 1;
+            // 将点赞反馈记录到 session
+            recordFeedbackToSession({ outTrackId, like: 1, userId, logger }).catch(err => {
+              logger.warn(`[DingTalk][CardCallback] 记录点赞反馈失败: ${err?.message ?? err}`);
+            });
           } else if (actionIds.includes(dislikeActionId)) {
             const reasons = Array.isArray(params.dislike_reason)
               ? params.dislike_reason.join("、")
@@ -694,6 +699,12 @@ export async function monitorSingleAccount(
             logger.info(`[DingTalk][CardCallback] 👎 用户 ${userId} 点踩了 ${outTrackId}，原因：${reasons}${custom ? `，补充：${custom}` : ""}`);
             response.cardData.cardParamMap[likeVar] = -1;
             response.cardData.cardParamMap.submitted = "true";
+            // 将点踩反馈记录到 session
+            const dislikeReasons = Array.isArray(params.dislike_reason) ? params.dislike_reason : [];
+            const customDislikeReason = params.custom_dislike_reason ?? undefined;
+            recordFeedbackToSession({ outTrackId, like: -1, userId, dislikeReasons, customDislikeReason, logger }).catch(err => {
+              logger.warn(`[DingTalk][CardCallback] 记录点踩反馈失败: ${err?.message ?? err}`);
+            });
           } else {
             logger.info(`[DingTalk][CardCallback] 未知 actionIds=${JSON.stringify(actionIds)}，按默认处理`);
           }

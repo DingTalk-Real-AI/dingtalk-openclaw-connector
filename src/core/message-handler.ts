@@ -1461,6 +1461,7 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
       sessionWebhook: data.sessionWebhook,
       asyncMode,
       preCreatedCard: params.preCreatedCard,
+      sessionKey,
     });
 
     // ===== 注入当前 bot 的 clientId（用于 dws CLI --client-id 参数） =====
