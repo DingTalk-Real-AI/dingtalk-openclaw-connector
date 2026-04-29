@@ -9,7 +9,10 @@ import { dingtalkHttp } from "../../utils/http-client.ts";
 
 // ============ 常量 ============
 
-const AI_CARD_TEMPLATE_ID = "02fcf2f4-5e02-4a85-b672-46d1f715543e.schema";
+const DEFAULT_AI_CARD_TEMPLATE_ID = "02fcf2f4-5e02-4a85-b672-46d1f715543e.schema";
+
+/** 默认的卡片内容字段名（官方 AI Card 模板使用 msgContent） */
+const DEFAULT_CARD_TEMPLATE_KEY = "msgContent";
 
 /**
  * 钉钉卡片 API 的最大 QPS（官方限制约 40 次/秒）。
@@ -259,8 +262,10 @@ export async function createAICardForTarget(
     );
 
     // 1. 创建卡片实例
+    const cardTemplateId = config.cardTemplateId || DEFAULT_AI_CARD_TEMPLATE_ID;
+
     const createBody = {
-      cardTemplateId: AI_CARD_TEMPLATE_ID,
+      cardTemplateId,
       outTrackId: cardInstanceId,
       cardData: {
           cardParamMap: {
@@ -352,6 +357,10 @@ export async function streamAICard(
     log?.warn?.(`[DingTalk][AICard] streamAICard 收到 null card，跳过更新`);
     return;
   }
+
+  // 从 config 中读取自定义内容字段名（自定义模板的 Markdown 变量名），默认 "msgContent"
+  const contentKey = config?.cardTemplateKey || DEFAULT_CARD_TEMPLATE_KEY;
+
   // 确保 token 有效
   if (config) {
     await ensureValidToken(card, config);
@@ -368,10 +377,9 @@ export async function streamAICard(
       cardData: {
         cardParamMap: {
           flowStatus: AICardStatus.INPUTING,
-          msgContent: content,
-          staticMsgContent: "",
+          [contentKey]: content,
           sys_full_json_obj: JSON.stringify({
-            order: ["msgContent"],
+            order: [contentKey],
           }),
           config: JSON.stringify({ autoLayout: true }),
         },
@@ -421,7 +429,7 @@ export async function streamAICard(
   const body = {
     outTrackId: card.cardInstanceId,
     guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    key: "msgContent",
+    key: contentKey,
     content: fixedContent,
     isFull: true,
     isFinalize: finished,
@@ -494,6 +502,10 @@ export async function finishAICard(
   if (config) {
     await ensureValidToken(card, config);
   }
+
+  // 从 config 中读取自定义内容字段名，默认 "msgContent"
+  const contentKey = config?.cardTemplateKey || DEFAULT_CARD_TEMPLATE_KEY;
+
   const fixedContent = ensureTableBlankLines(content);
   log?.info?.(
     `[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`,
@@ -506,10 +518,9 @@ export async function finishAICard(
     cardData: {
       cardParamMap: {
         flowStatus: AICardStatus.FINISHED,
-        msgContent: fixedContent,
-        staticMsgContent: "",
+        [contentKey]: fixedContent,
         sys_full_json_obj: JSON.stringify({
-          order: ["msgContent"],
+          order: [contentKey],
         }),
         config: JSON.stringify({ autoLayout: true }),
       },
