@@ -287,6 +287,11 @@ export async function monitorSingleAccount(
       // 重连成功，向框架报告 connected: true
       onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
 
+      // 重新注册 socket 事件监听器（新 socket 需要新的 listener）
+      setupPongListener();
+      setupMessageListener();
+      setupCloseListener();
+
       logger.info(`✅ 重连成功 (socket 状态=${client.socket?.readyState})`);
     } catch (err: any) {
       reconnectAttempts++;
@@ -448,11 +453,6 @@ export async function monitorSingleAccount(
 
     logger.debug(`Connection 已停止`);
   }
-
-  // 初始化：设置所有事件监听器
-  setupPongListener();
-  setupMessageListener();
-  setupCloseListener();
 
   return new Promise<void>(async (resolve, reject) => {
     // Handle abort signal
@@ -638,6 +638,12 @@ export async function monitorSingleAccount(
     // Connect to DingTalk Stream
     try {
       await client.connect();
+
+      // 注册 socket 事件监听器（必须在 connect 后，此时 client.socket 已创建）
+      setupPongListener();
+      setupMessageListener();
+      setupCloseListener();
+
       logger.info(`Connected to DingTalk Stream successfully`);
       logger.info(`PID: ${process.pid}`);
       logger.info(
