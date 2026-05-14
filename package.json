@@ -132,7 +132,15 @@
       "localPath": "extensions/dingtalk",
       "defaultChoice": "npm"
     },
-    "installDependencies": true
+    "installDependencies": true,
+    "compat": {
+      "pluginApi": ">=2026.4.9",
+      "minGatewayVersion": "2026.4.9"
+    },
+    "build": {
+      "openclawVersion": "2026.4.9",
+      "pluginSdkVersion": "2026.4.9"
+    }
   },
   "devDependencies": {
     "@types/node": "^20.19.37",
