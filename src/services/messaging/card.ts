@@ -202,6 +202,14 @@ function ensureTableBlankLines(text: string): string {
   return result.join("\n");
 }
 
+/**
+ * 将单个 \n 转换为 <br>，保留 \n\n 段落分隔。
+ * 钉钉 AI Card 渲染引擎不将单 \n 视为换行，需要显式使用 <br>。
+ */
+function fixNewlines(text: string): string {
+  return text.replace(/(?<!\n)\n(?!\n)/g, '<br>');
+}
+
 // ============ AI Card 相关 ============
 
 /**
@@ -368,7 +376,7 @@ export async function streamAICard(
       cardData: {
         cardParamMap: {
           flowStatus: AICardStatus.INPUTING,
-          msgContent: content,
+          msgContent: fixNewlines(content),
           staticMsgContent: "",
           sys_full_json_obj: JSON.stringify({
             order: ["msgContent"],
@@ -417,7 +425,7 @@ export async function streamAICard(
     card.inputingStarted = true;
   }
 
-  const fixedContent = ensureTableBlankLines(content);
+  const fixedContent = fixNewlines(ensureTableBlankLines(content));
   const body = {
     outTrackId: card.cardInstanceId,
     guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -494,7 +502,7 @@ export async function finishAICard(
   if (config) {
     await ensureValidToken(card, config);
   }
-  const fixedContent = ensureTableBlankLines(content);
+  const fixedContent = fixNewlines(ensureTableBlankLines(content));
   log?.info?.(
     `[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`,
   );
