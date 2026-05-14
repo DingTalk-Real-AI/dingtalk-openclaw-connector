@@ -64,6 +64,47 @@ const BASE_BACKOFF_DELAY = 1000; // 1 秒
 /** 最大退避时间（毫秒） */
 const MAX_BACKOFF_DELAY = 30 * 1000; // 30 秒
 
+// ============ 上游 SDK 噪音抑制 ============
+//
+// 背景（#571 / #536 / #573）：
+// 钉钉 Stream 服务端会周期性下发 `disconnect` topic（约 30s 一次）用于负载均衡 /
+// 实例切换；客户端必须立即断开重连，这是钉钉协议设计。但上游 SDK
+// `dingtalk-stream@2.1.4`（client.cjs:138 / :185）在连接建立和断开时直接调用
+// `console.info(...)`，导致单 bot 也会刷出 `Disconnecting.` / `connect success`
+// 循环刷屏的日志，看起来像是故障。
+//
+// 这里在模块加载时一次性 patch `console.info`，**只过滤这两条精确字符串**，
+// 其他 console.info 不受影响。connector 自己在 `doReconnect` 流程中通过
+// `logger.info` 输出更友好的连接生命周期日志（受 debug 配置控制）。
+//
+// 注意：此函数不动 keepAlive 心跳逻辑、不动 lastSocketAvailableTime
+// 写入时机、不动 setupPongListener —— 不影响 #437 的心跳超时修复。
+let _streamNoiseSilenced = false;
+function silenceDingtalkStreamConsoleNoise(): void {
+  if (_streamNoiseSilenced) return;
+  _streamNoiseSilenced = true;
+  const origConsoleInfo = console.info.bind(console);
+  console.info = (...args: any[]) => {
+    const first = args[0];
+    if (typeof first === "string") {
+      if (first === "Disconnecting.") return;
+      if (/^\[[^\]]+\] connect success$/.test(first)) return;
+    }
+    return origConsoleInfo(...args);
+  };
+}
+
+// 一次性提示：避免多 bot 启动时每个账号都打一遍同样的协议说明
+let _lbProtocolNoticePrinted = false;
+function printLoadBalanceNoticeOnce(): void {
+  if (_lbProtocolNoticePrinted) return;
+  _lbProtocolNoticePrinted = true;
+  console.log(
+    "[dingtalk-connector] ℹ️  钉钉 Stream 服务端会周期性下发负载均衡断开（约 30s/次），" +
+      "connector 已自动重连，属正常机制，非故障。详见 #571 / #536 / #573。",
+  );
+}
+
 // ============ 监控账号 ============
 
 export async function monitorSingleAccount(
@@ -71,6 +112,10 @@ export async function monitorSingleAccount(
 ): Promise<void> {
   const { cfg, account, runtime, abortSignal, messageHandler, onStatusChange } = opts;
   const { accountId } = account;
+
+  // 在 dingtalk-stream SDK 被动态 import 之前抑制其 console.info 噪音
+  // （#571 / #536 / #573：30s 负载均衡断连导致 SDK 自带日志刷屏）
+  silenceDingtalkStreamConsoleNoise();
 
   // 保存 cfg 以便传递给 messageHandler
   const clawdbotConfig = cfg;
@@ -313,6 +358,8 @@ export async function monitorSingleAccount(
       try {
         const msg = JSON.parse(data);
         if (msg.type === "SYSTEM" && msg.headers?.topic === "disconnect") {
+          // 钉钉服务端周期性下发的负载均衡断开，属协议机制，非故障
+          logger.debug(`收到服务端 disconnect topic（负载均衡），即将重连`);
           if (!isStopped && !isReconnecting) {
             // 立即重连，不退避
             doReconnect(true).catch((err) => {
@@ -643,6 +690,10 @@ export async function monitorSingleAccount(
       logger.info(
         `✅ 自定义 keepAlive: true (10 秒心跳，90 秒超时), 指数退避重连`,
       );
+
+      // 首个账号连上时，打印一次"30s 周期断连属正常"的协议说明，避免用户误以为故障
+      // （#571 / #536 / #573）
+      printLoadBalanceNoticeOnce();
 
       // 初次连接成功，向框架报告 connected: true
       onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
