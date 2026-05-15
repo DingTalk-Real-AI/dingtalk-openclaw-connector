@@ -115,6 +115,7 @@ Quick routing:
 
 - **Other DingTalk product / open-platform capabilities** (outside this connector) → [DingTalk developer ticket center](https://applink.dingtalk.com/client/aiAgent?assistantId=381bb5860c264d33bc184c51db776fa7&from=development)
 - **OpenClaw upstream** (gateway, models, channels, etc.) → [openclaw/openclaw Issues](https://github.com/openclaw/openclaw/issues)
+- **`dingtalk-workspace-cli` (dws)** (DingTalk workspace CLI behavior) → [dingtalk-workspace-cli Issues](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/issues)
 - **This connector** → [GitHub Issues](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues)
 
 ---

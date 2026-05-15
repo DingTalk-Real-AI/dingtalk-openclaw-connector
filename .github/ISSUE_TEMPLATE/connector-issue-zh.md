@@ -5,7 +5,7 @@ title: "[Connector] "
 ---
 
 <!--
-请先看置顶说明 #584：钉钉其他业务能力请走工单；OpenClaw 本体请到上游仓库。
+请先看置顶说明 #584：钉钉其他业务能力请走工单；OpenClaw 本体请到上游仓库；dws（钉钉工作空间 CLI）请到 dingtalk-workspace-cli 仓库。
 -->
 
 ## 问题简述

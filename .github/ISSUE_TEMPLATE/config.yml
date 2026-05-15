@@ -6,6 +6,9 @@ contact_links:
   - name: "🔗 OpenClaw upstream issues"
     url: https://github.com/openclaw/openclaw/issues
     about: OpenClaw 本体（网关、模型、多通道等）请到上游仓库。Gateway / models / channels and core OpenClaw behavior — file in the upstream repo.
+  - name: "🛠 dingtalk-workspace-cli (dws) issues"
+    url: https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/issues
+    about: dws（钉钉工作空间 CLI）相关问题请到该仓库提交。dws CLI behavior / commands / docs — file in the dingtalk-workspace-cli repo.
   - name: "📌 提 Issue 前必看 / READ FIRST (CN)"
     url: https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/584
     about: 置顶说明：反馈分流、版本预期、需要带的信息（中文）。
