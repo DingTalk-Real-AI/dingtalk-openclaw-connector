@@ -104,11 +104,26 @@ openclaw gateway restart
 
 ---
 
+## 反馈与社区
+
+提 Issue / PR 前，建议先看一眼置顶说明（信息完整能帮我们更快定位问题）：
+
+- 中文：[【提 Issue 前必看】#584](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/584)
+- English: [[READ FIRST] #585](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/585)
+
+简要分流：
+
+- **钉钉其他业务能力**（非本 connector 范畴）→ [钉钉开发者侧工单入口](https://applink.dingtalk.com/client/aiAgent?assistantId=381bb5860c264d33bc184c51db776fa7&from=development)
+- **OpenClaw 本体**（网关、模型、多通道等）→ [openclaw/openclaw Issues](https://github.com/openclaw/openclaw/issues)
+- **本仓库 connector** → [GitHub Issues](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues)
+
+---
+
 ## 贡献
 
-欢迎社区贡献！如果你发现 Bug 或有功能建议，请提交 [Issue](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues) 或 Pull Request。
+欢迎提交 Pull Request：改动越小、描述与验证步骤越清晰，越容易合入；较大改动建议先开 Issue 同步。文档类参考 [#514](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/514/changes)，代码类参考 [#581](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/581)。
 
-对于较大的改动，建议先通过 Issue 与我们讨论。
+> **季度致谢**：每个季度对 PR 贡献量居前 3 位的伙伴提供小礼品或钉钉参观交流机会（细则以当季公告为准），感谢大家对社区共建的支持。
 
 ---
 

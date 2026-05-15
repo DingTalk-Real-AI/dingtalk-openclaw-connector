@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "📩 钉钉其他业务能力 / Other DingTalk capabilities (please use ticket)"
+    url: https://applink.dingtalk.com/client/aiAgent?assistantId=381bb5860c264d33bc184c51db776fa7&from=development
+    about: 非本 connector 范畴的钉钉产品/开放能力问题请走工单。For DingTalk product/open-platform issues outside this connector, please use the DingTalk ticket center.
+  - name: "🔗 OpenClaw upstream issues"
+    url: https://github.com/openclaw/openclaw/issues
+    about: OpenClaw 本体（网关、模型、多通道等）请到上游仓库。Gateway / models / channels and core OpenClaw behavior — file in the upstream repo.
+  - name: "📌 提 Issue 前必看 / READ FIRST (CN)"
+    url: https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/584
+    about: 置顶说明：反馈分流、版本预期、需要带的信息（中文）。
+  - name: "📌 READ FIRST (EN)"
+    url: https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/585
+    about: Pinned notice — routing, version expectations, what to include (English).
