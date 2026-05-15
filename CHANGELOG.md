@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.21-beta.0] - 2026-05-14
+
+### 修复 / Fixes
+- 🐛 **抑制上游 SDK 30s 负载均衡日志刷屏 (#571 / #536 / #573)** — 钉钉 Stream 服务端会周期性下发 `disconnect` topic（约 30s/次）做负载均衡，上游 `dingtalk-stream@2.1.4` SDK 在 `client.cjs:138 / :185` 直接 `console.info("Disconnecting.")` / `connect success`，导致单 bot 也会刷屏，看起来像故障。本次在 `src/core/connection.ts` 加 `silenceDingtalkStreamConsoleNoise()`：模块级一次性 patch `console.info`，**只过滤这两条精确字符串**，其他 `console.info` 不受影响。同时在首个账号连上时打印一次「30s 周期断连属正常机制」提示，消除误导。  
+  **Silence upstream SDK 30s rebalance log noise (#571 / #536 / #573)** — DingTalk Stream server periodically pushes `disconnect` topic (~30s) for load balancing; upstream `dingtalk-stream@2.1.4` SDK directly calls `console.info("Disconnecting.")` / `connect success` (`client.cjs:138 / :185`), spamming logs and looking like a failure even on a single bot. This release adds `silenceDingtalkStreamConsoleNoise()` in `src/core/connection.ts`: a module-level one-time patch that filters **only these two exact strings**, leaving other `console.info` untouched. Also prints a one-time "periodic rebalance is normal" notice on first connect to avoid user confusion.
+
+### 说明 / Notes
+- 不改动 `startKeepAlive` / `setupPongListener` / `lastSocketAvailableTime` 写入时机，不影响 #437 的心跳超时检测修复。  
+  No changes to `startKeepAlive` / `setupPongListener` / `lastSocketAvailableTime` write semantics — does not affect the #437 heartbeat-timeout fix.
+
 ## [0.8.20] - 2026-04-28
 
 ### 修复 / Fixes
