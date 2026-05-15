@@ -315,6 +315,98 @@ describe('AI Card helpers', () => {
     }, 10_000);
   });
 
+  describe('fixNewlines', () => {
+    it('should convert single \\n to <br>', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('第一行\n第二行')).toBe('第一行<br>第二行');
+    });
+
+    it('should preserve \\n\\n paragraph breaks', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('第一段\n\n第二段')).toBe('第一段\n\n第二段');
+    });
+
+    it('should preserve \\n inside fenced code blocks', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      const input = '```python\ndef hello():\n    print("hi")\n```';
+      expect(fixNewlines(input)).toBe(input);
+    });
+
+    it('should not merge quote-like lines inside fenced code blocks', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      const input = '```\n> line1\n> line2\n```';
+      expect(fixNewlines(input)).toBe(input);
+    });
+
+    it('should preserve \\n before list items', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('- a\n- b')).toBe('- a\n- b');
+      expect(fixNewlines('1. a\n2. b')).toBe('1. a\n2. b');
+    });
+
+    it('should preserve \\n before table rows', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('| a |\n| b |')).toBe('| a |\n| b |');
+    });
+
+    it('should merge consecutive quote lines with <br>', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('> line1\n> line2')).toBe('> line1<br>line2');
+    });
+
+    it('should handle code block mixed with plain text', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      const input = '前文\n\n```\ncode\n```\n\n后文';
+      expect(fixNewlines(input)).toBe('前文\n\n```\ncode\n```\n\n后文');
+    });
+
+    it('should handle empty string', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('')).toBe('');
+    });
+
+    it('should normalize CRLF line endings', async () => {
+      const { __testables } = await import('../test');
+      const { fixNewlines } = __testables as any;
+      expect(fixNewlines('第一行\r\n第二行')).toBe('第一行<br>第二行');
+    });
+  });
+
+  describe('normalizeForCard', () => {
+    it('should apply both ensureTableBlankLines and fixNewlines', async () => {
+      const { __testables } = await import('../test');
+      const { normalizeForCard } = __testables as any;
+      // Plain text: single \n → <br>
+      expect(normalizeForCard('a\nb')).toBe('a<br>b');
+    });
+
+    it('should handle table content', async () => {
+      const { __testables } = await import('../test');
+      const { normalizeForCard } = __testables as any;
+      const input = 'text\n| a |\n| --- |\n| b |';
+      const result = normalizeForCard(input);
+      // Table rows should have \n preserved
+      expect(result).toContain('| a |');
+      expect(result).toContain('| b |');
+    });
+
+    it('should normalize CRLF before applying table rules', async () => {
+      const { __testables } = await import('../test');
+      const { normalizeForCard } = __testables as any;
+      const input = 'text\r\n| a |\r\n| --- |\r\n| b |';
+      expect(normalizeForCard(input)).toBe('text\n\n| a |\n| --- |\n| b |');
+    });
+  });
+
   describe('isQpsLimitError', () => {
     it('should identify 403 QpsLimit errors', async () => {
       const { __testables } = await import('../test');
