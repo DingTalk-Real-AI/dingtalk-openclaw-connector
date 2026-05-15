@@ -168,10 +168,17 @@ export type AICardTarget =
 // ============ Markdown 格式修正 ============
 
 /**
+ * 统一换行符为 \n，避免 CRLF 干扰 Markdown 解析
+ */
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/**
  * 确保 Markdown 表格前有空行，否则钉钉无法正确渲染表格
  */
 function ensureTableBlankLines(text: string): string {
-  const lines = text.split("\n");
+  const lines = normalizeLineEndings(text).split("\n");
   const result: string[] = [];
 
   const tableDividerRegex = /^\s*\|?\s*:?-+:?\s*(\|?\s*:?-+:?\s*)+\|?\s*$/;
@@ -204,10 +211,105 @@ function ensureTableBlankLines(text: string): string {
 
 /**
  * 将单个 \n 转换为 <br>，保留 \n\n 段落分隔。
- * 钉钉 AI Card 渲染引擎不将单 \n 视为换行，需要显式使用 <br>。
+ *
+ * 钉钉 AI Card 渲染器的换行约定：
+ * - 普通文本：用 `<br>` 做换行，`\n` 不创建视觉换行
+ * - 代码块（```）：用 `\n` 做换行，`<br>` 会原样显示为文本
+ * - 列表（- / 1.）、表格（|）、标题（#）：用 `\n` 做语法行分隔
+ * - 引用块（>）：用 `<br>` + lazy continuation，续行不需要 `>`
+ * - 段落间距：`\n\n`
+ *
+ * 本函数按上述约定转换：
+ * - 代码块内：完全保留原始 `\n`
+ * - 连续引用行：合并为一行，`<br>` 连接，去掉续行 `>` 前缀
+ * - 其余：Markdown 块语法行前保留 `\n`，单 `\n` → `<br>`
  */
-function fixNewlines(text: string): string {
-  return text.replace(/(?<!\n)\n(?!\n)/g, '<br>');
+export function fixNewlines(text: string): string {
+  const normalized = normalizeLineEndings(text);
+  const markdownBlockStartPattern =
+    /^(\s{0,3}(?:[-*+]|\d+[.)])[ ])|(\s{0,3}\|)|(\s{0,3}#{1,6}\s)|(\s{0,3}(?:[-*_])\s*(?:[-*_])\s*(?:[-*_]))/;
+  const fencePattern = /^\s{0,3}```/;
+  const quotePattern = /^\s{0,3}>\s?/;
+
+  // 1. 合并连续引用行：仅在代码块外生效；去掉续行的 > 前缀，用 <br> 连接
+  const mergedLines: string[] = [];
+  let pendingQuoteLines: string[] = [];
+  let inCodeBlock = false;
+  const flushPendingQuoteLines = () => {
+    if (pendingQuoteLines.length > 0) {
+      mergedLines.push(pendingQuoteLines.join("<br>"));
+      pendingQuoteLines = [];
+    }
+  };
+
+  for (const line of normalized.split("\n")) {
+    const isFence = fencePattern.test(line);
+
+    if (inCodeBlock) {
+      flushPendingQuoteLines();
+      mergedLines.push(line);
+      if (isFence) {
+        inCodeBlock = false;
+      }
+      continue;
+    }
+
+    if (isFence) {
+      flushPendingQuoteLines();
+      mergedLines.push(line);
+      inCodeBlock = true;
+      continue;
+    }
+
+    if (quotePattern.test(line)) {
+      if (pendingQuoteLines.length === 0) {
+        pendingQuoteLines.push(line);
+      } else {
+        pendingQuoteLines.push(line.replace(quotePattern, ""));
+      }
+    } else {
+      flushPendingQuoteLines();
+      mergedLines.push(line);
+    }
+  }
+  flushPendingQuoteLines();
+
+  // 2. 逐行处理：代码块保留 \n，Markdown 块语法行前保留 \n，其余转 <br>
+  const lines = mergedLines;
+  inCodeBlock = false;
+  const parts: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const currentLine = lines[i];
+    const nextInCodeBlock = fencePattern.test(currentLine)
+      ? !inCodeBlock
+      : inCodeBlock;
+
+    if (i < lines.length - 1) {
+      const nextLine = lines[i + 1];
+      const keepNewline =
+        nextInCodeBlock ||
+        currentLine === "" ||
+        nextLine === "" ||
+        fencePattern.test(nextLine) ||
+        markdownBlockStartPattern.test(nextLine);
+      parts.push(currentLine + (keepNewline ? "\n" : "<br>"));
+    } else {
+      parts.push(currentLine);
+    }
+
+    inCodeBlock = nextInCodeBlock;
+  }
+
+  return parts.join("");
+}
+
+/**
+ * 标准化 AI Card 消息内容：先修复表格空行，再处理换行符。
+ * 用于 streamAICard 和 finishAICard 的所有路径，确保行为一致。
+ */
+export function normalizeForCard(content: string): string {
+  return fixNewlines(ensureTableBlankLines(content));
 }
 
 // ============ AI Card 相关 ============
@@ -376,7 +478,7 @@ export async function streamAICard(
       cardData: {
         cardParamMap: {
           flowStatus: AICardStatus.INPUTING,
-          msgContent: fixNewlines(content),
+          msgContent: normalizeForCard(content),
           staticMsgContent: "",
           sys_full_json_obj: JSON.stringify({
             order: ["msgContent"],
@@ -425,12 +527,14 @@ export async function streamAICard(
     card.inputingStarted = true;
   }
 
-  const fixedContent = fixNewlines(ensureTableBlankLines(content));
+  const fixedContent = normalizeForCard(content);
+  // 未结束的帧去掉末尾 \n，避免先渲染为 <br> 再被下一帧修正的闪烁
+  const streamContent = finished ? fixedContent : fixedContent.replace(/\n+$/, '');
   const body = {
     outTrackId: card.cardInstanceId,
     guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     key: "msgContent",
-    content: fixedContent,
+    content: streamContent,
     isFull: true,
     isFinalize: finished,
     isError: false,
@@ -502,7 +606,7 @@ export async function finishAICard(
   if (config) {
     await ensureValidToken(card, config);
   }
-  const fixedContent = fixNewlines(ensureTableBlankLines(content));
+  const fixedContent = normalizeForCard(content);
   log?.info?.(
     `[DingTalk][AICard] 开始 finish，最终内容长度=${fixedContent.length}`,
   );
