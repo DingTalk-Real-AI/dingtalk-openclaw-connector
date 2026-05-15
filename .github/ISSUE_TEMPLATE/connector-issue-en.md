@@ -5,7 +5,7 @@ title: "[Connector] "
 ---
 
 <!--
-Please skim the pinned notice #585 first: other DingTalk capabilities go to the ticket center; OpenClaw upstream goes to the openclaw repo.
+Please skim the pinned notice #585 first: other DingTalk capabilities → ticket center; OpenClaw upstream → openclaw repo; dws (DingTalk workspace CLI) → dingtalk-workspace-cli repo.
 -->
 
 ## Summary

@@ -20,3 +20,4 @@ AGENTS.md
 plans/
 scripts/
 .issue-replies/
+*.tgz
