@@ -104,11 +104,26 @@ openclaw gateway restart
 
 ---
 
+## Feedback & Community
+
+Before filing an Issue / PR, please skim the pinned notice — clear context helps us debug faster:
+
+- English: [[READ FIRST] #585](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/585)
+- 中文：[【提 Issue 前必看】#584](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/584)
+
+Quick routing:
+
+- **Other DingTalk product / open-platform capabilities** (outside this connector) → [DingTalk developer ticket center](https://applink.dingtalk.com/client/aiAgent?assistantId=381bb5860c264d33bc184c51db776fa7&from=development)
+- **OpenClaw upstream** (gateway, models, channels, etc.) → [openclaw/openclaw Issues](https://github.com/openclaw/openclaw/issues)
+- **This connector** → [GitHub Issues](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues)
+
+---
+
 ## Contributing
 
-Community contributions are welcome! If you find a bug or have feature suggestions, please submit an [Issue](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues) or Pull Request.
+PRs are welcome — small, well-described changes with clear verification land fastest; for larger changes, please open an Issue first. Doc-style reference: [#514](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/514/changes) · code-style reference: [#581](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/581).
 
-For major changes, we recommend discussing with us first via an Issue.
+> **Quarterly thanks**: each quarter, the top 3 PR contributors get a small gift or an invite to a DingTalk on-site visit (details per quarterly announcement). Thanks for co-building the community.
 
 ---
 
