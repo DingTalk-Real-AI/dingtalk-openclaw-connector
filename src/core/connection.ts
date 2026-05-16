@@ -242,6 +242,12 @@ export async function monitorSingleAccount(
       // 2. 重新建立连接
       await client.connect();
 
+      // 立即注册 socket 事件监听器，避免在等待 OPEN 期间错过 pong/message/close 事件
+      // （keepAlive 期间发的 ping，如果 pong 回来时 listener 还没挂，会被丢，最坏踩到 TIMEOUT_THRESHOLD 边界）
+      setupPongListener();
+      setupMessageListener();
+      setupCloseListener();
+
       // 3. 等待连接真正建立（监听 open 事件，最多等待 10 秒）
       const connectionEstablished = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => {
@@ -286,11 +292,6 @@ export async function monitorSingleAccount(
 
       // 重连成功，向框架报告 connected: true
       onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
-
-      // 重新注册 socket 事件监听器（新 socket 需要新的 listener）
-      setupPongListener();
-      setupMessageListener();
-      setupCloseListener();
 
       logger.info(`✅ 重连成功 (socket 状态=${client.socket?.readyState})`);
     } catch (err: any) {
