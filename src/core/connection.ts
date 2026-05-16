@@ -67,18 +67,18 @@ const MAX_BACKOFF_DELAY = 30 * 1000; // 30 秒
 // ============ 上游 SDK 噪音抑制 ============
 //
 // 背景（#571 / #536 / #573）：
-// 钉钉 Stream 服务端会周期性下发 `disconnect` topic（约 30s 一次）用于负载均衡 /
-// 实例切换；客户端必须立即断开重连，这是钉钉协议设计。但上游 SDK
-// `dingtalk-stream@2.1.4`（client.cjs:138 / :185）在连接建立和断开时直接调用
-// `console.info(...)`，导致单 bot 也会刷出 `Disconnecting.` / `connect success`
-// 循环刷屏的日志，看起来像是故障。
+// 上游 SDK `dingtalk-stream@2.1.4`（client.cjs:138 / :185）在连接建立和断开时
+// 直接调用 `console.info(...)`，输出 `Disconnecting.` / `[time] connect success`
+// 两条字符串。任何触发 `client.disconnect()` + `client.connect()` 的链路
+// （网络抖动、服务端下发 disconnect topic、connector 主动重连等）都会让这两
+// 条日志成对出现，绕过本插件 logger，给运维造成"故障"误判。
 //
 // 这里在模块加载时一次性 patch `console.info`，**只过滤这两条精确字符串**，
 // 其他 console.info 不受影响。connector 自己在 `doReconnect` 流程中通过
 // `logger.info` 输出更友好的连接生命周期日志（受 debug 配置控制）。
 //
-// 注意：此函数不动 keepAlive 心跳逻辑、不动 lastSocketAvailableTime
-// 写入时机、不动 setupPongListener —— 不影响 #437 的心跳超时修复。
+// 此函数不动 keepAlive 心跳逻辑、不动 lastSocketAvailableTime 写入时机、
+// 不动 setupPongListener。
 let _streamNoiseSilenced = false;
 function silenceDingtalkStreamConsoleNoise(): void {
   if (_streamNoiseSilenced) return;
@@ -94,14 +94,15 @@ function silenceDingtalkStreamConsoleNoise(): void {
   };
 }
 
-// 一次性提示：避免多 bot 启动时每个账号都打一遍同样的协议说明
-let _lbProtocolNoticePrinted = false;
-function printLoadBalanceNoticeOnce(): void {
-  if (_lbProtocolNoticePrinted) return;
-  _lbProtocolNoticePrinted = true;
+// 一次性提示：解释 SDK console.info 噪音的来源与重连预期，避免多 bot 启动时重复
+let _connectionNoticePrinted = false;
+function printConnectionNoticeOnce(): void {
+  if (_connectionNoticePrinted) return;
+  _connectionNoticePrinted = true;
   console.log(
-    "[dingtalk-connector] ℹ️  钉钉 Stream 服务端会周期性下发负载均衡断开（约 30s/次），" +
-      "connector 已自动重连，属正常机制，非故障。详见 #571 / #536 / #573。",
+    "[dingtalk-connector] ℹ️  上游 dingtalk-stream SDK 的 `Disconnecting.` / " +
+      "`connect success` 日志已由本插件过滤；真实重连（网络抖动、服务端推 disconnect 等）" +
+      "由 connector 自动处理。正常运行下不应看到高频（≤30s）周期性重连，如有请提 issue。",
   );
 }
 
@@ -114,7 +115,8 @@ export async function monitorSingleAccount(
   const { accountId } = account;
 
   // 在 dingtalk-stream SDK 被动态 import 之前抑制其 console.info 噪音
-  // （#571 / #536 / #573：30s 负载均衡断连导致 SDK 自带日志刷屏）
+  // （#571 / #536 / #573：SDK 在每次 connect/disconnect 时直接 console.info，
+  // 在频繁重连场景下会刷屏）
   silenceDingtalkStreamConsoleNoise();
 
   // 保存 cfg 以便传递给 messageHandler
@@ -358,8 +360,9 @@ export async function monitorSingleAccount(
       try {
         const msg = JSON.parse(data);
         if (msg.type === "SYSTEM" && msg.headers?.topic === "disconnect") {
-          // 钉钉服务端周期性下发的负载均衡断开，属协议机制，非故障
-          logger.debug(`收到服务端 disconnect topic（负载均衡），即将重连`);
+          // 钉钉服务端在 LB / 实例切换等场景下可能下发 disconnect topic，
+          // 客户端需立即断开重连；这是协议机制，非故障
+          logger.debug(`收到服务端 disconnect topic，即将重连`);
           if (!isStopped && !isReconnecting) {
             // 立即重连，不退避
             doReconnect(true).catch((err) => {
@@ -418,7 +421,7 @@ export async function monitorSingleAccount(
       try {
         const elapsed = Date.now() - lastSocketAvailableTime;
 
-        // 【超时检测】超过 90 秒未确认 socket 可用，触发重连
+        // 【超时检测】超过 TIMEOUT_THRESHOLD（当前 20s = 2 次心跳未响应），触发重连
         if (elapsed > TIMEOUT_THRESHOLD) {
           logger.info(
             `⚠️ 超时检测：已 ${Math.round(elapsed / 1000)} 秒未确认 socket 可用，触发重连...`,
@@ -688,12 +691,12 @@ export async function monitorSingleAccount(
       logger.info(`Connected to DingTalk Stream successfully`);
       logger.info(`PID: ${process.pid}`);
       logger.info(
-        `✅ 自定义 keepAlive: true (10 秒心跳，90 秒超时), 指数退避重连`,
+        `✅ 自定义 keepAlive: true (10 秒心跳，20 秒超时), 指数退避重连`,
       );
 
-      // 首个账号连上时，打印一次"30s 周期断连属正常"的协议说明，避免用户误以为故障
-      // （#571 / #536 / #573）
-      printLoadBalanceNoticeOnce();
+      // 首个账号连上时，打印一次连接生命周期说明，解释 SDK console.info 噪音
+      // 的来源以及"高频重连不正常"的预期（#571 / #536 / #573）
+      printConnectionNoticeOnce();
 
       // 初次连接成功，向框架报告 connected: true
       onStatusChange?.({ connected: true, lastConnectedAt: Date.now() });
