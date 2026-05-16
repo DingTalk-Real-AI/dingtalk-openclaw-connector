@@ -47,6 +47,11 @@ import {
   processAudioMarkers,
   uploadAndReplaceFileMarkers,
 } from "./services/media/index.ts";
+import {
+  pickEmptyReplyFallbackText,
+  emptyGroupReplyLogHint,
+  groupChatLacksVisibleRepliesAutomatic,
+} from "./utils/empty-reply.ts";
 
 
 export type CreateDingtalkReplyDispatcherParams = {
@@ -93,7 +98,12 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
   let currentCardTarget: AICardTarget | null = null;
   let accumulatedText = "";
   const deliveredFinalTexts = new Set<string>();
-  
+
+  /** 本轮是否已向用户发出过可见回复（final / 流式更新 / 错误兜底等） */
+  let outboundUserVisibleThisTurn = false;
+  /** 防止 onIdle / onError 重复发送 visibleReplies 配置指引 */
+  let idleConfigNudgeSent = false;
+
   // 异步模式：累积完整响应
   let asyncModeFullResponse = "";
 
@@ -161,6 +171,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       );
       deliveredErrorTypes.add(errorKey);
       lastErrorTime = now;
+      outboundUserVisibleThisTurn = true;
       log.info(`[DingTalk][Fallback] ✅ 错误消息发送成功`);
     } catch (fallbackErr: any) {
       log.error(`[DingTalk][Fallback] ❌ 错误消息发送失败：${fallbackErr.message}`);
@@ -238,6 +249,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         log.info(`[DingTalk][startStreaming] 复用预创建 AI Card，cardInstanceId=${preCreatedCard.cardInstanceId}`);
         currentCardTarget = preCreatedCard as any;
         accumulatedText = "";
+        outboundUserVisibleThisTurn = true;
         return;
       }
 
@@ -294,9 +306,17 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       let finalText = accumulatedText;
       
       // ✅ 如果累积的文本为空，使用默认提示文案
+      // 群聊场景下，常见根因是 OpenClaw `messages.groupChat.visibleReplies` 未设为
+      // "automatic"（上游 source-reply-delivery-mode.ts 走 message_tool_only 时
+      // 会跳过 onPartialReply，accumulatedText 始终为空）。给运维一份可操作的指引，
+      // 而不是一句无信息量的「任务执行完成」。详见 src/utils/empty-reply.ts。
       if (!finalText.trim()) {
-        finalText = '✅ 任务执行完成（无文本输出）';
-        log.info(`[DingTalk][closeStreaming] 累积文本为空，使用默认提示文案`);
+        const isGroup = !isDirect;
+        finalText = pickEmptyReplyFallbackText(isGroup);
+        log.info(`[DingTalk][closeStreaming] 累积文本为空，使用默认提示文案 (isGroup=${isGroup})`);
+        if (isGroup) {
+          log.warn?.(`[DingTalk][closeStreaming] ${emptyGroupReplyLogHint()}`);
+        }
       }
       
       // 获取 oapiToken 用于媒体处理
@@ -402,6 +422,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         account.config as DingtalkConfig,
         log
       );
+      outboundUserVisibleThisTurn = true;
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {
       log.error(`[DingTalk][closeStreaming] ❌ AI Card 关闭失败：${error?.message || String(error)}`);
@@ -421,6 +442,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
               log: params.runtime.log,
             }
           );
+          outboundUserVisibleThisTurn = true;
           log.info(`[DingTalk][closeStreaming] ✅ 降级发送成功`);
         } catch (sendErr: any) {
           log.error(`[DingTalk][closeStreaming] ❌ 降级发送失败：${sendErr.message}`);
@@ -432,6 +454,67 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     }
   };
 
+  /**
+   * 群聊且 OpenClaw 未配置 `messages.groupChat.visibleReplies=automatic` 时，
+   * 若本轮结束时仍没有任何用户可见输出（上游可能未调用空 final 的 deliver），
+   * 补发与空 final 一致的配置指引，避免只有「思考中」却无声。
+   */
+  const maybeSendGroupVisibleRepliesIdleNudge = async () => {
+    if (isDirect) return;
+    if (!groupChatLacksVisibleRepliesAutomatic(cfg)) return;
+    if (asyncMode) return;
+    if (outboundUserVisibleThisTurn) return;
+    if (idleConfigNudgeSent) return;
+    idleConfigNudgeSent = true;
+    log.info(
+      `[DingTalk][idleNudge] 本轮无用户可见回复且群聊未启用 visibleReplies=automatic，发送配置指引`,
+    );
+    try {
+      const text = pickEmptyReplyFallbackText(true);
+      log.warn(`[DingTalk][idleNudge] ${emptyGroupReplyLogHint()}`);
+      for (const chunk of core.channel.text.chunkTextWithMode(
+        text,
+        textChunkLimit,
+        chunkMode,
+      )) {
+        if (isTextMode) {
+          if (groupReplyMode === 'markdown') {
+            await sendMarkdownMessage(
+              account.config as DingtalkConfig,
+              sessionWebhook,
+              chunk.split('\n')[0]?.replace(/^[#*\s\->]+/, '').slice(0, 20) || 'Message',
+              chunk,
+              { cfg, detectBareAliases: true },
+            );
+          } else {
+            await sendTextMessage(
+              account.config as DingtalkConfig,
+              sessionWebhook,
+              chunk,
+              { cfg, detectBareAliases: true },
+            );
+          }
+        } else {
+          await sendMessage(
+            account.config as DingtalkConfig,
+            sessionWebhook,
+            chunk,
+            {
+              useMarkdown: true,
+              log: params.runtime.log,
+              cfg,
+              detectBareAliases: true,
+            },
+          );
+        }
+      }
+      outboundUserVisibleThisTurn = true;
+      log.info(`[DingTalk][idleNudge] ✅ 配置指引已发送`);
+    } catch (e: any) {
+      log.error(`[DingTalk][idleNudge] 发送失败: ${e?.message || e}`);
+    }
+  };
+
   const { dispatcher, replyOptions, markDispatchIdle } =
     core.channel.reply.createReplyDispatcherWithTyping({
       ...prefixOptions,
@@ -440,6 +523,8 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         log.info(`[DingTalk][onReplyStart] 开始回复，流式 enabled=${streamingEnabled}`);
         // 每次 onReplyStart 都是全新的回复周期，清空去重集合
         deliveredFinalTexts.clear();
+        outboundUserVisibleThisTurn = false;
+        idleConfigNudgeSent = false;
         if (streamingEnabled) {
           // fire-and-forget：提前创建 AI Card，onPartialReply 会等待创建完成
           void startStreaming();
@@ -482,9 +567,15 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           info?.kind === "final" && hasText && deliveredFinalTexts.has(text);
         
         // ✅ 如果是 final 响应且没有文本，使用默认提示文案
+        // 群聊空 final 常由 OpenClaw `messages.groupChat.visibleReplies !== "automatic"`
+        // 触发，群聊场景给一句可操作的修复指引；单聊保持原文案。
         if (info?.kind === "final" && !hasText) {
-          text = '✅ 任务执行完成（无文本输出）';
-          log.info(`[DingTalk][deliver] final 响应无文本，使用默认提示文案`);
+          const isGroup = !isDirect;
+          text = pickEmptyReplyFallbackText(isGroup);
+          log.info(`[DingTalk][deliver] final 响应无文本，使用默认提示文案 (isGroup=${isGroup})`);
+          if (isGroup) {
+            log.warn?.(`[DingTalk][deliver] ${emptyGroupReplyLogHint()}`);
+          }
         }
         
         const shouldDeliverText = Boolean(text.trim()) && !skipTextForDuplicateFinal;
@@ -527,6 +618,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                   account.config as DingtalkConfig,
                   log
                 );
+                outboundUserVisibleThisTurn = true;
                 log.info(`[DingTalk][deliver] ✅ block 更新到 AI Card 成功`);
               } catch (streamErr: any) {
                 log.error(`[DingTalk][deliver] ❌ block 更新 AI Card 失败：${streamErr.message}`);
@@ -598,6 +690,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 );
               }
             }
+            outboundUserVisibleThisTurn = true;
             log.info(`[DingTalk][deliver] ✅ 非流式发送成功`);
             deliveredFinalTexts.add(text);
           } catch (error: any) {
@@ -618,11 +711,13 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
         );
         await closeStreaming();
         typingCallbacks.onIdle?.();
+        await maybeSendGroupVisibleRepliesIdleNudge();
       },
       onIdle: async () => {
         log.info(`[DingTalk][onIdle] 回复空闲，关闭 AI Card`);
         typingCallbacks.onIdle?.();
         await closeStreaming();
+        await maybeSendGroupVisibleRepliesIdleNudge();
       },
       onCleanup: () => {
         log.info(`[DingTalk][onCleanup] 清理回调`);
@@ -685,6 +780,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 account.config as DingtalkConfig,
                 log
               );
+              outboundUserVisibleThisTurn = true;
               log.debug(`[DingTalk][onPartialReply] ✅ AI Card 更新成功`);
             } catch (err: any) {
               // QPS 限流是瞬时错误：streamAICard 内部已自动退避+重试，

@@ -265,4 +265,74 @@ describe("reply-dispatcher", () => {
     const [, , fallbackText] = mockSendMessage.mock.calls[0];
     expect(fallbackText).toMatch(/消息发送失败/);
   });
+
+  it("onIdle sends group visibleReplies hint when no outbound and cfg lacks automatic", async () => {
+    mockResolveDingtalkAccount.mockReturnValue({
+      accountId: "acc-1",
+      config: { debug: false, streaming: true, groupReplyMode: "markdown" },
+    });
+    const { createDingtalkReplyDispatcher } = await import(
+      "../../src/reply-dispatcher"
+    );
+    const runtime = {
+      log: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    createDingtalkReplyDispatcher({
+      cfg: {} as any,
+      agentId: "a1",
+      runtime: runtime as any,
+      conversationId: "conv-1",
+      senderId: "user-1",
+      isDirect: false,
+      sessionWebhook: "http://webhook",
+    });
+
+    const args = (globalThis as any).__dispatcherArgs;
+    await args.onReplyStart();
+    await args.onIdle();
+
+    expect(mockSendMarkdownMessage).toHaveBeenCalled();
+    const contentArg = mockSendMarkdownMessage.mock.calls[0]?.[3];
+    expect(String(contentArg)).toContain("visibleReplies");
+    expect(String(contentArg)).toContain("automatic");
+  });
+
+  it("does not send idle visibleReplies hint when openclaw.json sets automatic", async () => {
+    mockResolveDingtalkAccount.mockReturnValue({
+      accountId: "acc-1",
+      config: { debug: false, streaming: true, groupReplyMode: "markdown" },
+    });
+    const { createDingtalkReplyDispatcher } = await import(
+      "../../src/reply-dispatcher"
+    );
+    const runtime = {
+      log: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    mockSendMarkdownMessage.mockClear();
+    createDingtalkReplyDispatcher({
+      cfg: {
+        messages: { groupChat: { visibleReplies: "automatic" } },
+      } as any,
+      agentId: "a1",
+      runtime: runtime as any,
+      conversationId: "conv-1",
+      senderId: "user-1",
+      isDirect: false,
+      sessionWebhook: "http://webhook",
+    });
+
+    const args = (globalThis as any).__dispatcherArgs;
+    await args.onReplyStart();
+    await args.onIdle();
+
+    expect(mockSendMarkdownMessage).not.toHaveBeenCalled();
+  });
 });

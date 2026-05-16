@@ -56,6 +56,10 @@ import { createAICardForTarget, streamAICard, type AICardInstance } from "../ser
 import { QUEUE_BUSY_ACK_PHRASES } from "../utils/constants.ts";
 import { createDingtalkReplyDispatcher } from "../reply-dispatcher.ts";
 import { normalizeSlashCommand } from "../utils/session.ts";
+import {
+  pickEmptyReplyFallbackText,
+  emptyGroupReplyLogHint,
+} from "../utils/empty-reply.ts";
 import { getDingtalkRuntime } from "../runtime.ts";
 import { dingtalkHttp } from '../utils/http-client.ts';
 import { createLoggerFromConfig } from '../utils/index.ts';
@@ -1573,7 +1577,17 @@ export async function handleDingTalkMessageInternal(params: HandleMessageParams)
           );
         }
 
-        const textToSend = finalText.trim() || '✅ 任务执行完成（无文本输出）';
+        // ✅ 异步模式下 final 文本为空时的兜底
+        // 群聊场景下，常见根因是 OpenClaw `messages.groupChat.visibleReplies` 未设为 "automatic"
+        // （详见 src/utils/empty-reply.ts），给运维一份可操作的指引而不是无信息量的「任务执行完成」。
+        let textToSend = finalText.trim();
+        if (!textToSend) {
+          const isGroup = !isDirect;
+          textToSend = pickEmptyReplyFallbackText(isGroup);
+          if (isGroup) {
+            log?.warn?.(`[DingTalk][asyncMode] ${emptyGroupReplyLogHint()}`);
+          }
+        }
         const title =
           textToSend.split('\n')[0]?.replace(/^[#*\s\->]+/, '').trim() || '消息';
         await sendProactive(config, proactiveTarget, textToSend, {
