@@ -14,6 +14,34 @@
 
 ---
 
+## 群聊 @ 机器人只返回「任务执行完成（无文本输出）」或「暂未收到模型回复内容」
+
+**症状**：在群聊里 @ 机器人，只看到兜底文案，单聊却一切正常。
+
+**根因**：上游 OpenClaw 的 `source-reply-delivery-mode.ts` 在群聊场景下默认走 `message_tool_only`，会跳过 `onPartialReply` 回调，导致本插件累积的文本始终为空，最终落到 connector 的空回复兜底分支。
+
+**解决方案**：在 `~/.openclaw/openclaw.json` 顶层添加 / 合并：
+
+```json
+{
+  "messages": {
+    "groupChat": {
+      "visibleReplies": "automatic"
+    }
+  }
+}
+```
+
+然后重启网关让配置生效：
+
+```bash
+openclaw gateway restart
+```
+
+> 本仓库较新版本中，群聊空回复时兜底文案会自带这段修复指引，日志（warn 级别）也会打印完整的 `openclaw.json` 配置片段，便于运维直接修复；若你看到的仍是冷文案「任务执行完成（无文本输出）」，建议升级到最新 connector。
+
+---
+
 ## 配置字段不合法（additional properties）
 
 **症状**：

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 改进 / Improvements
+- 🩹 **群聊空回复兜底文案带修复指引** — 当 OpenClaw `messages.groupChat.visibleReplies` 未设为 `"automatic"` 时，群聊 @ 机器人会因上游 `source-reply-delivery-mode.ts` 走 `message_tool_only` 而拿不到流式 token，最终落到 connector 空回复兜底；以前固定文案「任务执行完成（无文本输出）」无信息量，现群聊场景改为带 `openclaw.json` 配置修复指引的提示，并在 warn 日志中打印完整片段。单聊文案保持不变。
+  **Group-chat empty-reply fallback now ships actionable hint** — When OpenClaw’s `messages.groupChat.visibleReplies` is not `"automatic"`, group `@` mentions hit `message_tool_only` upstream and the connector’s accumulated text stays empty, falling through to a cold fallback. The group-chat fallback message now embeds the exact `openclaw.json` fix snippet, and the warn-level log prints the full hint for operators. DM fallback text unchanged.
+
+### 文档 / Docs
+- 📚 **TROUBLESHOOTING** — 新增「群聊 @ 机器人只返回『任务执行完成（无文本输出）』」条目，给出 `messages.groupChat.visibleReplies = "automatic"` 修复步骤。
+  **TROUBLESHOOTING** — Added "Group `@` only returns 'Task done (no text output)'" entry with the `messages.groupChat.visibleReplies = "automatic"` fix.
+
 ## [0.8.21-beta.0] - 2026-05-14
 
 ### 修复 / Fixes
