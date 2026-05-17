@@ -3,7 +3,7 @@
  *
  * 职责：
  * - 管理单个钉钉账号的 WebSocket 连接
- * - 实现应用层心跳检测（10 秒间隔，90 秒超时）
+ * - 实现应用层心跳检测（10 秒间隔，20 秒超时）
  * - 处理连接重连逻辑，带指数退避
  * - 消息去重（内置 Map，5 分钟 TTL）
  *
@@ -213,25 +213,26 @@ export async function monitorSingleAccount(
   
   /**
    * 标记消息处理开始，启动定期更新机制
-   * 在消息处理期间，每 30 秒更新一次 lastSocketAvailableTime
+   * 在消息处理期间，定时刷新 lastSocketAvailableTime
    * 防止长时间处理（如复杂的 AI 任务）触发心跳超时
    */
   function markMessageProcessingStart() {
     activeMessageProcessing = true;
     lastSocketAvailableTime = Date.now();
-    
+
     // 清理旧的定时器（如果存在）
     if (messageProcessingKeepAliveTimer) {
       clearInterval(messageProcessingKeepAliveTimer);
     }
-    
-    // 每 30 秒更新一次，确保不会触发 90 秒超时
+
+    // 每 15 秒更新一次（< TIMEOUT_THRESHOLD = 20s），保证 AI 长任务期间不会
+    // 因为 elapsed 超过 20 秒触发 keepAlive 兜底重连
     messageProcessingKeepAliveTimer = setInterval(() => {
       if (activeMessageProcessing) {
         lastSocketAvailableTime = Date.now();
         logger.debug(`📝 消息处理中，更新 socket 可用时间`);
       }
-    }, 30 * 1000); // 30 秒间隔
+    }, 15 * 1000); // 15 秒间隔
     
     logger.debug(`📝 消息处理开始，启动活跃标记定时器`);
   }
