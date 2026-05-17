@@ -7,22 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 改进 / Improvements
-- 🩹 **群聊空回复兜底文案带修复指引** — 当 OpenClaw `messages.groupChat.visibleReplies` 未设为 `"automatic"` 时，群聊 @ 机器人会因上游 `source-reply-delivery-mode.ts` 走 `message_tool_only` 而拿不到流式 token，最终落到 connector 空回复兜底；以前固定文案「任务执行完成（无文本输出）」无信息量，现群聊场景改为带 `openclaw.json` 配置修复指引的提示，并在 warn 日志中打印完整片段。单聊文案保持不变。
-  **Group-chat empty-reply fallback now ships actionable hint** — When OpenClaw’s `messages.groupChat.visibleReplies` is not `"automatic"`, group `@` mentions hit `message_tool_only` upstream and the connector’s accumulated text stays empty, falling through to a cold fallback. The group-chat fallback message now embeds the exact `openclaw.json` fix snippet, and the warn-level log prints the full hint for operators. DM fallback text unchanged.
-
-### 文档 / Docs
-- 📚 **TROUBLESHOOTING** — 新增「群聊 @ 机器人只返回『任务执行完成（无文本输出）』」条目，给出 `messages.groupChat.visibleReplies = "automatic"` 修复步骤。
-  **TROUBLESHOOTING** — Added "Group `@` only returns 'Task done (no text output)'" entry with the `messages.groupChat.visibleReplies = "automatic"` fix.
-
-## [0.8.21-beta.0] - 2026-05-14
+## [0.8.21-beta.0] - 2026-05-17
 
 ### 修复 / Fixes
-- 🐛 **过滤上游 SDK `console.info` 噪音 (#571 / #536 / #573)** — 上游 `dingtalk-stream@2.1.4` SDK 在 `client.cjs:138 / :185` 每次 `disconnect()` / `connect()` 时直接 `console.info("Disconnecting.")` / `connect success`，绕过 logger，在频繁重连场景下会刷屏。本次在 `src/core/connection.ts` 加 `silenceDingtalkStreamConsoleNoise()`：模块级一次性 patch `console.info`，**只过滤这两条精确字符串**，其他 `console.info` 不受影响。同时在首个账号连上时打印一次连接生命周期说明，解释过滤动机以及"高频重连不正常"的预期。  
-  **Filter upstream SDK `console.info` noise (#571 / #536 / #573)** — Upstream `dingtalk-stream@2.1.4` SDK calls `console.info("Disconnecting.")` / `connect success` directly (`client.cjs:138 / :185`) on every `disconnect()` / `connect()`, bypassing the logger and spamming logs in frequent-reconnect scenarios. This release adds `silenceDingtalkStreamConsoleNoise()` in `src/core/connection.ts`: a module-level one-time `console.info` patch that filters **only these two exact strings**, leaving other `console.info` untouched. It also prints a one-time connection-lifecycle notice on first connect explaining the filter and setting the expectation that high-frequency reconnects are not normal.
+- 🐛 **WebSocket phantom reconnect 根因修复 (#566)** — `setupPongListener` / `setupMessageListener` / `setupCloseListener` 原本在 `client.connect()` 之前调用，此时 `client.socket === undefined`，可选链让三个 listener 静默 no-op，从未真正挂上。pong 没人接 → `lastSocketAvailableTime` 不更新 → 命中 `TIMEOUT_THRESHOLD = 20s` → 约 30 秒一次的幽灵重连。本次把 setup 移到 `client.connect()` 之后（初次连接 + `doReconnect` 两条路径都覆盖），并放在 `await for OPEN` 之前，消除 race window。感谢 @Majorshi 贡献。  
+  **Root-cause fix for WebSocket phantom reconnect (#566)** — `setupPongListener` / `setupMessageListener` / `setupCloseListener` were called before `client.connect()` when `client.socket === undefined`, so optional-chaining silently no-op'd and the three listeners were never attached. With no pong handler, `lastSocketAvailableTime` never refreshed, hit `TIMEOUT_THRESHOLD = 20s`, and triggered a phantom reconnect every ~30s. This release moves the setup calls to right after `client.connect()` (covering both initial connect and `doReconnect`), before the OPEN await, eliminating the race window. Credit: @Majorshi.
+
+- 🐛 **消息处理保活 interval 兜底 bug (#594)** — `markMessageProcessingStart` 启动的兜底定时器原本 30s 间隔，但 `TIMEOUT_THRESHOLD` 早已从 90s 降到 20s，30s 间隔无法在 AI 长任务期间防住超时（约 21s 就可能触发幽灵重连，下次刷新还要等 9 秒）。本次改为 15s 间隔（< TIMEOUT_THRESHOLD），让保活真正生效。  
+  **Fix message-processing keepalive interval (#594)** — The fallback `setInterval` in `markMessageProcessingStart` was 30s, but `TIMEOUT_THRESHOLD` had since dropped from 90s to 20s — the 30s interval couldn't prevent the timeout during long AI tasks (could trigger phantom reconnect around the 21s mark, with the next refresh 9s away). This release changes the interval to 15s (< TIMEOUT_THRESHOLD) so the safety net actually works.
+
+- 🐛 **过滤上游 SDK `console.info` 噪音 (#571 / #536 / #573)** — 上游 `dingtalk-stream@2.1.4` SDK 在 `client.cjs:138 / :185` 每次 `disconnect()` / `connect()` 时直接 `console.info("Disconnecting.")` / `connect success`，绕过 logger，在频繁重连场景下会刷屏。本次在 `src/core/connection.ts` 加 `silenceDingtalkStreamConsoleNoise()`：模块级一次性 patch `console.info`，**只过滤这两条精确字符串**，其他 `console.info` 不受影响。同时在首个账号连上时通过 `printConnectionNoticeOnce()` 打印一次连接生命周期说明，解释过滤动机以及"高频重连不正常"的预期。  
+  **Filter upstream SDK `console.info` noise (#571 / #536 / #573)** — Upstream `dingtalk-stream@2.1.4` SDK calls `console.info("Disconnecting.")` / `connect success` directly (`client.cjs:138 / :185`) on every `disconnect()` / `connect()`, bypassing the logger and spamming logs in frequent-reconnect scenarios. This release adds `silenceDingtalkStreamConsoleNoise()` in `src/core/connection.ts`: a module-level one-time `console.info` patch that filters **only these two exact strings**, leaving other `console.info` untouched. It also prints a one-time connection-lifecycle notice via `printConnectionNoticeOnce()` on first connect explaining the filter and setting the expectation that high-frequency reconnects are not normal.
+
+### 改进 / Improvements
+- 🩹 **群聊空回复兜底文案带修复指引 (#589)** — 当 OpenClaw `messages.groupChat.visibleReplies` 未设为 `"automatic"` 时，群聊 @ 机器人会因上游 `source-reply-delivery-mode.ts` 走 `message_tool_only` 而拿不到流式 token，最终落到 connector 空回复兜底；以前固定文案「任务执行完成（无文本输出）」无信息量，现群聊场景改为带 `openclaw.json` 配置修复指引的提示，并在 warn 日志中打印完整片段；同时在 `onIdle` / `onError` 时若本轮无任何用户可见输出，主动 nudge 一条配置指引，覆盖上游根本不调 `deliver()` 的盲区。单聊文案保持不变。  
+  **Group-chat empty-reply fallback now ships actionable hint (#589)** — When OpenClaw’s `messages.groupChat.visibleReplies` is not `"automatic"`, group `@` mentions hit `message_tool_only` upstream and the connector’s accumulated text stays empty, falling through to a cold fallback. The group-chat fallback message now embeds the exact `openclaw.json` fix snippet, and the warn-level log prints the full hint for operators. A new idle nudge in `onIdle` / `onError` proactively sends the same hint when no user-visible output happens this turn — covering the case where upstream never calls `deliver()` at all. DM fallback text unchanged.
+
+### 文档 / Docs
+- 📚 **TROUBLESHOOTING (#589)** — 新增「群聊 @ 机器人只返回『任务执行完成（无文本输出）』」条目，给出 `messages.groupChat.visibleReplies = "automatic"` 修复步骤。  
+  **TROUBLESHOOTING (#589)** — Added "Group `@` only returns 'Task done (no text output)'" entry with the `messages.groupChat.visibleReplies = "automatic"` fix.
+
+- 📚 **`silenceDingtalkStreamConsoleNoise` 文案与函数命名收紧 (#592)** — `printLoadBalanceNoticeOnce` → `printConnectionNoticeOnce`，banner 文案改为「SDK noise 已过滤 + 真实重连 connector 自动处理 + 高频重连不正常」的预期；相关注释同步收紧，去掉对重连频率的强归因。  
+  **Tighten copy & rename for `silenceDingtalkStreamConsoleNoise` (#592)** — Renamed `printLoadBalanceNoticeOnce` to `printConnectionNoticeOnce`; banner copy now reads "SDK noise filtered + real reconnects handled by connector + high-frequency reconnects are not expected"; related comments tightened.
+
+- 📚 **清理 stale `90 秒` 文档残留 (#594)** — 文件头 docstring 与消息处理保活注释里的 `90 秒超时` → `20 秒超时`，与实际 `TIMEOUT_THRESHOLD` 保持一致。  
+  **Clean up stale `90s` doc references (#594)** — File-header docstring and message-processing keepalive comments updated from `90s timeout` to `20s timeout`, matching the actual `TIMEOUT_THRESHOLD`.
 
 ### 说明 / Notes
-- 不改动 `startKeepAlive` / `setupPongListener` / `lastSocketAvailableTime` 写入时机，不影响 #437 的心跳超时检测修复。  
+- 不改动 `startKeepAlive` / `setupPongListener` / `lastSocketAvailableTime` 写入时机的语义，不影响 #437 的心跳超时检测修复。  
   No changes to `startKeepAlive` / `setupPongListener` / `lastSocketAvailableTime` write semantics — does not affect the #437 heartbeat-timeout fix.
 
 ## [0.8.20] - 2026-04-28
