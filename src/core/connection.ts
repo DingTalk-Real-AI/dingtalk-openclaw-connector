@@ -289,6 +289,12 @@ export async function monitorSingleAccount(
       // 2. 重新建立连接
       await client.connect();
 
+      // 立即注册 socket 事件监听器，避免在等待 OPEN 期间错过 pong/message/close 事件
+      // （keepAlive 期间发的 ping，如果 pong 回来时 listener 还没挂，会被丢，最坏踩到 TIMEOUT_THRESHOLD 边界）
+      setupPongListener();
+      setupMessageListener();
+      setupCloseListener();
+
       // 3. 等待连接真正建立（监听 open 事件，最多等待 10 秒）
       const connectionEstablished = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => {
@@ -499,11 +505,6 @@ export async function monitorSingleAccount(
     logger.debug(`Connection 已停止`);
   }
 
-  // 初始化：设置所有事件监听器
-  setupPongListener();
-  setupMessageListener();
-  setupCloseListener();
-
   return new Promise<void>(async (resolve, reject) => {
     // Handle abort signal
     if (abortSignal) {
@@ -688,6 +689,12 @@ export async function monitorSingleAccount(
     // Connect to DingTalk Stream
     try {
       await client.connect();
+
+      // 注册 socket 事件监听器（必须在 connect 后，此时 client.socket 已创建）
+      setupPongListener();
+      setupMessageListener();
+      setupCloseListener();
+
       logger.info(`Connected to DingTalk Stream successfully`);
       logger.info(`PID: ${process.pid}`);
       logger.info(
