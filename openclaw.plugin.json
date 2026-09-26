@@ -8,6 +8,11 @@
   "channels": [
     "dingtalk-connector"
   ],
+  "contracts": {
+    "tools": [
+      "dingtalk_ask_user_question"
+    ]
+  },
   "skills": [
     "./skills"
   ],
@@ -513,9 +518,109 @@
                     "text",
                     "markdown"
                   ]
+                },
+                "cardTemplateMode": {
+                  "type": "string",
+                  "enum": [
+                    "legacy",
+                    "v2"
+                  ]
+                },
+                "cardTemplateId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "cardShowMetadata": {
+                  "type": "boolean"
+                },
+                "questionCardTemplateId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "questionTimeoutMs": {
+                  "type": "integer",
+                  "minimum": 10000,
+                  "maximum": 1800000
+                },
+                "experimentalMultiAgent": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "aliases": {
+                      "type": "object",
+                      "propertyNames": {
+                        "pattern": "^[^\\s@]+$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "\\S"
+                      }
+                    },
+                    "maxTargets": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 5
+                    }
+                  }
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "cardTemplateMode": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "v2"
+            ]
+          },
+          "cardTemplateId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "cardShowMetadata": {
+            "type": "boolean"
+          },
+          "questionCardTemplateId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "questionTimeoutMs": {
+            "type": "integer",
+            "minimum": 10000,
+            "maximum": 1800000
+          },
+          "experimentalMultiAgent": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "aliases": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^[^\\s@]+$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "maxTargets": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              }
             }
           }
         },

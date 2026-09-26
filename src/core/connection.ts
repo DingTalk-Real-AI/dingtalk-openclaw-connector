@@ -13,6 +13,7 @@
  * - 连接统计和监控（每分钟输出）
  */
 import * as fs from 'fs';
+import { handleDingtalkQuestionCallback } from '../questions/index.ts';
 import type { OpenClawConfig as ClawdbotConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import type { ResolvedDingtalkAccount } from "../types/index.ts";
@@ -181,7 +182,7 @@ export async function monitorSingleAccount(
   // 动态导入 dingtalk-stream 模块（避免循环依赖和 ESM/CJS 兼容性问题）
   const dingtalkStreamModule = await import("dingtalk-stream");
   const DWClient = dingtalkStreamModule.DWClient;
-  const { TOPIC_ROBOT } = dingtalkStreamModule;
+  const { TOPIC_ROBOT, TOPIC_CARD } = dingtalkStreamModule;
 
   if (!DWClient) {
     throw new Error("Failed to import DWClient from dingtalk-stream module");
@@ -545,6 +546,15 @@ export async function monitorSingleAccount(
           `丢失=${receivedCount - processedCount}, 距上次消息=${timeSinceLastMessage}s`,
       );
     }, 60000); // 每分钟输出一次
+
+    // 原生卡片回调同样先 ACK，续聊可能运行数分钟，不能占住 Stream 的回执。
+    client.registerCallbackListener(TOPIC_CARD, async (res: any) => {
+      if (res.headers?.messageId) client.socketCallBackResponse(res.headers.messageId, { success: true });
+      try {
+        await handleDingtalkQuestionCallback({ accountId, config: account.config,
+          data: typeof res.data === 'string' ? JSON.parse(res.data) : res.data, log: logger });
+      } catch { logger.warn('原生问题卡回调处理失败'); }
+    });
 
     // Register message handler
     client.registerCallbackListener(TOPIC_ROBOT, async (res: any) => {

@@ -8,7 +8,10 @@
  *   "./bundled" → this file
  */
 
-import { defineBundledChannelEntry } from "openclaw/plugin-sdk/channel-entry-contract";
+import { defineBundledChannelEntry, loadBundledEntryExportSync } from "openclaw/plugin-sdk/channel-entry-contract";
+
+// .mjs 在源码模式由 SDK 回退到 .mts，编译包中则加载同目录的真实 .mjs。
+const sidecar = './bundled-channel.mjs';
 
 export default defineBundledChannelEntry({
   id: "dingtalk-connector",
@@ -17,18 +20,17 @@ export default defineBundledChannelEntry({
     "DingTalk (钉钉) channel connector — Stream mode with AI Card streaming",
   importMetaUrl: import.meta.url,
   plugin: {
-    specifier: "./index.ts",
+    specifier: sidecar,
     exportName: "dingtalkPlugin",
   },
   runtime: {
-    specifier: "./index.ts",
+    specifier: sidecar,
     exportName: "setDingtalkRuntime",
   },
-  async registerFull(api) {
-    const { registerGatewayMethods } = await import("./src/gateway-methods.ts");
-    const { installDingtalkCardBridge, registerDingtalkCardGatewayMethods } = await import("./src/services/card-bridge.ts");
-    registerGatewayMethods(api);
-    installDingtalkCardBridge(api);
-    registerDingtalkCardGatewayMethods(api);
+  registerFull(api) {
+    const register = loadBundledEntryExportSync<(loadedApi: typeof api) => void>(import.meta.url, {
+      specifier: sidecar, exportName: 'registerDingtalkFull',
+    });
+    register(api);
   },
 });

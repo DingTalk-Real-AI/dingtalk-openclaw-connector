@@ -28,13 +28,16 @@
     "skills/",
     "src/",
     "index.ts",
+    "bundled-channel.mts",
     "docs/*.md",
     "openclaw.plugin.json",
     "tsconfig.json",
     "LICENSE",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/assets/",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "tsdown",
