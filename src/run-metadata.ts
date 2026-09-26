@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+import { normalizeAccountId } from './sdk/helpers.ts';
 
 const COUNTERS = ['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const;
 export type DingtalkRunUsage = Partial<Record<typeof COUNTERS[number], number>>;
@@ -12,7 +13,7 @@ function validId(value: unknown): value is string {
 
 function key(scope: DingtalkRunUsageKey): string | undefined {
   return validId(scope.accountId) && validId(scope.sessionKey) && validId(scope.runId)
-    ? JSON.stringify([scope.accountId, scope.sessionKey, scope.runId]) : undefined;
+    ? JSON.stringify([normalizeAccountId(scope.accountId), scope.sessionKey, scope.runId]) : undefined;
 }
 
 /** 只记录公开 llm_output 的用量计数，不保存 prompt、assistantTexts 或凭据。 */

@@ -31,6 +31,7 @@ import {
 import { createLoggerFromConfig } from "./utils/logger.ts";
 import { CHANNEL_ID } from "./channel.ts";
 import { resolveDingtalkAccount } from "./config/accounts.ts";
+import { normalizeAccountId } from "./sdk/helpers.ts";
 import { getDingtalkRuntime } from "./runtime.ts";
 import type { DingtalkConfig } from "./types/index.ts";
 import {
@@ -87,8 +88,9 @@ const activeReplies = new Set<ActiveReply>();
 export async function stopDingtalkReplyDispatchers(scope: {
   accountId?: string; sessionKey: string; senderId: string; runId?: string;
 }): Promise<number> {
+  const accountId = normalizeAccountId(scope.accountId ?? "");
   const matches = [...activeReplies].filter(reply =>
-    reply.accountId === (scope.accountId || "default") && reply.sessionKey === scope.sessionKey &&
+    reply.accountId === accountId && reply.sessionKey === scope.sessionKey &&
     reply.senderId === scope.senderId && (!scope.runId || reply.runId === scope.runId));
   await Promise.all(matches.map(reply => reply.stop()));
   return matches.length;

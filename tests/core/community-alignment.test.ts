@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-  dispatch: vi.fn(), lowLevelDispatch: vi.fn(), createDispatcher: vi.fn(), stopDispatcher: vi.fn(),
+  dispatch: vi.fn(), btwDispatch: vi.fn(), lowLevelDispatch: vi.fn(), createDispatcher: vi.fn(), stopDispatcher: vi.fn(),
   workspace: vi.fn((_cfg: unknown, agentId: string) => `/workspaces/${agentId}`),
   send: vi.fn(), recall: vi.fn(), accessToken: vi.fn(), oapiToken: vi.fn(), httpPost: vi.fn(), invalidate: vi.fn(),
   withQuestion: vi.fn(), questionContexts: [] as any[],
@@ -24,6 +24,7 @@ vi.mock('../../src/reply-dispatcher.ts', () => ({
   createDingtalkReplyDispatcher: state.createDispatcher, stopDingtalkReplyDispatchers: state.stopDispatcher,
 }));
 vi.mock('../../src/message-context.ts', () => ({ getMessageContextStore: () => state.store }));
+vi.mock('../../src/core/btw-dispatch.ts', () => ({ dispatchDingtalkBtw: state.btwDispatch }));
 vi.mock('../../src/questions/index.ts', () => ({
   invalidatePendingQuestionsForScope: state.invalidate,
   withDingtalkQuestionContext: state.withQuestion,
@@ -84,6 +85,7 @@ beforeEach(() => {
   });
   state.workspace.mockImplementation((_cfg: unknown, agentId: string) => `/workspaces/${agentId}`);
   state.dispatch.mockResolvedValue(dispatchResult);
+  state.btwDispatch.mockResolvedValue(dispatchResult);
   state.send.mockResolvedValue(undefined);
   state.recall.mockResolvedValue(undefined);
   state.oapiToken.mockResolvedValue(null);
@@ -99,24 +101,25 @@ describe('真实入站控制命令边界', () => {
   it('/btw 在主派发尚未完成时立即进入宿主并直接用 Markdown 回复，不创建第二个卡片 dispatcher', async () => {
     const gate = deferred();
     let mainFinished = false;
-    state.dispatch.mockImplementation(async ({ ctx, dispatcherOptions }) => {
-      if (ctx.CommandBody.startsWith('/btw')) {
-        await dispatcherOptions.deliver({ text: '独立快答' });
-      } else {
-        await gate.promise;
-        mainFinished = true;
-      }
+    state.dispatch.mockImplementation(async () => {
+      await gate.promise;
+      mainFinished = true;
+      return dispatchResult;
+    });
+    state.btwDispatch.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: '独立快答' });
       return dispatchResult;
     });
     const main = handleDingTalkMessage(message());
     try {
       await vi.waitFor(() => expect(state.dispatch).toHaveBeenCalledTimes(1));
       const side = handleDingTalkMessage(message('/btw 顺便问个问题'));
-      await vi.waitFor(() => expect(state.dispatch).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(state.btwDispatch).toHaveBeenCalledTimes(1));
       await side;
       expect(mainFinished).toBe(false);
       expect(state.createDispatcher).toHaveBeenCalledTimes(1);
-      expect(state.dispatch.mock.calls[1][0]).toMatchObject({
+      expect(state.dispatch).toHaveBeenCalledTimes(1);
+      expect(state.btwDispatch.mock.calls[0][0]).toMatchObject({
         ctx: { CommandBody: '/btw 顺便问个问题', SessionKey: state.dispatch.mock.calls[0][0].ctx.SessionKey },
         dispatchReplyFromConfig: state.lowLevelDispatch,
       });
@@ -142,6 +145,7 @@ describe('真实入站控制命令边界', () => {
       expect(first.replyOptions.abortSignal.aborted).toBe(false);
       await handleDingTalkMessage(message(command));
       expect(first.replyOptions.abortSignal.aborted).toBe(true);
+      expect(state.btwDispatch).not.toHaveBeenCalled();
       expect(state.stopDispatcher).toHaveBeenCalledWith(expect.objectContaining({
         accountId: 'TeamBot', sessionKey: first.ctx.SessionKey, runId: first.replyOptions.runId,
       }));
@@ -331,8 +335,9 @@ describe('实验 aliases 进入独立 agent 会话', () => {
 
   it('多个别名携带 /btw 时只进入首个目标并保持旁路交付', async () => {
     await handleDingTalkMessage(message('@程序员 @帮手 /btw 什么是闭包', { cfg, config: { experimentalMultiAgent } }));
-    expect(state.dispatch).toHaveBeenCalledTimes(1);
-    expect(state.dispatch.mock.calls[0][0].ctx).toMatchObject({ SessionKey: 'agent:coder:dingtalk-connector:group:group-1', CommandBody: '/btw 什么是闭包' });
+    expect(state.btwDispatch).toHaveBeenCalledTimes(1);
+    expect(state.btwDispatch.mock.calls[0][0].ctx).toMatchObject({ SessionKey: 'agent:coder:dingtalk-connector:group:group-1', CommandBody: '/btw 什么是闭包' });
+    expect(state.dispatch).not.toHaveBeenCalled();
     expect(state.createDispatcher).not.toHaveBeenCalled();
   });
 
@@ -415,7 +420,8 @@ describe('真实入站的表单回调续聊身份与代次', () => {
     await handleDingTalkMessage(message('/btw 顺便解释一下'));
     expect(state.invalidate).toHaveBeenCalledTimes(1);
     await expect(pending.resume(answer, 'still-pending')).resolves.toBeUndefined();
-    expect(state.dispatch.mock.calls.map(([{ ctx }]) => ctx.CommandBody)).toEqual(['原始问题', '/btw 顺便解释一下', answer]);
+    expect(state.dispatch.mock.calls.map(([{ ctx }]) => ctx.CommandBody)).toEqual(['原始问题', answer]);
+    expect(state.btwDispatch.mock.calls[0][0].ctx.CommandBody).toBe('/btw 顺便解释一下');
   });
 
   it('旧回调经过 prepare 的 await 边界时被新消息抢先更新代次，复核后拒绝续聊', async () => {

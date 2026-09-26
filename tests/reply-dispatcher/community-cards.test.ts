@@ -179,6 +179,32 @@ describe("社区对齐卡片与停止", () => {
     expect(mockFinishAICard).toHaveBeenCalledTimes(1);
   });
 
+  it.each([undefined, 'default', ' Default ', '__default__'])('默认账号停止入口 %s 能收口规范账号并丢弃迟到输出', async (accountId) => {
+    mockResolveDingtalkAccount.mockReturnValue({ accountId: '__default__', config: { streaming: true } });
+    const { stopDingtalkReplyDispatchers } = await import('../../src/reply-dispatcher.ts');
+    const sessionKey = `default-${String(accountId)}`;
+    const { args, result } = await makeDispatcher({ accountId, sessionKey, runId: 'default-r' });
+    try {
+      await result.replyOptions.onPartialReply!({ text: '已有内容' });
+      expect(await stopDingtalkReplyDispatchers({ accountId, sessionKey, senderId: 'user-1' })).toBe(1);
+      await args.deliver!({ text: '迟到终稿' }, { kind: 'final' });
+      expect(mockFinishAICard).toHaveBeenCalledTimes(1);
+      expect(mockFinishAICard.mock.calls[0][1]).toContain('已停止生成。');
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    } finally {
+      await args.onIdle!();
+    }
+  });
+
+  it('停止入口保留非默认账号的大小写隔离', async () => {
+    mockResolveDingtalkAccount.mockReturnValue({ accountId: 'TeamBot', config: { streaming: true } });
+    const { stopDingtalkReplyDispatchers } = await import('../../src/reply-dispatcher.ts');
+    const { args } = await makeDispatcher({ accountId: 'TeamBot', sessionKey: 'case-s', runId: 'case-r' });
+    expect(await stopDingtalkReplyDispatchers({ accountId: 'teambot', sessionKey: 'case-s', senderId: 'user-1' })).toBe(0);
+    expect(await stopDingtalkReplyDispatchers({ accountId: 'TeamBot', sessionKey: 'case-s', senderId: 'user-1' })).toBe(1);
+    await args.onIdle!();
+  });
+
   it("卡片创建在途时 stop 等待创建并收口，异步缓冲停止后清空", async () => {
     const { stopDingtalkReplyDispatchers } = await import("../../src/reply-dispatcher.ts");
     let resolveCard!: (value: typeof CARD) => void;

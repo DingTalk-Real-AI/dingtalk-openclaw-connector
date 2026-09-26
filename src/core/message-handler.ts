@@ -67,6 +67,7 @@ import { resolveMentionTargets } from './mention-routing.ts';
 import { getMessageContextStore } from '../message-context.ts';
 import { extractAttachmentText, extractQuotedMessageId } from '../messages/index.ts';
 import { invalidatePendingQuestionsForScope, withDingtalkQuestionContext } from '../questions/index.ts';
+import { dispatchDingtalkBtw, type DingtalkBtwDispatchParams } from './btw-dispatch.ts';
 
 
 // ============ 常量 ============
@@ -1668,7 +1669,7 @@ async function dispatchControl(params: HandleMessageParams, prepared: PreparedMe
   }
   const core = getDingtalkRuntime();
   const command = control === 'stop' ? '/stop' : prepared.commandText;
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+  const dispatchParams: DingtalkBtwDispatchParams = {
     ctx: {
       Body: command, BodyForAgent: command, RawBody: command, CommandBody: command,
       From: senderId, To: to, SessionKey: prepared.sessionKey, AccountId: accountId,
@@ -1687,7 +1688,9 @@ async function dispatchControl(params: HandleMessageParams, prepared: PreparedMe
       onError: (error) => params.log?.error?.(`控制命令派发失败: ${String(error)}`),
     },
     dispatchReplyFromConfig: core.channel.reply.dispatchReplyFromConfig,
-  });
+  };
+  if (control === 'btw') await dispatchDingtalkBtw(dispatchParams);
+  else await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher(dispatchParams);
 }
 
 async function dispatchConversation(params: HandleMessageParams, prepared: PreparedMessage, inheritedTurn?: string): Promise<void> {

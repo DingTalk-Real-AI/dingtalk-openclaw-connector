@@ -5,6 +5,14 @@ const scope = { accountId: 'Bot-A', sessionKey: 'agent:main:group-a', runId: 'ru
 const context = { ...scope, channel: 'dingtalk-connector' };
 
 describe('宿主用量元数据', () => {
+  it.each(['default', ' Default ', '__default__'])('默认账号别名 %s 与规范账号共享真实用量', (accountId) => {
+    const store = new DingtalkRunMetadataStore();
+    store.record({ runId: scope.runId, usage: { output: 3 } }, { ...context, accountId });
+    expect(store.get({ ...scope, accountId: '__default__' })).toEqual({ output: 3 });
+    expect(store.get({ ...scope, accountId: 'default' })).toEqual({ output: 3 });
+    expect(store.get({ ...scope, accountId: 'Bot-A' })).toBeUndefined();
+  });
+
   it('累加同一次运行的实际模型尝试用量，未知计数不伪造零', () => {
     const store = new DingtalkRunMetadataStore();
     store.record({ runId: scope.runId, usage: { input: 10, output: 3, cacheRead: 5, total: 18 } }, context);
