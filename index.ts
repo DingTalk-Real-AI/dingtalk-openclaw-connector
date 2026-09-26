@@ -14,6 +14,7 @@
  * 不会影响 OpenClaw Gateway 和其他插件的网络请求
  */
 
+import { registerDingtalkConversationCapabilities } from './src/register-capabilities.ts';
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { dingtalkPlugin, initDingtalkPluginConfigSchema } from "./src/channel.ts";
 import { setDingtalkRuntime } from "./src/runtime.ts";
@@ -72,6 +73,7 @@ function recordAndCheckLoadPath(api: OpenClawPluginApi): void {
 export default function register(api: OpenClawPluginApi) {
   recordAndCheckLoadPath(api);
   setDingtalkRuntime(api.runtime);
+  registerDingtalkConversationCapabilities(api);
   initDingtalkPluginConfigSchema();
   api.registerChannel({ plugin: dingtalkPlugin });
   registerGatewayMethods(api);

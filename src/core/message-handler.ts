@@ -50,7 +50,7 @@ import {
   uploadAndReplaceFileMarkers
 } from "../services/media/index.ts";
 import { sendProactive, type AICardTarget } from "../services/messaging/index.ts";
-import { createDingtalkReplyDispatcher } from "../reply-dispatcher.ts";
+import { createDingtalkReplyDispatcher, stopDingtalkReplyDispatchers } from "../reply-dispatcher.ts";
 import { normalizeSlashCommand } from "../utils/session.ts";
 import {
   pickEmptyReplyFallbackText,
@@ -62,6 +62,13 @@ import { createLoggerFromConfig } from '../utils/index.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { conversationRuns, classifyControl, beginQuestionTurn, questionTurnScope, isCurrentQuestionTurn, type ConversationRun } from './conversation-control.ts';
+import { resolveMentionTargets } from './mention-routing.ts';
+import { getMessageContextStore } from '../message-context.ts';
+import { extractAttachmentText, extractQuotedMessageId } from '../messages/index.ts';
+import { invalidatePendingQuestionsForScope, withDingtalkQuestionContext } from '../questions/index.ts';
+import { dispatchDingtalkBtw, type DingtalkBtwDispatchParams } from './btw-dispatch.ts';
+
 
 // ============ 常量 ============
 
@@ -874,27 +881,6 @@ async function parsePdfFile(filePath: string, log?: any): Promise<string | null>
 }
 
 /**
- * 读取纯文本文件
- */
-async function readTextFile(filePath: string, log?: any): Promise<string | null> {
-  try {
-    log?.info?.(`开始读取文本文件: ${filePath}`);
-    const text = fs.readFileSync(filePath, 'utf-8').trim();
-    
-    if (text) {
-      log?.info?.(`文本文件读取成功: ${filePath}, 文本长度=${text.length}`);
-      return text;
-    } else {
-      log?.warn?.(`文本文件内容为空: ${filePath}`);
-      return null;
-    }
-  } catch (err: any) {
-    log?.error?.(`文本文件读取失败: ${filePath}, error=${err.message}`);
-    return null;
-  }
-}
-
-/**
  * 根据文件类型解析文件内容
  */
 async function parseFileContent(
@@ -916,13 +902,14 @@ async function parseFileContent(
     return { content, type: 'text' };
   }
   
-  // 纯文本文件
-  if (['.txt', '.md', '.json', '.xml', '.yaml', '.yml', '.csv', '.log', '.js', '.ts', '.py', '.java', '.c', '.cpp', '.h', '.sh', '.bat'].includes(ext)) {
-    const content = await readTextFile(filePath, log);
-    return { content, type: 'text' };
+  const extracted = await extractAttachmentText({ path: filePath, fileName });
+  if (extracted.status === 'extracted') {
+    return { content: extracted.text + (extracted.truncated ? '\n[附件正文已截断至 6000 字符]' : ''), type: 'text' };
   }
-  
-  // 二进制文件（不解析）
+  if (extracted.status !== 'unsupported') {
+    log?.warn?.(`附件正文未抽取: ${extracted.status}`);
+    return { content: null, type: 'text' };
+  }
   return { content: null, type: 'binary' };
 }
 
@@ -941,10 +928,24 @@ interface HandleMessageParams {
 /**
  * 内部消息处理函数（实际执行消息处理逻辑）
  */
+function currentMessageText(data: any): string {
+  const clean = { ...data };
+  for (const key of ['text', 'content']) {
+    let value = data[key];
+    if (typeof value === 'string') { try { value = JSON.parse(value); } catch { continue; } }
+    if (value && typeof value === 'object') {
+      clean[key] = { ...value, isReplyMsg: false, repliedMsg: undefined };
+    }
+  }
+  clean.repliedMsg = undefined;
+  return extractMessageContent(clean).text;
+}
+
 async function prepareDingTalkMessage(params: HandleMessageParams) {
   const { accountId, config, data, cfg } = params;
   const log = createLoggerFromConfig(config, `DingTalk:${accountId}`);
   const content = extractMessageContent(data);
+  const commandText = normalizeSlashCommand(currentMessageText(data));
   if (!content.text && content.imageUrls.length === 0 && content.downloadCodes.length === 0) return;
 
   const isDirect = data.conversationType === '1';
@@ -1127,7 +1128,33 @@ async function prepareDingTalkMessage(params: HandleMessageParams) {
     });
     const agentWorkspaceDir = core.agent.resolveAgentWorkspaceDir(cfg, route.agentId);
     log?.info?.(`路由解析完成: agentId=${route.agentId}, sessionKey=${sessionKey}, matchedBy=${route.matchedBy}`);
-    return { content, sessionContext, agentId: route.agentId, sessionKey, agentWorkspaceDir };
+    const scope = { accountId, conversationId: data.conversationId || senderId };
+    const store = getMessageContextStore();
+    const quoted = store.resolveQuotedMessageContext(scope, data);
+    // 只恢复明确 ID 命中的媒体，不按时间匹配文件。
+    if (quoted.status === 'resolved') {
+      for (const media of quoted.media) {
+        if (media.downloadCode && !content.downloadCodes.includes(media.downloadCode)) {
+          content.downloadCodes.push(media.downloadCode);
+          content.fileNames.push(media.fileName || '');
+        } else if (media.pictureUrl && !content.imageUrls.includes(media.pictureUrl)) content.imageUrls.push(media.pictureUrl);
+      }
+    }
+    if (data.msgId) {
+      try {
+        store.rememberMessageContext(scope, {
+          id: data.msgId, direction: 'inbound', text: commandText, senderId,
+          aliases: data.processQueryKey ? [data.processQueryKey] : [],
+          quotedMessageId: extractQuotedMessageId(data),
+          media: [
+            ...content.downloadCodes.map((downloadCode, index) => ({ downloadCode, fileName: content.fileNames[index] })),
+            ...content.imageUrls.map((url) => url.startsWith('downloadCode:') ? { downloadCode: url.slice(13) } : { pictureUrl: url }),
+          ],
+        });
+      } catch { log?.warn?.('消息上下文缓存写入失败，本条消息继续处理'); }
+    }
+    return { content, commandText, quoted, sessionContext, agentId: route.agentId, sessionKey, agentWorkspaceDir,
+      bindingAgentId: route.agentId, bindingSessionKey: sessionKey, replyAgentLabel: undefined as string | undefined };
   } catch (error) {
     log?.error?.(`Agent routing failed: ${String(error)}`);
     await sendProactive(config,
@@ -1143,6 +1170,7 @@ type PreparedMessage = NonNullable<Awaited<ReturnType<typeof prepareDingTalkMess
 async function handleDingTalkMessageInternal(
   params: HandleMessageParams,
   prepared: PreparedMessage,
+  run: ConversationRun,
 ): Promise<void> {
   const { accountId, config, data, sessionWebhook, runtime, cfg } = params;
   const { content, sessionContext, agentId: matchedAgentId, sessionKey, agentWorkspaceDir } = prepared;
@@ -1153,10 +1181,10 @@ async function handleDingTalkMessageInternal(
 
   // 构建消息内容
   // ✅ 使用 normalizeSlashCommand 归一化新会话命令
-  const rawText = content.text || '';
+  const rawText = prepared.commandText || '';
   
   // 归一化命令（将 /reset、/clear、新会话 等别名统一为 /new）
-  const normalizedText = normalizeSlashCommand(rawText);
+  const normalizedText = content.text === currentMessageText(data) ? rawText : content.text;
   let userContent = normalizedText || (content.imageUrls.length > 0 ? '请描述这张图片' : '');
 
   // ===== 养成系统命令拦截 =====
@@ -1190,6 +1218,7 @@ async function handleDingTalkMessageInternal(
   
   // 处理 imageUrls（来自富文本消息）
   for (let i = 0; i < content.imageUrls.length; i++) {
+    if (run.controller.signal.aborted) return;
     const url = content.imageUrls[i];
     try {
       log?.info?.(`处理图片 ${i + 1}/${content.imageUrls.length}: ${url.slice(0, 50)}...`);
@@ -1219,6 +1248,7 @@ async function handleDingTalkMessageInternal(
 
   // 处理 downloadCodes（来自 picture 消息，fileNames 为空的是图片）
   for (let i = 0; i < content.downloadCodes.length; i++) {
+    if (run.controller.signal.aborted) return;
     const code = content.downloadCodes[i];
     const fileName = content.fileNames[i];
     if (!fileName) {
@@ -1244,6 +1274,7 @@ async function handleDingTalkMessageInternal(
   // ===== 文件附件处理：自动下载并解析内容 =====
   const fileContentParts: string[] = [];
   for (let i = 0; i < content.downloadCodes.length; i++) {
+    if (run.controller.signal.aborted) return;
     const code = content.downloadCodes[i];
     const fileName = content.fileNames[i];
     if (!fileName) continue;
@@ -1346,6 +1377,7 @@ async function handleDingTalkMessageInternal(
   }
 
   if (!userContent && imageLocalPaths.length === 0) return;
+  if (run.controller.signal.aborted) return;
 
   // ===== 贴处理中表情 =====
   addEmotionReply(config, data, log).catch(err => {
@@ -1374,6 +1406,9 @@ async function handleDingTalkMessageInternal(
       log?.warn?.(`Failed to send acknowledgment: ${ackErr?.message || ackErr}`);
     }
   }
+
+  // 取消可以在附件下载过程中到达；不启动已取消的生成。
+  if (run.controller.signal.aborted) return;
 
   // ===== 使用 SDK 的 dispatchReplyFromConfig =====
   try {
@@ -1408,8 +1443,14 @@ async function handleDingTalkMessageInternal(
     const ctxPayload = {
       Body: body,
       BodyForAgent: finalContent,
-      rawText: userContent,
-      CommandBody: userContent,
+      rawText,
+      CommandBody: rawText,
+      RawBody: rawText,
+      ReplyToId: prepared.quoted.replyToId,
+      ReplyToBody: prepared.quoted.replyToBody,
+      ReplyToSender: prepared.quoted.replyToSender,
+      ReplyToIsQuote: prepared.quoted.replyToIsQuote,
+      UntrustedContext: prepared.quoted.untrustedContext ? [prepared.quoted.untrustedContext] : undefined,
       From: senderId,
       To: toField,  // ✅ 修复：单聊用 senderId，群聊用 conversationId
       SessionKey: sessionKey,
@@ -1439,6 +1480,17 @@ async function handleDingTalkMessageInternal(
       senderId,
       isDirect,
       accountId,
+      sessionKey,
+      runId: run.runId,
+      replyAgentLabel: prepared.replyAgentLabel,
+      mediaLocalRoots: [agentWorkspaceDir],
+      onFinalReply: ({ text, messageId, cardInstanceId, messageIds }) => {
+        getMessageContextStore().rememberMessageContext(
+          { accountId, conversationId: data.conversationId || senderId },
+          { id: messageId || cardInstanceId || run.runId, direction: 'outbound', text,
+            aliases: [...messageIds ?? [], cardInstanceId, messageId].filter((id): id is string => Boolean(id)) },
+        );
+      },
       messageCreateTimeMs: Date.now(),
       sessionWebhook: data.sessionWebhook,
       asyncMode,
@@ -1475,7 +1527,7 @@ async function handleDingTalkMessageInternal(
       // 使用 Host 注入的低层 Channel 派发入口。该入口在 OpenClaw 2026.8.1
       // 会启用 active queue resolution，使 interrupt 能越过仍在执行的旧回合。
       dispatchReplyFromConfig: core.channel.reply.dispatchReplyFromConfig,
-      replyOptions,
+      replyOptions: { ...replyOptions, runId: run.runId, abortSignal: run.controller.signal },
     });
 
     const { queuedFinal, counts } = dispatchResult;
@@ -1483,7 +1535,7 @@ async function handleDingTalkMessageInternal(
     log.info?.(`[DingTalk][dispatch] dispatchReplyFromConfig 完成: queuedFinal=${queuedFinal}, counts=${JSON.stringify(counts)}`);
 
     // ===== 异步模式：主动推送最终结果 =====
-    if (asyncMode) {
+    if (asyncMode && !run.controller.signal.aborted) {
       try {
         const fullResponse = getAsyncModeResponse();
         const oapiToken = await getOapiAccessToken(config);
@@ -1548,16 +1600,24 @@ async function handleDingTalkMessageInternal(
             log?.warn?.(`[DingTalk][asyncMode] ${emptyGroupReplyLogHint()}`);
           }
         }
+        if (prepared.replyAgentLabel) textToSend = `**${prepared.replyAgentLabel}**\n\n${textToSend}`;
         const title =
           textToSend.split('\n')[0]?.replace(/^[#*\s\->]+/, '').trim() || '消息';
-        await sendProactive(config, proactiveTarget, textToSend, {
+        if (run.controller.signal.aborted) return;
+        const sent = await sendProactive(config, proactiveTarget, textToSend, {
           msgType: 'markdown',
           title,
           useAICard: false,
           fallbackToNormal: true,
           log,
         });
+        if (sent?.processQueryKey) {
+          try { getMessageContextStore().rememberMessageContext({ accountId, conversationId: data.conversationId || senderId }, {
+            id: sent.processQueryKey, direction: 'outbound', text: textToSend,
+          }); } catch { log?.warn?.('异步回复缓存写入失败'); }
+        }
       } catch (asyncErr: any) {
+        if (run.controller.signal.aborted) return;
         const errMsg = `⚠️ 任务执行失败: ${asyncErr?.message || asyncErr}`;
         try {
           await sendProactive(config, proactiveTarget, errMsg, {
@@ -1573,11 +1633,13 @@ async function handleDingTalkMessageInternal(
     }
 
   } catch (err: any) {
+    if (run.controller.signal.aborted) return;
     log?.error?.(`SDK dispatch 失败: ${err.message}`);
     
     // 降级：发送错误消息
     try {
       const token = await getAccessToken(config);
+      if (run.controller.signal.aborted) return;
       const body: any = { 
         msgtype: 'text', 
         text: { content: `抱歉，处理请求时出错: ${err.message}` } 
@@ -1592,20 +1654,130 @@ async function handleDingTalkMessageInternal(
     }
   }
 
-  // ===== 撤回处理中表情 =====
-  // 使用 await 确保表情撤销完成后再结束函数
+}
+
+/** 控制消息直接进入宿主入口，不等待媒体下载、主生成或插件队列。 */
+async function dispatchControl(params: HandleMessageParams, prepared: PreparedMessage, control: 'stop' | 'btw'): Promise<void> {
+  const { accountId, config, data, cfg } = params;
+  const senderId = data.senderStaffId || data.senderId;
+  const isDirect = data.conversationType === '1';
+  const to = isDirect ? senderId : data.conversationId;
+  if (control === 'stop') {
+    const runs = conversationRuns.abortSession(accountId, prepared.sessionKey);
+    // 先 abort 所有本地句柄，再并行关闭卡片；宿主 /stop 还会清理队列和子任务。
+    void Promise.all(runs.map((run) => stopDingtalkReplyDispatchers(run))).catch(() => undefined);
+  }
+  const core = getDingtalkRuntime();
+  const command = control === 'stop' ? '/stop' : prepared.commandText;
+  const dispatchParams: DingtalkBtwDispatchParams = {
+    ctx: {
+      Body: command, BodyForAgent: command, RawBody: command, CommandBody: command,
+      From: senderId, To: to, SessionKey: prepared.sessionKey, AccountId: accountId,
+      ChatType: prepared.sessionContext.chatType, SenderId: senderId, SenderName: data.senderNick,
+      Provider: 'dingtalk-connector', Surface: 'dingtalk-connector', MessageSid: data.msgId,
+      CommandAuthorized: true, OriginatingChannel: 'dingtalk-connector', OriginatingTo: to,
+    },
+    cfg,
+    dispatcherOptions: {
+      deliver: async (payload) => {
+        if (!payload.text) return;
+        await sendProactive(config, isDirect ? { userId: senderId } : { openConversationId: to }, payload.text, {
+          msgType: 'markdown', title: control === 'btw' ? '旁路问答' : '停止生成', useAICard: false, fallbackToNormal: true,
+        });
+      },
+      onError: (error) => params.log?.error?.(`控制命令派发失败: ${String(error)}`),
+    },
+    dispatchReplyFromConfig: core.channel.reply.dispatchReplyFromConfig,
+  };
+  if (control === 'btw') await dispatchDingtalkBtw(dispatchParams);
+  else await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher(dispatchParams);
+}
+
+async function dispatchConversation(params: HandleMessageParams, prepared: PreparedMessage, inheritedTurn?: string): Promise<void> {
+  const { accountId, data, config } = params;
+  const senderId = data.senderStaffId || data.senderId;
+  const scope = { accountId, conversationId: data.conversationId || senderId, senderId, sessionKey: prepared.sessionKey };
+  const control = classifyControl(prepared.commandText);
+  const turnScope = questionTurnScope(accountId, scope.conversationId, senderId);
+  const turnToken = inheritedTurn ?? (control === 'btw' ? '' : beginQuestionTurn(turnScope));
+  // /btw 不使正在等待回答的问题失效；停止、新会话和普通消息会使旧问题失效。
+  if (control !== 'btw' && !inheritedTurn) {
+    // 本地状态同步失效；卡片网络更新不阻塞控制消息。
+    void invalidatePendingQuestionsForScope({ accountId, conversationId: scope.conversationId, senderId }).catch(() => undefined);
+  }
+  if (control) return dispatchControl(params, prepared, control);
+  const run = conversationRuns.begin({ accountId, sessionKey: prepared.sessionKey, senderId });
+  const trustedToolSessionKeys = data.conversationType === '1' && params.cfg.session?.dmScope === 'main'
+    ? [getDingtalkRuntime().channel.routing.buildAgentSessionKey({
+      agentId: prepared.agentId, channel: 'dingtalk-connector', accountId,
+      peer: { kind: 'direct', id: senderId }, dmScope: 'per-account-channel-peer',
+      identityLinks: params.cfg.session?.identityLinks,
+    })] : undefined;
   try {
-    await recallEmotionReply(config, data, log);
-  } catch (err: any) {
-    log?.warn?.(`撤回表情异常: ${err.message}`);
+    await withDingtalkQuestionContext({
+      ...scope, trustedToolSessionKeys, agentId: prepared.agentId, isDirect: data.conversationType === '1', config, log: params.log,
+      isCurrent: () => isCurrentQuestionTurn(turnScope, turnToken),
+      stopCurrentGeneration: () => {
+        run.controller.abort();
+        void stopDingtalkReplyDispatchers(run).catch(() => undefined);
+      },
+      resume: async (answer, questionId) => {
+        if (!isCurrentQuestionTurn(turnScope, turnToken)) throw new Error('新消息已使当前问题失效');
+        const next = { ...params, data: { ...data, msgtype: 'text', text: { content: answer },
+          content: undefined, originalMsgId: undefined, originalProcessQueryKey: undefined,
+          msgId: `question-answer:${questionId}` } };
+        // 回调不能提供新目标；重新检查当前消息策略与原路由是否仍一致。
+        const checked = await prepareDingTalkMessage(next);
+        const stillAllowed = prepared.agentId === prepared.bindingAgentId
+          || (config.experimentalMultiAgent?.enabled
+            && Object.values(config.experimentalMultiAgent.aliases ?? {}).includes(prepared.agentId)
+            && Object.hasOwn(params.cfg.agents?.entries ?? {}, prepared.agentId));
+        if (!isCurrentQuestionTurn(turnScope, turnToken) || !checked || checked.bindingAgentId !== prepared.bindingAgentId
+          || checked.bindingSessionKey !== prepared.bindingSessionKey || !stillAllowed) {
+          throw new Error('问题的原始路由已失效，请重新提问');
+        }
+        await dispatchConversation(next, { ...checked, agentId: prepared.agentId, sessionKey: prepared.sessionKey,
+          agentWorkspaceDir: prepared.agentWorkspaceDir, replyAgentLabel: prepared.replyAgentLabel });
+      },
+    }, () => handleDingTalkMessageInternal(params, prepared, run));
+  } finally {
+    conversationRuns.finish(run);
+    try { await recallEmotionReply(config, data, params.log); }
+    catch { params.log?.warn?.('撤回处理中表情失败'); }
   }
 }
 
-/** Message entry point. OpenClaw owns per-session queue and interrupt semantics. */
+/** OpenClaw 拥有会话队列；实验多助手仅选择独立的 Agent 会话。 */
 export async function handleDingTalkMessage(params: HandleMessageParams): Promise<void> {
   const prepared = await prepareDingTalkMessage(params);
   if (!prepared) return;
-  await handleDingTalkMessageInternal(params, prepared);
+  let targets: ReturnType<typeof resolveMentionTargets>;
+  try {
+    targets = resolveMentionTargets(prepared.commandText, params.config.experimentalMultiAgent, Object.keys(params.cfg.agents?.entries ?? {}));
+  } catch (error) {
+    await sendProactive(params.config, params.data.conversationType === '1'
+      ? { userId: params.data.senderStaffId || params.data.senderId } : { openConversationId: params.data.conversationId },
+      (error as Error).message, { msgType: 'text', useAICard: false });
+    return;
+  }
+  if (!targets.agentIds.length) return dispatchConversation(params, prepared);
+  const core = getDingtalkRuntime();
+  const senderId = params.data.senderStaffId || params.data.senderId;
+  const conversationId = params.data.conversationId || senderId;
+  const turnToken = classifyControl(targets.text) === 'btw' ? ''
+    : beginQuestionTurn(questionTurnScope(params.accountId, conversationId, senderId));
+  if (turnToken) void invalidatePendingQuestionsForScope({ accountId: params.accountId, conversationId, senderId }).catch(() => undefined);
+  for (const agentId of targets.agentIds) {
+    if (turnToken && !isCurrentQuestionTurn(questionTurnScope(params.accountId, conversationId, senderId), turnToken)) break;
+    const sessionKey = core.channel.routing.buildAgentSessionKey({
+      agentId, channel: 'dingtalk-connector', accountId: params.accountId,
+      peer: { kind: prepared.sessionContext.chatType, id: prepared.sessionContext.sessionPeerId },
+      dmScope: params.cfg.session?.dmScope ?? 'per-channel-peer',
+    });
+    await dispatchConversation(params, { ...prepared, agentId, sessionKey,
+      replyAgentLabel: agentId,
+      agentWorkspaceDir: core.agent.resolveAgentWorkspaceDir(params.cfg, agentId),
+      commandText: targets.text, content: { ...prepared.content, text: targets.text },
+    }, turnToken || undefined);
+  }
 }
-
-// handleDingTalkMessage 已在函数定义处直接导出

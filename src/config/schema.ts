@@ -63,6 +63,16 @@ export const DingtalkGroupSchema = z
   .strict();
 
 const DingtalkSharedConfigShape = {
+  cardTemplateMode: z.enum(['legacy', 'v2']).optional(),
+  cardTemplateId: z.string().trim().min(1).optional(),
+  cardShowMetadata: z.boolean().optional(),
+  questionCardTemplateId: z.string().trim().min(1).optional(),
+  questionTimeoutMs: z.number().int().min(10000).max(1800000).optional(),
+  experimentalMultiAgent: z.object({
+    enabled: z.boolean().optional(),
+    aliases: z.record(z.string().regex(/^[^\s@]+$/u), z.string().trim().min(1)).optional(),
+    maxTargets: z.number().int().min(1).max(5).optional(),
+  }).strict().optional(),
   dmPolicy: DmPolicySchema.optional(),
   allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
   groupPolicy: GroupPolicySchema.optional(),
