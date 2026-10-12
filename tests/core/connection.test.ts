@@ -10,11 +10,17 @@ const mockLoggerError = vi.hoisted(() => vi.fn());
 class FakeSocket extends EventEmitter {
   readyState = 1;
   ping = vi.fn();
+
+  closeFromServer(code = 1000) {
+    this.readyState = 3;
+    this.emit("close", code, Buffer.alloc(0));
+  }
 }
 
 class FakeDWClient extends EventEmitter {
   static nextConnectError: any = null;
   static latestInstance: FakeDWClient | null = null;
+  static replaceSocketOnConnect = false;
   socket = new FakeSocket();
   callback: ((res: any) => Promise<void>) | null = null;
   disconnect = vi.fn(async () => undefined);
@@ -23,6 +29,9 @@ class FakeDWClient extends EventEmitter {
       const err = FakeDWClient.nextConnectError;
       FakeDWClient.nextConnectError = null;
       throw err;
+    }
+    if (FakeDWClient.replaceSocketOnConnect) {
+      this.socket = new FakeSocket();
     }
     return undefined;
   });
@@ -59,6 +68,7 @@ describe("core/connection", () => {
     vi.clearAllMocks();
     FakeDWClient.nextConnectError = null;
     FakeDWClient.latestInstance = null;
+    FakeDWClient.replaceSocketOnConnect = false;
     // 默认首次处理：返回 false（未重复）
     mockCheckAndMarkDingtalkMessage.mockReturnValue(false);
   });
@@ -245,5 +255,132 @@ describe("core/connection", () => {
     await expect(
       monitorSingleAccount(createOpts()),
     ).rejects.toThrow("Bad Request (400)");
+  });
+
+  /** 真实 monitor 配合可替换 socket；只手动推进 0ms 重连，不触发心跳兜底。 */
+  async function withReconnectProbe(
+    action: (probe: {
+      client: FakeDWClient;
+      controller: AbortController;
+      onStatusChange: ReturnType<typeof vi.fn>;
+    }) => Promise<void>,
+  ) {
+    vi.useFakeTimers();
+    FakeDWClient.replaceSocketOnConnect = true;
+    const controller = new AbortController();
+    const onStatusChange = vi.fn();
+    const lifecycleEvents = ["exit", "SIGINT", "SIGTERM"] as const;
+    const existingListeners = new Map(lifecycleEvents.map((event) => [event, process.listeners(event)]));
+    let running: Promise<void> | undefined;
+    try {
+      const { monitorSingleAccount } = await import("../../src/core/connection");
+      running = monitorSingleAccount({
+        ...createOpts({ abortSignal: controller.signal }),
+        onStatusChange,
+      });
+      await vi.waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(
+        expect.objectContaining({ connected: true }),
+      ));
+      onStatusChange.mockClear();
+      await action({ client: FakeDWClient.latestInstance!, controller, onStatusChange });
+    } finally {
+      controller.abort();
+      await running;
+      // monitor 的进程退出回调和统计定时器不能跨用例残留。
+      for (const event of lifecycleEvents) {
+        for (const listener of process.listeners(event)) {
+          if (!existingListeners.get(event)!.includes(listener)) process.removeListener(event, listener);
+        }
+      }
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  }
+
+  it("SYSTEM disconnect 重连成功后，旧 socket close 不得关闭新连接或报告离线", async () => {
+    await withReconnectProbe(async ({ client, onStatusChange }) => {
+      const oldSocket = client.socket;
+      oldSocket.emit("message", JSON.stringify({ type: "SYSTEM", headers: { topic: "disconnect" } }));
+      await vi.waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(
+        expect.objectContaining({ connected: true }),
+      ));
+      const newSocket = client.socket;
+      expect(newSocket).not.toBe(oldSocket);
+      expect(newSocket.readyState).toBe(1);
+      expect(client.connect).toHaveBeenCalledTimes(2);
+
+      onStatusChange.mockClear();
+      client.disconnect.mockClear();
+      oldSocket.closeFromServer();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect({
+        connects: client.connect.mock.calls.length,
+        disconnects: client.disconnect.mock.calls.length,
+        retainsNewSocket: client.socket === newSocket,
+        statuses: onStatusChange.mock.calls.map(([patch]) => patch.connected),
+      }).toEqual({ connects: 2, disconnects: 0, retainsNewSocket: true, statuses: [] });
+    });
+  });
+
+  it("当前 socket close 已排队后，若执行前连接已替换，旧重连任务不得关闭新 socket", async () => {
+    await withReconnectProbe(async ({ client, onStatusChange }) => {
+      const oldSocket = client.socket;
+      const replacementReady = new Promise<void>((resolve) => {
+        onStatusChange.mockImplementation((patch) => {
+          if (patch.connected === true) resolve();
+        });
+      });
+      // SYSTEM 启动真实重连，但仍在 await disconnect；同一调用栈里的 close 属于当前 socket。
+      oldSocket.emit("message", JSON.stringify({ type: "SYSTEM", headers: { topic: "disconnect" } }));
+      expect(client.socket).toBe(oldSocket);
+      oldSocket.closeFromServer();
+      expect(onStatusChange).toHaveBeenCalledWith({ connected: false });
+      expect(client.connect).toHaveBeenCalledTimes(1);
+
+      // 只等待微任务：monitor 已完成替换且 finally 释放重连锁，旧 close 的 0ms timer 还未运行。
+      await replacementReady;
+      const replacement = client.socket;
+      expect(replacement).not.toBe(oldSocket);
+      expect(replacement.readyState).toBe(1);
+      expect(client.connect).toHaveBeenCalledTimes(2);
+      onStatusChange.mockClear();
+      client.disconnect.mockClear();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect({
+        connects: client.connect.mock.calls.length,
+        disconnects: client.disconnect.mock.calls.length,
+        retainsReplacement: client.socket === replacement,
+        statuses: onStatusChange.mock.calls.map(([patch]) => patch.connected),
+      }).toEqual({ connects: 2, disconnects: 0, retainsReplacement: true, statuses: [] });
+    });
+  });
+
+  it("当前 socket 正常 close 仍报告离线并恰好重连一次", async () => {
+    await withReconnectProbe(async ({ client, onStatusChange }) => {
+      const oldSocket = client.socket;
+      oldSocket.closeFromServer(1012);
+      expect(onStatusChange).toHaveBeenCalledWith({ connected: false });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.connect).toHaveBeenCalledTimes(2);
+      expect(client.socket).not.toBe(oldSocket);
+      expect(client.socket.readyState).toBe(1);
+      expect(onStatusChange.mock.calls.map(([patch]) => patch.connected)).toEqual([false, true]);
+    });
+  });
+
+  it("当前 socket close 已排队后 abort，不得继续重连", async () => {
+    await withReconnectProbe(async ({ client, controller, onStatusChange }) => {
+      client.socket.closeFromServer();
+      expect(onStatusChange).toHaveBeenCalledWith({ connected: false });
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.connect).toHaveBeenCalledTimes(1);
+      expect(client.disconnect).not.toHaveBeenCalled();
+      expect(onStatusChange.mock.calls.map(([patch]) => patch.connected)).toEqual([false]);
+    });
   });
 });
