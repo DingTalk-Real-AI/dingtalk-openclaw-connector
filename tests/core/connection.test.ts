@@ -6,6 +6,9 @@ const mockLoggerInfo = vi.hoisted(() => vi.fn());
 const mockLoggerDebug = vi.hoisted(() => vi.fn());
 const mockLoggerWarn = vi.hoisted(() => vi.fn());
 const mockLoggerError = vi.hoisted(() => vi.fn());
+const mockQuestionCallback = vi.hoisted(() => vi.fn(async (_params: any) => ({ handled: true })));
+
+vi.mock('../../src/questions/index.ts', () => ({ handleDingtalkQuestionCallback: mockQuestionCallback }));
 
 class FakeSocket extends EventEmitter {
   readyState = 1;
@@ -17,6 +20,7 @@ class FakeDWClient extends EventEmitter {
   static latestInstance: FakeDWClient | null = null;
   socket = new FakeSocket();
   callback: ((res: any) => Promise<void>) | null = null;
+  cardCallback: ((res: any) => Promise<void>) | null = null;
   disconnect = vi.fn(async () => undefined);
   connect = vi.fn(async () => {
     if (FakeDWClient.nextConnectError) {
@@ -27,8 +31,9 @@ class FakeDWClient extends EventEmitter {
     return undefined;
   });
   socketCallBackResponse = vi.fn();
-  registerCallbackListener = vi.fn((_: string, cb: any) => {
-    this.callback = cb;
+  registerCallbackListener = vi.fn((topic: string, cb: any) => {
+    if (topic === 'topic_card') this.cardCallback = cb;
+    else this.callback = cb;
   });
   constructor(_: any) {
     super();
@@ -39,6 +44,7 @@ class FakeDWClient extends EventEmitter {
 vi.mock("dingtalk-stream", () => ({
   DWClient: FakeDWClient,
   TOPIC_ROBOT: "topic_robot",
+  TOPIC_CARD: "topic_card",
 }));
 
 vi.mock("../../src/utils/utils-legacy.ts", () => ({
@@ -156,6 +162,32 @@ describe("core/connection", () => {
     controller.abort();
     await running;
     expect(client!.disconnect).toHaveBeenCalled();
+  });
+
+  it('卡片回调先 ACK，再按连接账号续聊，不进入机器人消息处理器', async () => {
+    const { monitorSingleAccount } = await import('../../src/core/connection');
+    const controller = new AbortController();
+    let finish!: () => void;
+    mockQuestionCallback.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { handled: true };
+    });
+    const messageHandler = vi.fn(async () => undefined);
+    const running = monitorSingleAccount(createOpts({ abortSignal: controller.signal, messageHandler }));
+    try {
+      await vi.waitFor(() => expect(FakeDWClient.latestInstance?.cardCallback).toBeTruthy());
+      const client = FakeDWClient.latestInstance!;
+      const data = { outTrackId: 'dingtalk_question_test', userId: 'u1', content: '{}' };
+      const pending = client.cardCallback!({ headers: { messageId: 'card-1' }, data: JSON.stringify(data) });
+      expect(client.socketCallBackResponse).toHaveBeenCalledWith('card-1', { success: true });
+      expect(mockQuestionCallback).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-1', data }));
+      expect(messageHandler).not.toHaveBeenCalled();
+      finish();
+      await pending;
+      await client.cardCallback!({ headers: { messageId: 'bad-card' }, data: '{invalid' });
+      expect(client.socketCallBackResponse).toHaveBeenCalledWith('bad-card', { success: true });
+      expect(mockLoggerWarn).toHaveBeenCalledWith('原生问题卡回调处理失败');
+    } finally { finish?.(); controller.abort(); await running; }
   });
 
   it("keeps the processing heartbeat active until all concurrent messages settle", async () => {

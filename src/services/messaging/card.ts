@@ -3,6 +3,8 @@
  * 支持 AI Card 创建、流式更新、完成
  */
 
+import { extractDingtalkMessageIds } from "../../cards/delivery.ts";
+import { V2_CARD_TEMPLATE_ID, markdownToCardBlocks, type CardPresentation } from "../../cards/structured-card.ts";
 import type { DingtalkConfig } from "../../types/index.ts";
 import { DINGTALK_API, getAccessToken } from "../../utils/token.ts";
 import { dingtalkHttp } from "../../utils/http-client.ts";
@@ -158,6 +160,10 @@ export interface AICardInstance {
   accessToken: string;
   tokenExpireTime: number;
   inputingStarted: boolean;
+  templateMode?: "legacy" | "v2";
+  messageIds?: string[];
+  terminal?: boolean;
+  writeTail?: Promise<unknown>;
 }
 
 /** AI Card 投放目标类型 */
@@ -370,11 +376,13 @@ export async function createAICardForTarget(
 
     // 1. 创建卡片实例
     const createBody = {
-      cardTemplateId: AI_CARD_TEMPLATE_ID,
+      cardTemplateId: config.cardTemplateMode === "v2" ? (config.cardTemplateId || V2_CARD_TEMPLATE_ID) : AI_CARD_TEMPLATE_ID,
       outTrackId: cardInstanceId,
       cardData: {
           cardParamMap: {
-              config: JSON.stringify({ autoLayout: true }),
+              ...(config.cardTemplateMode === "v2"
+                ? { blockList: "[]", content: "", copy_content: "", statusLine: "", flowStatus: "1", hasAction: "false" }
+                : { config: JSON.stringify({ autoLayout: true }) }),
           }
       },
       callbackType: "STREAM",
@@ -392,6 +400,8 @@ export async function createAICardForTarget(
         },
       },
     );
+
+    if (createResp.data?.success === false) throw new Error("AI Card 创建被服务端拒绝");
 
     // 2. 投放卡片
     const deliverBody = buildDeliverBody(
@@ -411,10 +421,19 @@ export async function createAICardForTarget(
       },
     );
 
+    const delivery = deliverResp.data?.result ?? deliverResp.data;
+    if (deliverResp.data?.success === false || delivery?.success === false ||
+      delivery?.deliverResults?.some((item: { success?: boolean }) => item.success === false)) {
+      throw new Error("AI Card 投放被服务端拒绝");
+    }
+
     // 记录 token 过期时间（钉钉 token 有效期 2 小时）
     const tokenExpireTime = Date.now() + 2 * 60 * 60 * 1000;
     
-    return { cardInstanceId, accessToken: token, tokenExpireTime, inputingStarted: false };
+    return { cardInstanceId, accessToken: token, tokenExpireTime, inputingStarted: false,
+      templateMode: config.cardTemplateMode || "legacy",
+      messageIds: [...new Set([...extractDingtalkMessageIds(deliverResp.data), ...extractDingtalkMessageIds(createResp.data)])],
+    };
   } catch (err: any) {
     log?.error?.(
       `[DingTalk][AICard] 创建卡片失败 (${targetDesc}): ${err.message}`,
@@ -444,6 +463,65 @@ async function ensureValidToken(
   return card.accessToken;
 }
 
+/** v2 的所有实例写入共享既有令牌桶，并按卡片串行，终态后拒绝迟到帧。 */
+async function writeV2Card(
+  card: AICardInstance,
+  content: string,
+  finished: boolean,
+  config?: DingtalkConfig,
+  presentation?: CardPresentation,
+): Promise<void> {
+  const previous = card.writeTail || Promise.resolve();
+  const run = previous.catch(() => {}).then(async () => {
+    if (card.terminal) return;
+    if (config) await ensureValidToken(card, config);
+    const put = async (url: string, body: unknown) => {
+      const request = async () => {
+        const response = await dingtalkHttp.put(`${DINGTALK_API}${url}`, body, {
+          headers: { "x-acs-dingtalk-access-token": card.accessToken, "Content-Type": "application/json" },
+        });
+        if (response.data?.success === false) throw new Error("AI Card 更新被服务端拒绝");
+      };
+      await cardRateLimiter.waitForToken();
+      try { await request(); }
+      catch (err) {
+        if (!isQpsLimitError(err)) throw err;
+        cardRateLimiter.triggerBackoff();
+        await cardRateLimiter.waitForToken();
+        await request();
+      }
+    };
+    // content 是模板实际 streaming key。先激活流式生命周期，最后关闭它，
+    // 再以 instances 一次提交 blockList 和 flowStatus，避免重复正文与永久转圈。
+    try { await put("/v1.0/card/streaming", {
+      outTrackId: card.cardInstanceId,
+      guid: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      key: "content", content: finished ? "" : (presentation?.preview ?? content),
+      isFull: true, isFinalize: finished, isError: false,
+    }); } catch (error) {
+      // 关闭 streaming 失败时仍提交 instances 终态，避免留下永久转圈卡。
+      if (!finished) throw error;
+    }
+    card.inputingStarted = true;
+    const blocks = presentation?.blocks ?? (finished ? markdownToCardBlocks(content) : []);
+    await put("/v1.0/card/instances", {
+      outTrackId: card.cardInstanceId,
+      cardData: { cardParamMap: {
+        blockList: JSON.stringify(blocks),
+        content: finished ? content : (presentation?.preview ?? content),
+        copy_content: finished ? content : "",
+        flowStatus: finished ? "3" : "2",
+        hasAction: "false",
+        ...(presentation?.statusLine ? { statusLine: presentation.statusLine } : {}),
+      } },
+      cardUpdateOptions: { updateCardDataByKey: true },
+    });
+    if (finished) card.terminal = true;
+  });
+  card.writeTail = run;
+  await run;
+}
+
 /**
  * 流式更新 AI Card 内容
  *
@@ -456,10 +534,15 @@ export async function streamAICard(
   finished: boolean = false,
   config?: DingtalkConfig,
   log?: any,
+  presentation?: CardPresentation,
 ): Promise<void> {
   // 防御 null card（createAICardForTarget 失败返回 null，调用方可能用 as any 绕过类型检查）
   if (!card) {
     log?.warn?.(`[DingTalk][AICard] streamAICard 收到 null card，跳过更新`);
+    return;
+  }
+  if (card.templateMode === "v2") {
+    await writeV2Card(card, content, finished, config, presentation);
     return;
   }
   // 确保 token 有效
@@ -601,7 +684,12 @@ export async function finishAICard(
   content: string,
   config?: DingtalkConfig,
   log?: any,
-): Promise<void> {
+  presentation?: CardPresentation,
+): Promise<boolean> {
+  if (card?.templateMode === "v2") {
+    await writeV2Card(card, content, true, config, presentation);
+    return true;
+  }
   // 确保 token 有效
   if (config) {
     await ensureValidToken(card, config);
@@ -659,7 +747,7 @@ export async function finishAICard(
         log?.info?.(
           `[DingTalk][AICard] FINISHED 重试成功：status=${retryResp.status}`,
         );
-        return;
+        return true;
       } catch (retryErr: any) {
         log?.error?.(
           `[DingTalk][AICard] FINISHED 重试失败：${retryErr.message}`,
@@ -668,5 +756,7 @@ export async function finishAICard(
     } else {
       log?.error?.(`[DingTalk][AICard] FINISHED 更新失败：${err.message}`);
     }
+    return false;
   }
+  return true;
 }

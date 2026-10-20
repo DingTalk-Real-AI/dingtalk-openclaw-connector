@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+
+- 引用消息按账号/会话与精确消息 ID 恢复，常见 UTF-8 文本附件有界抽取。
+- 可选 v2 结构化流式 AI 卡片、真实状态元数据与内联图片，附可导入模板。
+- `dingtalk_ask_user_question` 原生确认、单选、多选和表单，提交后在原会话新一轮续聊。
+- 显式别名驱动的实验 @多助手路由；`/btw` 旁路快答与停止生成入口。
+
+配置、依赖条件与验证边界见 [社区能力对齐使用说明](docs/COMMUNITY_CAPABILITY_ALIGNMENT.md)。
+
 ## [0.8.26] - 2026-09-03
 
 > **OpenClaw 2 正式版** — 完成当前 Plugin SDK、SecretRef、Host 队列/中断、Agent 路由与 Windows 加载链路适配，并将 npm `latest` 从 `0.8.25` 升级到 `0.8.26`。详见 [Release Notes](docs/RELEASE_NOTES_V0.8.26.md)。

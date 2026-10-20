@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: 'index.ts',
     'entry-bundled': 'entry-bundled.ts',
+    'bundled-channel': 'bundled-channel.mts',
     'secret-contract-api': 'secret-contract-api.ts',
   },
   format: 'esm',

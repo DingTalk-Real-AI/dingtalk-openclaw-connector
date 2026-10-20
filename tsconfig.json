@@ -15,6 +15,6 @@
     "types": ["node"],
     "noImplicitAny": false
   },
-  "include": ["src/**/*", "index.ts", "entry-bundled.ts"],
+  "include": ["src/**/*", "index.ts", "entry-bundled.ts", "bundled-channel.mts"],
   "exclude": ["node_modules", "dist"]
 }
