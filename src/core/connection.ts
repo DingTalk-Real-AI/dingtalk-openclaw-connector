@@ -392,7 +392,13 @@ export async function monitorSingleAccount(
 
   /** 监听 WebSocket close 事件，服务端主动断开时立即触发重连 */
   function setupCloseListener() {
-    client.socket?.on("close", (code, reason) => {
+    // SDK 将 socket 声明为 private，这里仅访问现有的运行时连接字段。
+    const socketClient = client as any;
+    const socket = socketClient.socket;
+    socket?.on("close", (code, reason) => {
+      // 旧连接可能晚于新连接建立才关闭，不能将当前连接标记离线或再次重连。
+      if (socket !== socketClient.socket) return;
+
       logger.info(
         `WebSocket close: code=${code}, reason=${reason || "未知"}, isStopped=${isStopped}`,
       );
@@ -406,6 +412,9 @@ export async function monitorSingleAccount(
 
       // 立即重连，不退避
       setTimeout(() => {
+        // close 入队时仍可能是当前连接，等待期间也可能已被另一条重连路径替换。
+        if (socket !== socketClient.socket) return;
+
         doReconnect(true).catch((err) => {
           logger.error(`重连失败：${err.message}`);
         });
