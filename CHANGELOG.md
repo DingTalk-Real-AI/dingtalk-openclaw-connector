@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.27] - 2026-10-20
+
+本版本包含 [#673](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/673) 的消息与会话能力对齐，以及 [#678](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/678) 的旧连接重连修复。详见 [发布说明](docs/RELEASE_NOTES_V0.8.27.md)。
+
 ### 新增
 
 - 引用消息按账号/会话与精确消息 ID 恢复，常见 UTF-8 文本附件有界抽取。
@@ -15,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 显式别名驱动的实验 @多助手路由；`/btw` 旁路快答与停止生成入口。
 
 配置、依赖条件与验证边界见 [社区能力对齐使用说明](docs/COMMUNITY_CAPABILITY_ALIGNMENT.md)。
+
+### 修复
+
+- 忽略旧 WebSocket 的延迟关闭事件，并在排队的重连回调执行前再次核对连接身份，避免旧事件关闭已经建立的新连接；保留当前连接的正常断线恢复和停止行为。
 
 ## [0.8.26] - 2026-09-03
 
