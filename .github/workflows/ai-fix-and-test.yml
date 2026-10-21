@@ -191,6 +191,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          # Optional repository variables: MiniMax-M3 or an explicitly configured model.
+          MINIMAX_MODEL: ${{ vars.MINIMAX_MODEL || 'MiniMax-M3.1-Flash' }}
+          # Use https://api.minimaxi.com/v1 for a China-region API key.
+          MINIMAX_BASE_URL: ${{ vars.MINIMAX_BASE_URL || 'https://api.minimax.io/v1' }}
         run: |
           echo "🤖 分析 Issue 内容..."
           echo "Issue #${{ needs.check-trigger.outputs.issue_number }}: ${{ needs.check-trigger.outputs.issue_title }}"
@@ -207,7 +212,7 @@ jobs:
           EOF
           
           # 检查是否有 AI API Key
-          if [ -n "$OPENAI_API_KEY" ] || [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$DASHSCOPE_API_KEY" ]; then
+          if [ -n "$OPENAI_API_KEY" ] || [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$DASHSCOPE_API_KEY" ] || [ -n "$MINIMAX_API_KEY" ]; then
             echo "✅ 发现 AI API Key，将尝试调用 AI 模型生成修复..."
             
             # 准备 Issue 内容
@@ -292,6 +297,22 @@ jobs:
               fi
             fi
             
+            # Try MiniMax last so existing provider priority remains unchanged.
+            # MINIMAX_MODEL preserves an explicit repository choice; the default is Flash-first.
+            if [ -n "$MINIMAX_API_KEY" ] && [ ! -f /tmp/ai-analysis.md ]; then
+              echo "🔄 Calling MiniMax API ($MINIMAX_MODEL)..."
+              curl -sS -X POST "${MINIMAX_BASE_URL%/}/chat/completions" \
+                -H "Authorization: Bearer $MINIMAX_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$(jq -nc --arg model "$MINIMAX_MODEL" --arg system "You are a professional code repair assistant. Analyze the GitHub issue and provide a repair plan." --arg user "Issue title: $ISSUE_TITLE\n\nIssue description: $ISSUE_BODY\n\nAnalyze the root cause, files to change, and repair approach." '{model:$model,messages:[{role:"system",content:$system},{role:"user",content:$user}]}')" \
+                > /tmp/ai-response.json 2>/dev/null || echo "⚠️ MiniMax API call failed"
+
+              if [ -f /tmp/ai-response.json ] && jq -e '.choices[0].message.content' /tmp/ai-response.json >/dev/null 2>&1; then
+                echo "✅ MiniMax analysis completed"
+                jq -r '.choices[0].message.content' /tmp/ai-response.json > /tmp/ai-analysis.md
+              fi
+            fi
+
             # 保存 AI 分析结果
             if [ -f /tmp/ai-analysis.md ]; then
               echo "📝 AI 分析结果："
@@ -302,7 +323,7 @@ jobs:
               echo "AI 分析暂不可用，请手动查看 Issue 并修复。" > .ai-fix-analysis.md
             fi
           else
-            echo "⚠️ 未配置 AI API Key (OPENAI_API_KEY、ANTHROPIC_API_KEY 或 DASHSCOPE_API_KEY)"
+            echo "No AI API key configured; set a supported provider secret (including MINIMAX_API_KEY)."
             echo "请配置 Secrets 后重新运行，或手动修复代码。"
             echo "未配置 AI API Key，请手动修复。" > .ai-fix-analysis.md
           fi
