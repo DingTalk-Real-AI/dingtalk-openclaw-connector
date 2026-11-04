@@ -9,12 +9,18 @@ import {
   type AICardInstance,
   type AICardTarget,
 } from "./messaging/card.ts";
+import { DINGTALK_API, getAccessToken } from "../utils/token.ts";
+import { dingtalkHttp } from "../utils/http-client.ts";
+import { captureQuestionContext, resolveQuestionContext } from "../questions/context.ts";
 
 export const DINGTALK_CARD_BRIDGE_SYMBOL = Symbol.for("@dingtalk-connector/card-bridge");
+export const DINGTALK_A2UI_BRIDGE_SYMBOL = Symbol.for("@dingtalk-connector/a2ui-bridge");
 
 const CARD_RECORD_TTL_MS = 24 * 60 * 60 * 1000;
 const CARD_RECORD_MAX_SIZE = 10_000;
 const CARD_RECORD_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const A2UI_CARD_TTL_MS = 30 * 60 * 1000;
+const A2UI_CARD_MAX_SIZE = 1_000;
 const DEFAULT_FAILED_CARD_MARKDOWN = "Task failed";
 const TARGET_ID_MAX_LENGTH = 256;
 const TARGET_ID_DANGEROUS_CHARS_PATTERN = /[<>"\x00-\x1f\x7f]/;
@@ -62,7 +68,53 @@ export type DingtalkCardBridge = {
   }>;
 };
 
+export type DingtalkA2UIActionEvent = {
+  accountId: string;
+  messageId: string;
+  senderId?: string;
+  outTrackId?: string;
+  cardInstanceId?: string;
+  trustedContext?: {
+    accountId: string;
+    senderId: string;
+    sessionKey: string;
+    conversationId: string;
+    robotCode: string;
+    isDirect: true;
+  };
+  data: unknown;
+};
+
+export type DingtalkA2UIBridge = {
+  getCurrentContext(context: unknown): {
+    accountId: string;
+    senderId: string;
+    sessionKey: string;
+    conversationId: string;
+    robotCode: string;
+    isDirect: true;
+    isCurrent: () => boolean;
+  } | undefined;
+  createCurrentCard(params: {
+    context: unknown;
+    outTrackId: string;
+    summary: string;
+    messages: unknown[];
+  }): Promise<{ status: "accepted" | "failed" | "unknown"; cardInstanceId?: string }>;
+  updateCard(params: {
+    cardInstanceId: string;
+    outTrackId: string;
+    outUpdateId: string;
+    status: "PROCESSING" | "FINISH" | "FAIL";
+    messages: unknown[];
+  }): Promise<{ status: "accepted" | "failed" | "unknown" }>;
+  onCardAction(handler: (event: DingtalkA2UIActionEvent) => void | Promise<void>): () => void;
+};
+
 const cards = new Map<string, CardRecord>();
+const a2uiActionHandlers = new Set<(event: DingtalkA2UIActionEvent) => void | Promise<void>>();
+const a2uiContexts = new WeakMap<object, any>();
+const a2uiCards = new Map<string, { cardInstanceId: string; config: DingtalkConfig; context: any; accountId: string; senderId: string; sessionKey: string; expiresAt: number; queue: Promise<unknown> }>();
 let cleanupTimerInstalled = false;
 
 class PublicError extends Error {}
@@ -319,6 +371,149 @@ export function installDingtalkCardBridge(api: OpenClawPluginApi): void {
       });
     },
   } satisfies DingtalkCardBridge;
+}
+
+function serializeA2uiMessages(messages: unknown[]): string[] {
+  if (!Array.isArray(messages) || messages.length < 1 || messages.length > 128) {
+    throw new PublicError("A2UI messages must contain between 1 and 128 entries");
+  }
+  return messages.map((message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      throw new PublicError("A2UI messages must be objects");
+    }
+    return JSON.stringify(message);
+  });
+}
+
+function pruneA2uiCards(timestamp = nowMs()): void {
+  for (const [outTrackId, record] of a2uiCards) {
+    if (record.expiresAt <= timestamp) a2uiCards.delete(outTrackId);
+  }
+  while (a2uiCards.size >= A2UI_CARD_MAX_SIZE) {
+    const oldest = a2uiCards.keys().next().value as string | undefined;
+    if (!oldest) break;
+    a2uiCards.delete(oldest);
+  }
+}
+
+export function dispatchDingtalkA2uiAction(event: DingtalkA2UIActionEvent): void {
+  pruneA2uiCards();
+  const record = event.outTrackId ? a2uiCards.get(event.outTrackId) : undefined;
+  if (!record || event.accountId !== record.accountId || event.senderId !== record.senderId) return;
+  const enriched = {
+    ...event,
+    cardInstanceId: record?.cardInstanceId,
+    trustedContext: record.context,
+  };
+  for (const handler of a2uiActionHandlers) {
+    void Promise.resolve(handler(enriched)).catch(() => undefined);
+  }
+}
+
+export function installDingtalkA2UIBridge(api: OpenClawPluginApi): void {
+  const g = globalThis as any;
+  const bridge: DingtalkA2UIBridge = {
+    getCurrentContext(toolContext: unknown) {
+      const context = resolveQuestionContext(toolContext, captureQuestionContext()) as any;
+      if (context?.isDirect !== true || typeof context?.isCurrent !== "function"
+        || context.isCurrent() !== true || typeof context.accountId !== "string"
+        || typeof context.senderId !== "string" || typeof context.sessionKey !== "string"
+        || typeof context.conversationId !== "string") return undefined;
+      const trustedContext = {
+        accountId: context.accountId,
+        senderId: context.senderId,
+        sessionKey: context.sessionKey,
+        conversationId: context.conversationId,
+        robotCode: String(context.config?.clientId ?? ""),
+        isDirect: true as const,
+        isCurrent: () => context.isCurrent() === true,
+      };
+      a2uiContexts.set(trustedContext, context);
+      return trustedContext;
+    },
+    async createCurrentCard(params) {
+      const context = params?.context && typeof params.context === "object"
+        ? a2uiContexts.get(params.context as object) : undefined;
+      if (!context || context.isDirect !== true || context.isCurrent?.() !== true
+        || typeof context.senderId !== "string" || typeof context.accountId !== "string"
+        || typeof context.conversationId !== "string" || typeof context.config !== "object"
+        || typeof params?.outTrackId !== "string" || typeof params?.summary !== "string") {
+        return { status: "failed" };
+      }
+      let a2uiMessages: string[];
+      try { a2uiMessages = serializeA2uiMessages(params.messages); } catch { return { status: "failed" }; }
+      try {
+        const token = await getAccessToken(context.config);
+        if (context.isCurrent?.() !== true) return { status: "failed" };
+        const response = await dingtalkHttp.post(`${DINGTALK_API}/v1.0/card/ai/instances/createAndDeliver`, {
+          outTrackId: params.outTrackId,
+          openSpaceId: `dtv1.card//im_robot.${context.senderId}`,
+          protocolVersion: "1.0",
+          flowStatus: "PROCESSING",
+          a2uiMessages,
+          summary: params.summary,
+          callbackType: "STREAM",
+          imRobotOpenSpaceModel: { supportForward: false },
+          imRobotOpenDeliverModel: { robotCode: String(context.config.clientId ?? "") },
+        }, { headers: { "x-acs-dingtalk-access-token": token, "Content-Type": "application/json" }, maxRedirects: 0 });
+        const result = asRecord(response.data?.result);
+        const deliveries = Array.isArray(result.deliverResults) ? result.deliverResults : [];
+        const cardInstanceId = typeof result.cardInstanceId === "string" && result.cardInstanceId.length > 0
+          ? result.cardInstanceId : undefined;
+        if (response.status !== 200 || response.data?.success !== true
+          || deliveries.length === 0 || deliveries.some((item: any) => item?.success !== true)
+          || !cardInstanceId) {
+          return { status: response.status >= 200 && response.status < 300 ? "unknown" : "failed" };
+        }
+        pruneA2uiCards();
+        const callbackContext = Object.freeze({
+          accountId: context.accountId,
+          senderId: context.senderId,
+          sessionKey: context.sessionKey,
+          conversationId: context.conversationId,
+          robotCode: String(context.config.clientId ?? ""),
+          isDirect: true as const,
+        });
+        a2uiCards.set(params.outTrackId, {
+          cardInstanceId, config: context.config, context: callbackContext, accountId: context.accountId,
+          senderId: context.senderId, sessionKey: context.sessionKey, expiresAt: Date.now() + A2UI_CARD_TTL_MS,
+          queue: Promise.resolve(),
+        });
+        return { status: "accepted", cardInstanceId };
+      } catch { return { status: "unknown" }; }
+    },
+    async updateCard(params) {
+      if (typeof params?.cardInstanceId !== "string" || typeof params?.outTrackId !== "string"
+        || typeof params?.outUpdateId !== "string") return { status: "failed" };
+      let a2uiMessages: string[];
+      try { a2uiMessages = serializeA2uiMessages(params.messages); } catch { return { status: "failed" }; }
+      const flowStatus = params.status === "FINISH" || params.status === "FAIL" ? params.status : "PROCESSING";
+      const record = a2uiCards.get(params.outTrackId);
+      if (!record || record.expiresAt <= nowMs() || record.cardInstanceId !== params.cardInstanceId) return { status: "failed" };
+      const run = record.queue.then(async () => {
+        try {
+          const response = await dingtalkHttp.put(`${DINGTALK_API}/v1.0/card/ai/instances/update`, {
+            outTrackId: params.outTrackId,
+            outUpdateId: params.outUpdateId,
+            flowStatus,
+            a2uiMessages,
+          }, { headers: { "x-acs-dingtalk-access-token": await getAccessToken(record.config), "Content-Type": "application/json" }, maxRedirects: 0 });
+          if (response.status !== 200 || response.data?.success !== true) {
+            return { status: response.status >= 200 && response.status < 300 ? "unknown" : "failed" } as const;
+          }
+          if (flowStatus !== "PROCESSING") a2uiCards.delete(params.outTrackId);
+          return { status: "accepted" } as const;
+        } catch { return { status: "unknown" } as const; }
+      });
+      record.queue = run.then(() => undefined, () => undefined);
+      return run;
+    },
+    onCardAction(handler) {
+      a2uiActionHandlers.add(handler);
+      return () => a2uiActionHandlers.delete(handler);
+    },
+  };
+  g[DINGTALK_A2UI_BRIDGE_SYMBOL] = bridge;
 }
 
 export function registerDingtalkCardGatewayMethods(api: OpenClawPluginApi): void {

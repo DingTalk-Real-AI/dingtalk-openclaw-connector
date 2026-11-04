@@ -7,8 +7,10 @@ const mockLoggerDebug = vi.hoisted(() => vi.fn());
 const mockLoggerWarn = vi.hoisted(() => vi.fn());
 const mockLoggerError = vi.hoisted(() => vi.fn());
 const mockQuestionCallback = vi.hoisted(() => vi.fn(async (_params: any) => ({ handled: true })));
+const mockA2uiAction = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/questions/index.ts', () => ({ handleDingtalkQuestionCallback: mockQuestionCallback }));
+vi.mock('../../src/services/card-bridge.ts', () => ({ dispatchDingtalkA2uiAction: mockA2uiAction }));
 
 class FakeSocket extends EventEmitter {
   readyState = 1;
@@ -194,6 +196,9 @@ describe("core/connection", () => {
       expect(messageHandler).not.toHaveBeenCalled();
       finish();
       await pending;
+      expect(mockA2uiAction).toHaveBeenCalledWith(expect.objectContaining({
+        accountId: 'acc-1', messageId: 'card-1', outTrackId: 'dingtalk_question_test', data,
+      }));
       await client.cardCallback!({ headers: { messageId: 'bad-card' }, data: '{invalid' });
       expect(client.socketCallBackResponse).toHaveBeenCalledWith('bad-card', { success: true });
       expect(mockLoggerWarn).toHaveBeenCalledWith('原生问题卡回调处理失败');
