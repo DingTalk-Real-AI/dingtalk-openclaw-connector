@@ -14,6 +14,7 @@
  */
 import * as fs from 'fs';
 import { handleDingtalkQuestionCallback } from '../questions/index.ts';
+import { dispatchDingtalkA2uiAction } from '../services/card-bridge.ts';
 import type { OpenClawConfig as ClawdbotConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import type { ResolvedDingtalkAccount } from "../types/index.ts";
@@ -560,8 +561,18 @@ export async function monitorSingleAccount(
     client.registerCallbackListener(TOPIC_CARD, async (res: any) => {
       if (res.headers?.messageId) client.socketCallBackResponse(res.headers.messageId, { success: true });
       try {
-        await handleDingtalkQuestionCallback({ accountId, config: account.config,
-          data: typeof res.data === 'string' ? JSON.parse(res.data) : res.data, log: logger });
+        const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+        await handleDingtalkQuestionCallback({ accountId, config: account.config, data, log: logger });
+        const event = data && typeof data === 'object' ? data : {};
+        if (typeof res.headers?.messageId === 'string' && typeof event.outTrackId === 'string') {
+          dispatchDingtalkA2uiAction({
+            accountId,
+            messageId: res.headers.messageId,
+            senderId: typeof event.userId === 'string' ? event.userId : undefined,
+            outTrackId: event.outTrackId,
+            data,
+          });
+        }
       } catch { logger.warn('原生问题卡回调处理失败'); }
     });
 

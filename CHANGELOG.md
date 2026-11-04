@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 新增
+
+- 原生 A2UI 插件桥（[#684](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/issues/684)）：同进程业务插件可以在可信当前私聊上下文中用原机器人身份创建 A2UI 卡片、对同一卡片发送增量，并订阅现有 Stream 卡片回调；不新增 Stream 连接，不暴露应用凭据或任意收件人接口。该桥是可选能力，不改变现有 Markdown Card Bridge。
+
 ## [0.8.27] - 2026-10-20
 
 本版本包含 [#673](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/673) 的消息与会话能力对齐，以及 [#678](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/678) 的旧连接重连修复。详见 [发布说明](docs/RELEASE_NOTES_V0.8.27.md)。
