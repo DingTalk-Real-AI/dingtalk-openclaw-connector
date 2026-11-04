@@ -75,6 +75,22 @@ describe("DingTalk A2UI bridge", () => {
     expect(mockPut).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["missing delivery receipt", { status: 200, data: { success: true, result: { cardInstanceId: "instance-1" } } }],
+    ["missing server instance ID", { status: 200, data: { success: true, result: { deliverResults: [{ success: true }] } } }],
+  ])("does not bind a card on an incomplete create receipt: %s", async (_label, receipt) => {
+    const trusted = context();
+    mockResolveContext.mockReturnValue(trusted);
+    mockPost.mockResolvedValue(receipt);
+    installDingtalkA2UIBridge(api());
+    const bridge = (globalThis as any)[DINGTALK_A2UI_BRIDGE_SYMBOL];
+    const safe = bridge.getCurrentContext({});
+    const created = await bridge.createCurrentCard({ context: safe, outTrackId: "track-1", summary: "test", messages: [{ version: "v1.0" }] });
+    expect(created).toEqual({ status: "unknown" });
+    expect((await bridge.updateCard({ cardInstanceId: "track-1", outTrackId: "track-1", outUpdateId: "u", status: "FINISH", messages: [{ version: "v1.0" }] })).status).toBe("failed");
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
   it("routes callback identity only when the Stream account, user, and card mapping agree", async () => {
     const trusted = context();
     mockResolveContext.mockReturnValue(trusted);

@@ -458,12 +458,14 @@ export function installDingtalkA2UIBridge(api: OpenClawPluginApi): void {
         }, { headers: { "x-acs-dingtalk-access-token": token, "Content-Type": "application/json" }, maxRedirects: 0 });
         const result = asRecord(response.data?.result);
         const deliveries = Array.isArray(result.deliverResults) ? result.deliverResults : [];
+        const cardInstanceId = typeof result.cardInstanceId === "string" && result.cardInstanceId.length > 0
+          ? result.cardInstanceId : undefined;
         if (response.status !== 200 || response.data?.success !== true
-          || deliveries.some((item: any) => item?.success !== true)) {
+          || deliveries.length === 0 || deliveries.some((item: any) => item?.success !== true)
+          || !cardInstanceId) {
           return { status: response.status >= 200 && response.status < 300 ? "unknown" : "failed" };
         }
         pruneA2uiCards();
-        const cardInstanceId = String(result.cardInstanceId ?? params.outTrackId);
         const callbackContext = Object.freeze({
           accountId: context.accountId,
           senderId: context.senderId,
