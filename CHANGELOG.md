@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 安全 / Security
+
+- 🔒 **最低宿主版本提升至 OpenClaw `2026.9.2`** — 修复 `GHSA-5x6q-wg56-rxg8`（影响 `>= 2026.7.2, < 2026.9.2`）与 `GHSA-m78m-7h3q-q938`（影响 `< 2026.8.2`）；`peerDependencies`、`openclaw.compat.pluginApi`、`openclaw.install.minHostVersion` 与开发依赖同步提升，避免在受影响宿主上安装或构建。
+  **Minimum host version raised to OpenClaw `2026.9.2`** — clears `GHSA-5x6q-wg56-rxg8` (`>= 2026.7.2, < 2026.9.2`) and `GHSA-m78m-7h3q-q938` (`< 2026.8.2`); the peer range, `openclaw.compat.pluginApi`, `openclaw.install.minHostVersion`, and the development pin move together so the plugin cannot be installed or built against an affected host.
+
 ## [0.8.27] - 2026-10-20
 
 本版本包含 [#673](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/673) 的消息与会话能力对齐，以及 [#678](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector/pull/678) 的旧连接重连修复。详见 [发布说明](docs/RELEASE_NOTES_V0.8.27.md)。
