@@ -218,9 +218,7 @@ describe("reply-dispatcher", () => {
     expect(mockIsQpsLimitError).toHaveBeenCalledWith(qpsError);
   });
 
-  // 回归测试：非 QPS 错误路径保持原有行为——发送兜底消息，
-  // 避免 QPS 修复过程中误伤了真正的错误兜底逻辑。
-  it("DOES send fallback error message when streamAICard throws a non-QPS error", async () => {
+  it("waits for the final delivery after a non-QPS partial update error", async () => {
     const { createDingtalkReplyDispatcher } = await import(
       "../../src/reply-dispatcher"
     );
@@ -251,10 +249,11 @@ describe("reply-dispatcher", () => {
     await result.replyOptions.onPartialReply?.({ text: "partial-other" });
 
     expect(mockStreamAICard).toHaveBeenCalledTimes(1);
-    // 非 QPS 错误路径：fallback 消息应被发送
-    expect(mockSendMessage).toHaveBeenCalled();
-    const [, , fallbackText] = mockSendMessage.mock.calls[0];
-    expect(fallbackText).toMatch(/消息发送失败/);
+    expect(mockIsQpsLimitError).toHaveBeenCalledWith(otherError);
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    await args.deliver({ text: "final reply" }, { kind: "final" });
+    expect(mockFinishAICard).toHaveBeenCalledTimes(1);
+    expect(mockSendMessage).not.toHaveBeenCalled();
   });
 
   it("onIdle sends group visibleReplies hint when no outbound and cfg lacks automatic", async () => {
