@@ -181,7 +181,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
    * 发送兜底错误消息，确保用户始终能收到反馈
    */
   const sendFallbackErrorMessage = async (
-    errorType: 'mediaProcess' | 'sendMessage' | 'unknown',
+    errorType: 'sendMessage' | 'unknown',
     originalError?: string,
     forceSend: boolean = false
   ) => {
@@ -202,7 +202,6 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     }
 
     const errorMessages = {
-      mediaProcess: '⚠️ 媒体文件处理失败，已发送文字回复',
       sendMessage: '⚠️ 消息发送失败，请稍后重试',
       unknown: '⚠️ 抱歉，处理您的请求时出错，请稍后重试',
     };
@@ -211,7 +210,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
     log.warn(`[DingTalk][Fallback] ${errorMessage}, error: ${originalError}`);
     
     try {
-      await sendMessage(
+      const receipt = await sendMessage(
         account.config as DingtalkConfig,
         sessionWebhook,
         errorMessage,
@@ -220,6 +219,7 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
           log: params.runtime.log,
         }
       );
+      assertDingtalkMessageDelivered(receipt);
       deliveredErrorTypes.add(errorKey);
       lastErrorTime = now;
       outboundUserVisibleThisTurn = true;
@@ -598,31 +598,40 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
       outboundUserVisibleThisTurn = true;
       log.info(`[DingTalk][closeStreaming] ✅ AI Card 关闭成功`);
     } catch (error: any) {
-      log.error(`[DingTalk][closeStreaming] ❌ AI Card 关闭失败：${error?.message || String(error)}`);
-      // ✅ 媒体处理或关闭失败时，降级发送普通消息
-      await sendFallbackErrorMessage('mediaProcess', error?.message || String(error));
-      
-      // 尝试用普通消息发送累积的文本
-      if (accumulatedText.trim() && !stopped) {
+      const message = error?.message || String(error);
+      const code = error?.response?.data?.code;
+      const codeHint = typeof code === "string" && /^[\w.-]{1,100}$/.test(code) ? ` (code=${code})` : "";
+      log.error(`[DingTalk][closeStreaming] ❌ AI Card 关闭失败：${message}${codeHint}`);
+      if (stopped) return;
+
+      // Try the actual reply before showing a delivery failure.
+      const fallbackText = accumulatedText;
+      if (fallbackText.trim()) {
         try {
           log.info(`[DingTalk][closeStreaming] 降级发送普通消息`);
-          const receipt = await sendMessage(
-            account.config as DingtalkConfig,
-            sessionWebhook,
-            accumulatedText,
-            {
-              useMarkdown: true,
-              log: params.runtime.log,
-            }
-          );
-          outboundUserVisibleThisTurn = true;
-          assertDingtalkMessageDelivered(receipt);
-          await notifyFinal(accumulatedText, undefined, extractDingtalkMessageIds(receipt));
+          const messageIds: string[] = [];
+          for (const chunk of core.channel.text.chunkTextWithMode(fallbackText, textChunkLimit, chunkMode)) {
+            if (stopped) return;
+            const receipt = await sendMessage(
+              account.config as DingtalkConfig,
+              sessionWebhook,
+              chunk,
+              { useMarkdown: true, log: params.runtime.log }
+            );
+            assertDingtalkMessageDelivered(receipt);
+            outboundUserVisibleThisTurn = true;
+            messageIds.push(...extractDingtalkMessageIds(receipt));
+          }
+          await notifyFinal(fallbackText, undefined, [...new Set(messageIds)]);
           log.info(`[DingTalk][closeStreaming] ✅ 降级发送成功`);
+          return;
         } catch (sendErr: any) {
           log.error(`[DingTalk][closeStreaming] ❌ 降级发送失败：${sendErr.message}`);
+          await sendFallbackErrorMessage('sendMessage', sendErr.message);
+          return;
         }
       }
+      await sendFallbackErrorMessage('sendMessage', message);
     } finally {
       // currentCardTarget 已在函数开头清空，此处只需重置累积文本；
       // 正常收口完成，解除守护计时（若 watchdog 已先行触发则此处为幂等清理）
@@ -1073,7 +1082,6 @@ export function createDingtalkReplyDispatcher(params: CreateDingtalkReplyDispatc
                 );
               } else {
                 log.error(`[DingTalk][onPartialReply] ❌ AI Card 更新失败：${err.message}`);
-                await sendFallbackErrorMessage('sendMessage', err.message);
               }
             }
           } else {

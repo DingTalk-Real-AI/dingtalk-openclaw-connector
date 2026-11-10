@@ -151,6 +151,40 @@ describe("reply-dispatcher AI card lifecycle", () => {
     });
   });
 
+  it("delivers the final text once without a media warning when the card returns HTTP 400", async () => {
+    const onFinalReply = vi.fn();
+    const failure = new Error("Request failed with status code 400");
+    mockStreamAICard.mockRejectedValueOnce(failure);
+    mockFinishAICard.mockRejectedValueOnce(failure);
+    mockSendMessage.mockResolvedValueOnce({ errcode: 0, messageId: "fallback-1" });
+    const { result, args } = await makeDispatcher({ onFinalReply });
+
+    await result.replyOptions.onPartialReply?.({ text: "partial reply" });
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    await args.deliver({ text: "final reply" }, { kind: "final" });
+    await args.onIdle();
+
+    expect(mockSendMessage.mock.calls.map((call) => call[2])).toEqual(["final reply"]);
+    expect(onFinalReply).toHaveBeenCalledTimes(1);
+    expect(onFinalReply).toHaveBeenCalledWith({
+      text: "final reply", messageId: "fallback-1", messageIds: ["fallback-1"],
+    });
+  });
+
+  it("reports a delivery failure only after the text fallback is rejected", async () => {
+    const onFinalReply = vi.fn();
+    mockFinishAICard.mockRejectedValueOnce(new Error("Request failed with status code 400"));
+    mockSendMessage.mockResolvedValueOnce({ errcode: 400, errmsg: "rejected" });
+    const { args } = await makeDispatcher({ onFinalReply });
+
+    await args.deliver({ text: "final reply" }, { kind: "final" });
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(2);
+    expect(mockSendMessage.mock.calls[0]?.[2]).toBe("final reply");
+    expect(mockSendMessage.mock.calls[1]?.[2]).not.toContain("已发送文字回复");
+    expect(onFinalReply).not.toHaveBeenCalled();
+  });
+
   // 竞态修复：final 被上游抑制（message_tool_only / steer 认领）时，
   // onIdle 是唯一收口。若 onIdle 在 AI Card 创建 HTTP 返回前执行，
   // 旧实现快照 currentCardTarget 为 null 直接跳过 → 卡片永远转圈。
