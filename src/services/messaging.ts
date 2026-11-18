@@ -707,8 +707,8 @@ export async function sendTextToDingTalk(params: {
     targetParam = { type: "user", userId: target };
   }
 
+  // Let sendProactive detect Markdown, including when AI Card falls back to a normal message.
   return sendProactive(config, targetParam, text, {
-    msgType: "text",
     replyToId,
   });
 }
